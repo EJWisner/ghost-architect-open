@@ -1,0 +1,35 @@
+{
+  "name": "ghost-architect",
+  "version": "4.0.0",
+  "description": "AI-powered codebase archaeology — understand what you inherited",
+  "author": "Ghost Architect",
+  "license": "SEE LICENSE IN LICENSE",
+  "copyright": "Copyright © 2026 Ghost Architect. All rights reserved.",
+  "main": "bin/ghost.js",
+  "bin": {
+    "ghost": "./bin/ghost.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node bin/ghost.js",
+    "dev": "node bin/ghost.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "adm-zip": "^0.5.10",
+    "boxen": "^7.1.1",
+    "chalk": "^5.3.0",
+    "cli-highlight": "^2.1.11",
+    "cli-table3": "^0.6.3",
+    "configstore": "^6.0.0",
+    "figlet": "^1.7.0",
+    "glob": "^10.3.10",
+    "gradient-string": "^2.0.2",
+    "inquirer": "^9.2.0",
+    "marked": "^9.1.6",
+    "octokit": "^3.1.2",
+    "ora": "^8.0.1",
+    "pdfkit": "^0.18.0"
+  },
+  "homepage": "https://ghostarchitect.dev"
+}
