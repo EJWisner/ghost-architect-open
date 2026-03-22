@@ -11,6 +11,7 @@ import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { runCompareMode } from '../src/modes/compare.js';
+import { runConflictMode } from '../src/modes/conflict.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
@@ -85,6 +86,7 @@ async function selectMode(codebaseContext) {
       { name: '💬  Chat  ' + chalk.gray('— Ask anything about this project'), value: 'chat' },
       { name: '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
       { name: '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
+      { name: '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
       { name: '🔍  Compare Reports  ' + chalk.gray('— Before/after diff of two saved reports'), value: 'compare' },
       { name: '📊  Project Dashboard  ' + chalk.gray('— Remediation progress across all projects'), value: 'dashboard' },
       new inquirer.Separator(),
@@ -163,11 +165,12 @@ async function main() {
     }
 
     switch (mode) {
-      case 'chat':      await runChatMode(codebaseContext);   break;
-      case 'poi':       await runPOIMode(codebaseContext);    break;
-      case 'blast':     await runBlastMode(codebaseContext);  break;
-      case 'compare':   await runCompareMode();               break;
-      case 'dashboard': await showProjectDashboard();         break;
+      case 'chat':      await runChatMode(codebaseContext);     break;
+      case 'poi':       await runPOIMode(codebaseContext);      break;
+      case 'blast':     await runBlastMode(codebaseContext);    break;
+      case 'conflict':  await runConflictMode(codebaseContext); break;
+      case 'compare':   await runCompareMode();                 break;
+      case 'dashboard': await showProjectDashboard();           break;
     }
   }
 }
