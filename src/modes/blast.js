@@ -7,6 +7,7 @@ import { runBlastRadius } from '../analyst/index.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
+import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
 export async function runBlastMode(codebaseContext) {
   console.log('\n' + boxen(
@@ -17,7 +18,6 @@ export async function runBlastMode(codebaseContext) {
 
   console.log('');
 
-  // Always show a sample of files so user knows what to reference
   const MAX_SHOW = 15;
   const files = codebaseContext.fileIndex;
   console.log(chalk.gray(`Sample files from this project (${files.length} total):`));
@@ -39,6 +39,34 @@ export async function runBlastMode(codebaseContext) {
   const model = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
   showCostEstimate(codebaseContext, 'blast', model);
 
+  // ── Agent Planner ─────────────────────────────────────────────────────────
+  try {
+    const reconSpinner = ora({ text: chalk.gray('Ghost is sizing up your codebase...'), color: 'cyan' }).start();
+    const reconPlan    = await runRecon(codebaseContext.fileMap || {}, 'blast', { focusAreas: target });
+    reconSpinner.stop();
+    const display = formatPlanForDisplay(reconPlan);
+
+    console.log('\n' + boxen(
+      chalk.cyan.bold('🔍 ANALYSIS PLAN') + '\n\n' +
+      chalk.white(display.summary || '') + '\n\n' +
+      chalk.gray('Files:   ') + chalk.bold(String(display.stats.files)) + '   ' +
+      chalk.gray('Est. cost: ') + chalk.bold(display.stats.cost) + '   ' +
+      chalk.gray('Est. time: ') + chalk.bold(display.stats.time) +
+      (display.risks.length > 0
+        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas:') + '\n' +
+          display.risks.slice(0, 4).map(r => chalk.yellow(`   • ${r}`)).join('\n')
+        : '') +
+      (display.warnings.length > 0
+        ? '\n\n' + chalk.yellow.bold('!  Warnings:') + '\n' +
+          display.warnings.map(w => chalk.yellow(`   ${w}`)).join('\n')
+        : ''),
+      { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+    ));
+    console.log('');
+  } catch {
+    console.log(chalk.gray('  (Recon unavailable — proceeding with standard analysis)\n'));
+  }
+
   const { proceed } = await inquirer.prompt([{
     type: 'confirm',
     name: 'proceed',
@@ -59,36 +87,26 @@ export async function runBlastMode(codebaseContext) {
 
   try {
     const result = await runBlastRadius(codebaseContext, target.trim(), (chunk) => {
-      if (!started) {
-        spinner.stop();
-        started = true;
-        console.log('');
-      }
+      if (!started) { spinner.stop(); started = true; console.log(''); }
       buffer += chunk;
       process.stdout.write(colorizeOutput(chunk));
     });
 
     console.log('\n');
 
-    // Show actual cost
-    const inputTokens = Math.ceil(codebaseContext.context.length / 4) + 300;
+    const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 300;
     const outputTokens = Math.ceil(result.length / 4);
     showActualCost(inputTokens, outputTokens, model);
 
     const { another } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'another',
-      message: chalk.cyan('Analyze another target?'),
-      default: false
+      type: 'confirm', name: 'another',
+      message: chalk.cyan('Analyze another target?'), default: false
     }]);
-
     if (another) return await runBlastMode(codebaseContext);
 
     const { doSave } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'doSave',
-      message: chalk.cyan('Save this analysis to ~/Ghost Architect Reports/?'),
-      default: true
+      type: 'confirm', name: 'doSave',
+      message: chalk.cyan('Save this analysis to ~/Ghost Architect Reports/?'), default: true
     }]);
 
     if (doSave) {
@@ -96,9 +114,7 @@ export async function runBlastMode(codebaseContext) {
       console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
-      if (saved.pdfFile) {
-        console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
-      }
+      if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
     }
 

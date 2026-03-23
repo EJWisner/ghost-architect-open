@@ -12,6 +12,7 @@ import { runConflictScan, getConflictPassInfo } from '../core/conflict.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
+import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
 export async function runConflictMode(codebaseContext) {
   const fileMap    = codebaseContext.fileMap || {};
@@ -35,6 +36,38 @@ export async function runConflictMode(codebaseContext) {
 
   if (info.singlePass) {
     showCostEstimate(codebaseContext, 'poi', model);
+  }
+
+  // ── Agent Planner ─────────────────────────────────────────────────────────
+  try {
+    const reconSpinner = ora({ text: chalk.gray('Ghost is sizing up your codebase...'), color: 'magenta' }).start();
+    const reconPlan    = await runRecon(fileMap, 'conflict', {});
+    reconSpinner.stop();
+    const display = formatPlanForDisplay(reconPlan);
+
+    console.log('\n' + boxen(
+      chalk.magenta.bold('🔍 ANALYSIS PLAN') + '\n\n' +
+      chalk.white(display.summary || '') + '\n\n' +
+      chalk.gray('Files:   ') + chalk.bold(String(display.stats.files)) + '   ' +
+      chalk.gray('Passes:  ') + chalk.bold(String(display.stats.passes)) + '   ' +
+      chalk.gray('Est. cost: ') + chalk.bold(display.stats.cost) + '   ' +
+      chalk.gray('Est. time: ') + chalk.bold(display.stats.time) +
+      (display.risks.length > 0
+        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas:') + '\n' +
+          display.risks.slice(0, 4).map(r => chalk.yellow(`   • ${r}`)).join('\n')
+        : '') +
+      (display.warnings.length > 0
+        ? '\n\n' + chalk.yellow.bold('!  Warnings:') + '\n' +
+          display.warnings.map(w => chalk.yellow(`   ${w}`)).join('\n')
+        : '') +
+      (display.entryPoint
+        ? '\n\n' + chalk.gray('Starting at: ') + chalk.magenta(display.entryPoint)
+        : ''),
+      { padding: 1, borderColor: 'magenta', borderStyle: 'round' }
+    ));
+    console.log('');
+  } catch {
+    console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
   }
 
   const { proceed } = await inquirer.prompt([{
@@ -66,9 +99,6 @@ export async function runConflictMode(codebaseContext) {
               spinner = ora({ text: chalk.gray('Ghost is scanning for conflicts...'), color: 'magenta' }).start();
             }
             break;
-          case 'scanning':
-            // spinner already running
-            break;
           case 'passStart':
             console.log(chalk.gray(
               `\n  Pass ${data.passNum} of ${data.totalPasses} — ` +
@@ -94,12 +124,10 @@ export async function runConflictMode(codebaseContext) {
     if (!result?.finalReport) return;
     buffer = result.finalReport;
 
-    // Cost
     const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 200;
     const outputTokens = Math.ceil(buffer.length / 4);
     showActualCost(inputTokens, outputTokens, model);
 
-    // Save prompt
     const { doSave } = await inquirer.prompt([{
       type: 'confirm', name: 'doSave',
       message: chalk.cyan('Save this conflict report to ~/Ghost Architect Reports/?'), default: true
@@ -110,7 +138,7 @@ export async function runConflictMode(codebaseContext) {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
         cost: `$${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
-        version: '4.0.0',
+        version: '4.1.1',
         mode: 'conflict-detection',
       };
       const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
@@ -136,11 +164,11 @@ function colorizeOutput(text) {
     .replace(/📦 DEPENDENCY CONFLICTS/g, chalk.red.bold('📦 DEPENDENCY CONFLICTS'))
     .replace(/🧩 INTERFACE CONFLICTS/g,  chalk.magenta.bold('🧩 INTERFACE CONFLICTS'))
     .replace(/⚡ CONFLICT SUMMARY/g,     chalk.magenta.bold('⚡ CONFLICT SUMMARY'))
-    .replace(/CRITICAL/g,  chalk.bgRed.white.bold(' CRITICAL '))
-    .replace(/\bHIGH\b/g,  chalk.red.bold('HIGH'))
+    .replace(/CRITICAL/g,   chalk.bgRed.white.bold(' CRITICAL '))
+    .replace(/\bHIGH\b/g,   chalk.red.bold('HIGH'))
     .replace(/\bMEDIUM\b/g, chalk.yellow.bold('MEDIUM'))
-    .replace(/\bLOW\b/g,   chalk.green.bold('LOW'))
-    .replace(/Resolution:/g,   chalk.green.bold('Resolution:'))
-    .replace(/Impact:/g,       chalk.yellow('Impact:'))
-    .replace(/Severity:/g,     chalk.cyan('Severity:'));
+    .replace(/\bLOW\b/g,    chalk.green.bold('LOW'))
+    .replace(/Resolution:/g, chalk.green.bold('Resolution:'))
+    .replace(/Impact:/g,     chalk.yellow('Impact:'))
+    .replace(/Severity:/g,   chalk.cyan('Severity:'));
 }
