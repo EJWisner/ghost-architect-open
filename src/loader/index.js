@@ -176,15 +176,62 @@ async function loadFromGitHub() {
   }
 }
 
+// Max per-file size — files larger than this are truncated to prevent context overflow
+const MAX_FILE_CHARS = 120000; // ~30K tokens — safe headroom under 200K limit
+
+// Patterns that indicate minified/bundled files — not worth analyzing
+const MINIFIED_PATTERNS = [
+  /\.min\.(js|css)$/i,
+  /[-.]bundle\.(js|css)$/i,
+  /[-.]vendor\.(js|css)$/i,
+  /allinone\.(js|css)$/i,
+  /react\.js$/i,
+  /jquery\.js$/i,
+];
+
+function isMinified(filePath, content) {
+  // Check filename patterns
+  if (MINIFIED_PATTERNS.some(p => p.test(filePath))) return true;
+  // Check if file is suspiciously long single line (minified code signature)
+  const firstLine = content.split('\n')[0] || '';
+  if (firstLine.length > 10000) return true;
+  return false;
+}
+
 async function readFiles(filePaths, basePath) {
-  const fileMap = {};
+  const fileMap  = {};
+  let skipped    = 0;
+  let truncated  = 0;
+
   for (const filePath of filePaths) {
     try {
-      const content = fs.readFileSync(filePath, 'utf8');
+      const content      = fs.readFileSync(filePath, 'utf8');
       const relativePath = path.relative(basePath, filePath);
-      fileMap[relativePath] = content;
+
+      // Skip minified/bundled files entirely
+      if (isMinified(relativePath, content)) {
+        skipped++;
+        continue;
+      }
+
+      // Truncate oversized files — keeps them in analysis but safe
+      if (content.length > MAX_FILE_CHARS) {
+        fileMap[relativePath] = content.slice(0, MAX_FILE_CHARS) +
+          '\n\n// [TRUNCATED: file exceeded ' + MAX_FILE_CHARS + ' char limit]';
+        truncated++;
+      } else {
+        fileMap[relativePath] = content;
+      }
     } catch {}
   }
+
+  if (skipped > 0 || truncated > 0) {
+    console.log(chalk.gray(
+      `  ℹ  Loader: skipped ${skipped} minified/bundled files` +
+      (truncated > 0 ? `, truncated ${truncated} oversized files` : '')
+    ));
+  }
+
   return buildContext(fileMap);
 }
 
