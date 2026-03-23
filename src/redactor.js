@@ -75,8 +75,6 @@ const REDACTION_RULES = [
   { name: 'DB Password Flag',      regex: /-p(?:assword)?\s+\S+/g,                                replacement: '-p[REDACTED:DB_PASSWORD]' },
 
   // Private Keys & Certificates — bounded quantifiers to prevent ReDoS
-  { name: 'Private Key Block',     regex: /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----[\s\S]{1,8000}?-----END [A-Z ]{0,30}PRIVATE KEY-----/g, replacement: '[REDACTED:PRIVATE_KEY_BLOCK]' },
-  { name: 'Certificate Block',     regex: /-----BEGIN CERTIFICATE-----[\s\S]{1,8000}?-----END CERTIFICATE-----/g, replacement: '[REDACTED:CERTIFICATE_BLOCK]' },
 
   // Cloud credentials — specific patterns only
   { name: 'Azure Connection',      regex: /DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]{1,256}/gi, replacement: '[REDACTED:AZURE_CONNECTION_STRING]' },
