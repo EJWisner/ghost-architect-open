@@ -83,10 +83,31 @@ export async function runPOIMode(codebaseContext) {
 
   try {
     if (useMultiPass) {
-      const multiResult = await runMultiPassPOI(fileMap, label || 'project', (chunk) => {
-        if (!started) { started = true; console.log(''); }
-        buffer += chunk;
-        process.stdout.write(colorizeOutput(chunk));
+      const multiResult = await runMultiPassPOI(fileMap, label || 'project', {
+        onChunk(chunk) {
+          if (!started) { started = true; console.log(''); }
+          buffer += chunk;
+          process.stdout.write(colorizeOutput(chunk));
+        },
+        onProgress({ type, ...data }) {
+          if (type === 'narrating') {
+            console.log(chalk.gray('\n  Ghost is writing the final report...\n'));
+          }
+          if (type === 'passStart') {
+            console.log(chalk.gray(
+              `  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files...`
+            ));
+          }
+          if (type === 'passComplete') {
+            console.log(chalk.green(`  ✓ Pass ${data.passNum} complete`));
+          }
+          if (type === 'merging') {
+            console.log(chalk.gray(`  🔀 Merging ${data.count} passes...`));
+          }
+          if (type === 'synthesizing') {
+            console.log(chalk.gray('  Synthesizing findings...'));
+          }
+        },
       });
 
       if (!multiResult) {

@@ -1,6 +1,9 @@
 /**
  * Ghost Architect — Core Multi-Pass Scanner
  * Pure scanning logic. No Chalk. No Inquirer. Returns data, emits events via callbacks.
+ *
+ * v4.4: Narrator wired into final synthesis — report written as senior architect,
+ * not raw template output. Existing pass pipeline and session management unchanged.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -10,6 +13,7 @@ import os from 'os';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
+import { narrateReport } from './agent/narrator.js';
 
 const PASS_TOKEN_LIMIT = 45000;
 const MERGE_BATCH_SIZE = 6;
@@ -162,14 +166,48 @@ async function mergePassResults(results, label) {
   );
 }
 
-// ── Final synthesis ───────────────────────────────────────────────────────────
+// ── Extract findings from merged text for narrator ────────────────────────────
 
-async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalPasses, coverage, onChunk) {
+function extractFindingsForNarrator(mergedText) {
+  const findings = [];
+  const lines    = mergedText.split('\n');
+  const findingRe  = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
+  const severityRe = /severity[:\s]+?(CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
+  const filesRe    = /files?[:\s]+(.+)/i;
+  const effortRe   = /effort[:\s]+(\d[\d–\-]*)\s*hours?/i;
+
+  let current = null;
+  for (const line of lines) {
+    const t  = line.trim();
+    const fm = t.match(findingRe);
+    if (fm) {
+      if (current) findings.push(current);
+      current = { title: fm[1].replace(/\*\*/g, '').trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
+      continue;
+    }
+    if (current) {
+      const sm = t.match(severityRe);
+      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
+      const fm2 = t.match(filesRe);
+      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim()).filter(Boolean); continue; }
+      if (t && t.length > 10 && !t.startsWith('---')) {
+        current.detail += (current.detail ? ' ' : '') + t;
+      }
+    }
+  }
+  if (current) findings.push(current);
+  return findings;
+}
+
+// ── Final synthesis — with narrator ──────────────────────────────────────────
+
+async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalPasses, coverage, onChunk, options = {}) {
   const combined  = mergedGroups.map((r, i) => `=== MERGED GROUP ${i + 1} ===\n${r}`).join('\n\n');
   const rates     = getRates();
   const anthropic = getClient();
-  let finalReport = '';
 
+  // Step 1: Raw synthesis (same as before — produces structured findings)
+  let rawSynthesis = '';
   const stream = anthropic.messages.stream({
     model: getModel(), max_tokens: 8096, system: buildSystemPOI(rates),
     messages: [{
@@ -188,24 +226,51 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
 
   for await (const chunk of stream) {
     if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-      const text = chunk.delta.text;
-      onChunk(text);
-      finalReport += text;
+      rawSynthesis += chunk.delta.text;
     }
   }
-  return finalReport;
+
+  // Step 2: Narrator rewrites as senior architect (streaming to user)
+  if (options.onNarratorStart) options.onNarratorStart();
+
+  const findings = extractFindingsForNarrator(rawSynthesis);
+
+  // If narrator produces nothing useful, fall back to raw synthesis
+  if (findings.length === 0) {
+    for (const char of rawSynthesis) onChunk(char);
+    return rawSynthesis;
+  }
+
+  const memoryResult = {
+    findings,
+    findingCount:  findings.length,
+    filesAnalyzed: totalFiles,
+    stepCount:     completedPasses,
+    auditTrail:    [],
+  };
+
+  const narratedReport = await narrateReport(
+    memoryResult,
+    { projectLabel: options.projectLabel || 'project', mode: 'poi', rates },
+    onChunk
+  );
+
+  return narratedReport || rawSynthesis;
 }
 
 // ── Session-based synthesis ───────────────────────────────────────────────────
 
-export async function synthesizeFromSession(session, totalFiles, totalPasses, onChunk) {
+export async function synthesizeFromSession(session, totalFiles, totalPasses, onChunk, options = {}) {
   const groups = [...session.mergedGroups];
   if (session.pendingPassResults.length > 0) {
     const merged = await mergePassResults(session.pendingPassResults, session.projectLabel);
     groups.push(merged);
   }
   const coverage = Math.round((session.completedPassCount / totalPasses) * 100);
-  return synthesizeFinal(groups, totalFiles, session.completedPassCount, totalPasses, coverage, onChunk);
+  return synthesizeFinal(groups, totalFiles, session.completedPassCount, totalPasses, coverage, onChunk, {
+    ...options,
+    projectLabel: session.projectLabel,
+  });
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -215,16 +280,16 @@ export async function synthesizeFromSession(session, totalFiles, totalPasses, on
  * callbacks:
  *   onProgress({ type, message })     — status messages for CLI to display
  *   onChunk(text)                     — streaming final report text
- *   onPassCapPrompt({ remaining, defaultCap }) → Promise<number>   — ask user for pass cap
+ *   onPassCapPrompt({ remaining, defaultCap }) → Promise<number>
  *   onSessionPrompt({ session, allPassCount }) → Promise<'continue'|'report'|'restart'>
  *   onCompletePrompt({ coverage, remaining }) → Promise<'report'|'save'>
  */
 export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
   const {
-    onProgress      = () => {},
-    onChunk         = () => {},
-    onPassCapPrompt = async ({ defaultCap }) => defaultCap,
-    onSessionPrompt = async () => 'continue',
+    onProgress       = () => {},
+    onChunk          = () => {},
+    onPassCapPrompt  = async ({ defaultCap }) => defaultCap,
+    onSessionPrompt  = async () => 'continue',
     onCompletePrompt = async () => 'report',
   } = callbacks;
 
@@ -233,22 +298,23 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
   if (allPasses.length === 1) return null;
 
-  // Emit top files info
   const topFiles = getTopFiles(fileMap, 5);
   onProgress({ type: 'topFiles', files: topFiles });
 
   // Check for existing session
-  let session      = loadSession(projectLabel);
+  let session       = loadSession(projectLabel);
   let startFromPass = 0;
 
   if (session) {
     const pct    = Math.round((session.completedPassCount / allPasses.length) * 100);
     const action = await onSessionPrompt({ session, allPassCount: allPasses.length, pct });
 
-    if (action === 'restart')      { deleteSession(projectLabel); session = null; }
-    else if (action === 'report')  {
+    if (action === 'restart') {
+      deleteSession(projectLabel);
+      session = null;
+    } else if (action === 'report') {
       onProgress({ type: 'synthesizing', groups: 1 });
-      const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk);
+      const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, { projectLabel });
       deleteSession(projectLabel);
       const coverage = Math.round((session.completedPassCount / allPasses.length) * 100);
       return { finalReport, passCount: session.completedPassCount, totalFiles, coverage };
@@ -257,7 +323,6 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     }
   }
 
-  // Initialize new session
   if (!session) {
     session = {
       projectLabel, startedAt: new Date().toISOString(),
@@ -268,7 +333,6 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     };
   }
 
-  // Ask for pass cap
   const remaining  = allPasses.length - startFromPass;
   const estCost    = (remaining * 0.25).toFixed(2);
   const estMinutes = Math.round(remaining * 0.75);
@@ -288,7 +352,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     onProgress({ type: 'passStart', passNum, totalPasses: allPasses.length, fileCount, tokens: pass.tokens });
 
     const priorSkeletons = session.passSkeletons || [];
-    const result = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons);
+    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons);
 
     const skeleton = extractSkeleton(result);
     session.passSkeletons = [...priorSkeletons, skeleton].slice(-3);
@@ -317,13 +381,11 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
       remaining: allPasses.length - session.completedPassCount,
       passCount: session.completedPassCount,
     });
-
     if (next === 'save') {
       return { finalReport: null, saved: true, passCount: session.completedPassCount, totalFiles, coverage };
     }
   }
 
-  // Merge remaining pending
   if (session.pendingPassResults.length > 0) {
     onProgress({ type: 'mergingFinal' });
     const merged = await mergePassResults(session.pendingPassResults, projectLabel);
@@ -332,11 +394,15 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     saveSession(projectLabel, session);
   }
 
-  // Final synthesis
+  // Final synthesis + narrator
   onProgress({ type: 'synthesizing', groups: session.mergedGroups.length });
   const finalReport = await synthesizeFinal(
     session.mergedGroups, totalFiles,
-    session.completedPassCount, allPasses.length, coverage, onChunk
+    session.completedPassCount, allPasses.length, coverage, onChunk,
+    {
+      projectLabel,
+      onNarratorStart: () => onProgress({ type: 'narrating' }),
+    }
   );
 
   deleteSession(projectLabel);
