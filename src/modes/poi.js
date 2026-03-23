@@ -9,6 +9,7 @@ import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
+import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
 export async function runPOIMode(codebaseContext) {
   const fileMap      = codebaseContext.fileMap || {};
@@ -31,6 +32,41 @@ export async function runPOIMode(codebaseContext) {
   console.log('');
 
   if (!useMultiPass) showCostEstimate(codebaseContext, 'poi', model);
+
+  // ── Agent Planner — recon + cost estimate before any analysis ──────────────
+  let reconPlan = null;
+  try {
+    const reconSpinner = ora({ text: chalk.gray('Ghost is sizing up your codebase...'), color: 'cyan' }).start();
+    reconPlan = await runRecon(fileMap, 'poi', {});
+    reconSpinner.stop();
+
+    const display = formatPlanForDisplay(reconPlan);
+
+    console.log('\n' + boxen(
+      chalk.cyan.bold('🔍 ANALYSIS PLAN') + '\n\n' +
+      chalk.white(display.summary || '') + '\n\n' +
+      chalk.gray('Files:   ') + chalk.bold(String(display.stats.files)) + '   ' +
+      chalk.gray('Passes:  ') + chalk.bold(String(display.stats.passes)) + '   ' +
+      chalk.gray('Est. cost: ') + chalk.bold(display.stats.cost) + '   ' +
+      chalk.gray('Est. time: ') + chalk.bold(display.stats.time) +
+      (display.risks.length > 0
+        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas:') + '\n' +
+          display.risks.slice(0, 4).map(r => chalk.yellow(`   • ${r}`)).join('\n')
+        : '') +
+      (display.warnings.length > 0
+        ? '\n\n' + chalk.yellow.bold('!  Warnings:') + '\n' +
+          display.warnings.map(w => chalk.yellow(`   ${w}`)).join('\n')
+        : '') +
+      (display.entryPoint
+        ? '\n\n' + chalk.gray('Starting at: ') + chalk.cyan(display.entryPoint)
+        : ''),
+      { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+    ));
+    console.log('');
+  } catch {
+    // Planner failure is non-fatal — continue without it
+    console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
+  }
 
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
