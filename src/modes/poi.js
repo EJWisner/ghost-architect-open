@@ -4,7 +4,7 @@ import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { runPOIScan } from '../analyst/index.js';
-import { runMultiPassPOI, buildPasses } from '../analyst/multipass.js';
+import { runMultiPassPOI, buildPasses } from '../core/multipass.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
