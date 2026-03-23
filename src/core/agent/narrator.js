@@ -82,7 +82,7 @@ export async function narrateReport(memoryResult, context = {}, onChunk = () => 
 
   const stream = anthropic.messages.stream({
     model:      getModel(),
-    max_tokens: 6000,
+    max_tokens: 16000,
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -108,7 +108,7 @@ export async function narrateReportSync(memoryResult, context = {}) {
 
   const response = await anthropic.messages.create({
     model:      getModel(),
-    max_tokens: 6000,
+    max_tokens: 16000,
     messages:   [{ role: 'user', content: prompt }],
   });
 
