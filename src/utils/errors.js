@@ -33,6 +33,11 @@ export function friendlyError(err) {
   if (msg.includes('network') || msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED')) {
     return 'Network connection issue. Check your internet connection and try again.';
   }
+  if (msg.includes('usage limits') || msg.includes('regain access')) {
+    const match = msg.match(/regain access on (.+?) UTC/);
+    const when  = match ? `Resets ${match[1]} UTC.` : 'Check console.anthropic.com/settings/limits.';
+    return `Monthly API spend limit reached. ${when} Increase your limit at console.anthropic.com/settings/limits.`;
+  }
   return 'Something went wrong. Please try again.';
 }
 
