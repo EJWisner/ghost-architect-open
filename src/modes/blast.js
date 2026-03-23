@@ -82,15 +82,25 @@ export async function runBlastMode(codebaseContext) {
     color: 'cyan'
   }).start();
 
-  let buffer = '';
+  let buffer  = '';
   let started = false;
 
   try {
-    const result = await runBlastRadius(codebaseContext, target.trim(), (chunk) => {
-      if (!started) { spinner.stop(); started = true; console.log(''); }
-      buffer += chunk;
-      process.stdout.write(colorizeOutput(chunk));
-    });
+    const result = await runBlastRadius(
+      codebaseContext,
+      target.trim(),
+      (chunk) => {
+        if (!started) { spinner.stop(); started = true; console.log(''); }
+        buffer += chunk;
+        process.stdout.write(colorizeOutput(chunk));
+      },
+      {
+        onNarratorStart: () => {
+          spinner.stop();
+          console.log(chalk.gray('\n  Ghost is writing the blast radius report...\n'));
+        },
+      }
+    );
 
     console.log('\n');
 

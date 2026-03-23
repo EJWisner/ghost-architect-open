@@ -126,11 +126,21 @@ export async function runPOIMode(codebaseContext) {
 
     } else {
       const spinner = ora({ text: chalk.gray('Ghost is reading your project...'), color: 'cyan' }).start();
-      await runPOIScan(codebaseContext, (chunk) => {
-        if (!started) { spinner.stop(); started = true; console.log(''); }
-        buffer += chunk;
-        process.stdout.write(colorizeOutput(chunk));
-      });
+      await runPOIScan(
+        codebaseContext,
+        (chunk) => {
+          if (!started) { spinner.stop(); started = true; console.log(''); }
+          buffer += chunk;
+          process.stdout.write(colorizeOutput(chunk));
+        },
+        {
+          onNarratorStart: () => {
+            spinner.stop();
+            console.log(chalk.gray('\n  Ghost is writing the final report...\n'));
+          },
+          projectLabel: label || 'project',
+        }
+      );
       console.log('\n');
     }
 
