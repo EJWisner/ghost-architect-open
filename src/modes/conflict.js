@@ -99,18 +99,60 @@ export async function runConflictMode(codebaseContext) {
               spinner = ora({ text: chalk.gray('Ghost is scanning for conflicts...'), color: 'magenta' }).start();
             }
             break;
+
           case 'passStart':
             console.log(chalk.gray(
               `\n  Pass ${data.passNum} of ${data.totalPasses} — ` +
               `${data.fileCount} files (~${data.tokens.toLocaleString()} tokens)...`
             ));
             break;
+
           case 'passComplete':
             console.log(chalk.green(`  ✓ Pass ${data.passNum} complete`));
             break;
+
+          case 'candidates_found':
+            if (spinner) spinner.stop();
+            console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found — running verification...\n`));
+            break;
+
+          case 'verification_start':
+            console.log(chalk.gray(`  Verifying ${data.count} candidates against codebase...`));
+            break;
+
+          case 'verifying':
+            process.stdout.write(chalk.gray(`  ⟳  Verifying: ${data.title.slice(0, 60)}...\r`));
+            break;
+
+          case 'verified': {
+            const icon =
+              data.verdict === 'CONFIRMED'      ? chalk.red('  ✗  CONFIRMED') :
+              data.verdict === 'POSSIBLE'        ? chalk.yellow('  ?  POSSIBLE ') :
+              data.verdict === 'FALSE_POSITIVE'  ? chalk.green('  ✓  ELIMINATED') :
+                                                   chalk.gray('  ~  UNCLEAR  ');
+            console.log(`${icon}  ${chalk.gray(data.title.slice(0, 55))}`);
+            break;
+          }
+
+          case 'verification_done':
+            console.log('');
+            console.log(
+              chalk.bold('  Verification complete: ') +
+              chalk.red(`${data.stats.confirmed} confirmed  `) +
+              chalk.yellow(`${data.stats.possible} possible  `) +
+              chalk.green(`${data.stats.falsePositives} eliminated`)
+            );
+            console.log('');
+            break;
+
+          case 'narrating':
+            console.log(chalk.gray('  Ghost is writing the conflict report...\n'));
+            break;
+
           case 'merging':
             console.log(chalk.gray(`\n  🔀 Merging ${data.count} passes into final report...`));
             break;
+
           case 'done':
             if (spinner) spinner.stop();
             console.log('\n');
@@ -124,10 +166,21 @@ export async function runConflictMode(codebaseContext) {
     if (!result?.finalReport) return;
     buffer = result.finalReport;
 
+    // Show verification stats summary if available
+    if (result.verified && result.stats) {
+      const s = result.stats;
+      console.log(chalk.magenta(
+        `  👻 Agent verified ${s.total} candidates — ` +
+        `${s.confirmed} confirmed, ${s.possible} possible, ${s.falsePositives} false positives eliminated\n`
+      ));
+    }
+
+    // Cost
     const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 200;
     const outputTokens = Math.ceil(buffer.length / 4);
     showActualCost(inputTokens, outputTokens, model);
 
+    // Save prompt
     const { doSave } = await inquirer.prompt([{
       type: 'confirm', name: 'doSave',
       message: chalk.cyan('Save this conflict report to ~/Ghost Architect Reports/?'), default: true
@@ -140,6 +193,8 @@ export async function runConflictMode(codebaseContext) {
         cost: `$${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
         version: '4.1.1',
         mode: 'conflict-detection',
+        verified: result.verified || false,
+        verificationStats: result.stats || null,
       };
       const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
       console.log(chalk.green(`\n✓ Conflict report saved to ~/Ghost Architect Reports/`));
@@ -164,6 +219,8 @@ function colorizeOutput(text) {
     .replace(/📦 DEPENDENCY CONFLICTS/g, chalk.red.bold('📦 DEPENDENCY CONFLICTS'))
     .replace(/🧩 INTERFACE CONFLICTS/g,  chalk.magenta.bold('🧩 INTERFACE CONFLICTS'))
     .replace(/⚡ CONFLICT SUMMARY/g,     chalk.magenta.bold('⚡ CONFLICT SUMMARY'))
+    .replace(/CONFIRMED/g,  chalk.red.bold('CONFIRMED'))
+    .replace(/POSSIBLE/g,   chalk.yellow.bold('POSSIBLE'))
     .replace(/CRITICAL/g,   chalk.bgRed.white.bold(' CRITICAL '))
     .replace(/\bHIGH\b/g,   chalk.red.bold('HIGH'))
     .replace(/\bMEDIUM\b/g, chalk.yellow.bold('MEDIUM'))
