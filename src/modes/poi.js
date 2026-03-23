@@ -4,7 +4,7 @@ import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { runPOIScan } from '../analyst/index.js';
-import { runMultiPassPOI, buildPasses } from '../core/multipass.js';
+import { runMultiPassPOI, buildPasses } from '../analyst/multipass.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
@@ -117,6 +117,10 @@ export async function runPOIMode(codebaseContext) {
         return;
       } else if (multiResult.finalReport) {
         buffer = multiResult.finalReport;
+        // Use multipass total — reflects all files analyzed across all passes
+        if (multiResult.totalFiles) {
+          codebaseContext = { ...codebaseContext, loadedFiles: multiResult.totalFiles, totalFiles: multiResult.totalFiles };
+        }
         console.log('\n');
         console.log(chalk.cyan(
           `  ✓ Multi-pass complete — ${multiResult.passCount} passes, ` +
