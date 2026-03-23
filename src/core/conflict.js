@@ -196,7 +196,7 @@ function conflictSessionKey(projectLabel) {
  *   onChunk(text)                   — streaming final report text
  *   onSessionPrompt({ session, totalPasses }) → Promise<'resume'|'restart'>
  */
-export async function runConflictScan(fileMap, callbacks = {}) {
+export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   const {
     onProgress    = () => {},
     onChunk       = () => {},
@@ -220,7 +220,7 @@ export async function runConflictScan(fileMap, callbacks = {}) {
   let startFromPass = 0;
 
   if (!info.singlePass) {
-    const sessionKey     = conflictSessionKey(info.projectLabel);
+    const sessionKey     = conflictSessionKey(options.projectLabel || 'default');
     const existingSession = loadSession(sessionKey);
 
     if (existingSession && existingSession.completedPassCount > 0) {
@@ -248,7 +248,7 @@ export async function runConflictScan(fileMap, callbacks = {}) {
     const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null);
     passResults.push(result);
   } else {
-    const sessionKey = conflictSessionKey(info.projectLabel);
+    const sessionKey = conflictSessionKey(options.projectLabel || 'default');
 
     for (let i = startFromPass; i < info.passes.length; i++) {
       const pass      = info.passes[i];
@@ -266,7 +266,7 @@ export async function runConflictScan(fileMap, callbacks = {}) {
 
       // Checkpoint after every pass
       saveSession(sessionKey, {
-        projectLabel:       info.projectLabel || 'conflict',
+        projectLabel:       options.projectLabel || 'conflict',
         startedAt:          new Date().toISOString(),
         completedPassCount: passNum,
         totalPassCount:     info.passes.length,

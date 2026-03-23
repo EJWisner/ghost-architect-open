@@ -16,6 +16,9 @@ import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
 export async function runConflictMode(codebaseContext) {
   const fileMap    = codebaseContext.fileMap || {};
+  const projectLabel = (codebaseContext.fileIndex?.[0] || 'project')
+    .split('/').slice(0, 2).join('-')
+    .replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40) || 'conflict-default';
   const model      = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
   const info       = getConflictPassInfo(fileMap);
   const multiPass  = !info.singlePass;
@@ -195,7 +198,7 @@ export async function runConflictMode(codebaseContext) {
       },
     };
 
-    const result = await runConflictScan(fileMap, callbacks);
+    const result = await runConflictScan(fileMap, callbacks, { projectLabel });
 
     if (!result?.finalReport) return;
     buffer = result.finalReport;
