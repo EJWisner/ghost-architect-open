@@ -152,7 +152,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       doc.text(`Generated: ${ts}`, mx, my, { width: mw }); my += 12;
       if (meta.filesAnalyzed) { doc.text(`Files analyzed: ${meta.filesAnalyzed}`, mx, my, { width: mw }); my += 12; }
       if (meta.cost)          { doc.text(`Analysis cost: ${meta.cost}`, mx, my, { width: mw }); my += 12; }
-      doc.text(`Ghost Architect v${meta.version || '3.2.1'}  |  ghostarchitect.dev`, mx, my, { width: mw });
+      doc.text(`Ghost Architect v${meta.version || '4.5'}  |  ghostarchitect.dev`, mx, my, { width: mw });
       y += cardH + 14;
 
       // Body
