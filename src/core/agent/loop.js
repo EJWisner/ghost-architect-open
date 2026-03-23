@@ -3,18 +3,16 @@
  * Core Reason → Act → Observe loop with hard step cap.
  * Pure async — no Chalk, no Inquirer, no console output.
  * Emits progress via callbacks for CLI/Web presentation layer.
+ *
+ * v4.5.1: Parse error retry (max 2 attempts), structured warnings, no silent failures.
  */
 
 import Anthropic        from '@anthropic-ai/sdk';
 import { getConfig, resolveApiKey } from '../../config.js';
 import { buildToolDescriptions }    from './tools.js';
 
-// ── Claude client ─────────────────────────────────────────────────────────────
-
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
-
-// ── System prompt for agent ───────────────────────────────────────────────────
 
 function buildAgentSystemPrompt(tools, context = '') {
   return `You are Ghost Architect's autonomous analysis agent — a senior software architect AI.
@@ -46,33 +44,45 @@ RULES:
 - If a file is not found, try searchFiles to locate it differently.
 - Call finish when: all relevant files analyzed, step cap approaching, or task is complete.
 - Never fabricate file contents — only work with what the tools return.
+- IMPORTANT: Respond with valid JSON only. No preamble text, no markdown, no explanation before the JSON.
 
 ${context}`;
 }
 
-// ── Parse agent response ──────────────────────────────────────────────────────
+// ── Parse agent response — with retry support ────────────────────────────────
 
 function parseAgentResponse(raw) {
-  try {
-    // Strip markdown code fences if present
-    const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    return JSON.parse(clean);
-  } catch {
-    // Try to extract JSON from the response
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) {
-      try { return JSON.parse(match[0]); } catch { /* fall through */ }
-    }
-    // Fallback — treat as finish with error
-    return {
-      reasoning: 'Failed to parse agent response — ending gracefully',
-      action:    'finish',
-      input:     { summary: raw.slice(0, 500), reason: 'parse_error' },
-    };
+  // Strip markdown code fences
+  const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+  // Try direct parse
+  try { return { decision: JSON.parse(clean), parseError: null }; } catch { /* fall through */ }
+
+  // Try extracting JSON block from response that has preamble text
+  const match = clean.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return { decision: JSON.parse(match[0]), parseError: null }; } catch { /* fall through */ }
   }
+
+  // Parse failed — return error for retry logic
+  return {
+    decision:   null,
+    parseError: `Could not parse JSON from response. Raw (first 300 chars): ${raw.slice(0, 300)}`,
+  };
 }
 
-// ── Build next prompt from history ───────────────────────────────────────────
+function buildRetryPrompt(task, history, lastResult, parseError) {
+  return `TASK: ${task}
+
+Your previous response could not be parsed as JSON. Error: ${parseError}
+
+You MUST respond with ONLY a valid JSON object. No text before or after. No markdown. Just JSON.
+
+Example of correct format:
+{"reasoning": "I will list the files first", "action": "listDirectory", "input": {"path": "src"}}
+
+What is your next action?`;
+}
 
 function buildIterationPrompt(task, history, lastResult) {
   const historyStr = history.length > 0
@@ -90,58 +100,83 @@ function buildIterationPrompt(task, history, lastResult) {
 }
 
 // ── Main ReAct loop ───────────────────────────────────────────────────────────
-/**
- * Run the agent ReAct loop.
- *
- * @param {string}       task       — natural language task description
- * @param {object}       tools      — tool registry from buildTools()
- * @param {AgentMemory}  memory     — memory instance
- * @param {number}       maxSteps   — hard step cap (cost guardrail)
- * @param {object}       callbacks  — { onStep, onThought, onToolCall, onToolResult }
- * @returns {object}                — synthesized results from memory
- */
+
 export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks = {}) {
   const {
-    onStep       = () => {},   // ({ step, maxSteps })
-    onThought    = () => {},   // ({ reasoning, action, input })
-    onToolCall   = () => {},   // ({ action, input })
-    onToolResult = () => {},   // ({ action, result })
+    onStep       = () => {},
+    onThought    = () => {},
+    onToolCall   = () => {},
+    onToolResult = () => {},
+    onWarning    = () => {},   // NEW: ({ message }) — surfaces warnings to CLI
   } = callbacks;
 
   const anthropic    = getClient();
   const systemPrompt = buildAgentSystemPrompt(tools);
   let   lastResult   = null;
   let   finished     = false;
+  let   parseErrors  = 0;      // track parse failures across whole run
+  const MAX_PARSE_RETRIES = 2; // per step
 
   for (let step = 1; step <= maxSteps && !finished; step++) {
     onStep({ step, maxSteps });
 
-    // Build prompt for this iteration
     const userPrompt = buildIterationPrompt(task, memory.getHistory(), lastResult);
 
-    // Call Claude for next action
-    let raw = '';
-    try {
-      const response = await anthropic.messages.create({
-        model:      getModel(),
-        max_tokens: 1024,
-        system:     systemPrompt,
-        messages:   [{ role: 'user', content: userPrompt }],
-      });
-      raw = response.content[0]?.text || '';
-    } catch (err) {
-      // API error — finish gracefully
-      memory.record('error', { step }, { error: err.message }, 'API call failed');
+    // ── API call with retry on parse error ──────────────────────────────────
+    let decision = null;
+    let raw      = '';
+
+    for (let attempt = 1; attempt <= MAX_PARSE_RETRIES + 1; attempt++) {
+      // Build prompt — use retry prompt if we had a parse failure
+      const prompt = attempt === 1
+        ? userPrompt
+        : buildRetryPrompt(task, memory.getHistory(), lastResult,
+            `Attempt ${attempt - 1} failed to parse`);
+
+      try {
+        const response = await anthropic.messages.create({
+          model:      getModel(),
+          max_tokens: 1024,
+          system:     systemPrompt,
+          messages:   [{ role: 'user', content: prompt }],
+        });
+        raw = response.content[0]?.text || '';
+      } catch (err) {
+        // API error — record and break out of step loop entirely
+        memory.record('api_error', { step, attempt }, { error: err.message }, 'API call failed');
+        onWarning({ message: `API error at step ${step}: ${err.message}` });
+        finished = true;
+        break;
+      }
+
+      const { decision: parsed, parseError } = parseAgentResponse(raw);
+
+      if (parsed) {
+        decision = parsed;
+        break; // successful parse — proceed
+      }
+
+      // Parse failed
+      parseErrors++;
+      memory.record('parse_error', { step, attempt, raw: raw.slice(0, 500) }, { error: parseError }, 'Parse failed');
+
+      if (attempt <= MAX_PARSE_RETRIES) {
+        onWarning({ message: `Parse error at step ${step} (attempt ${attempt}/${MAX_PARSE_RETRIES}) — retrying...` });
+        continue; // retry
+      }
+
+      // All retries exhausted — warn and skip this step
+      onWarning({ message: `⚠ Agent loop: step ${step} failed to parse after ${MAX_PARSE_RETRIES} attempts — results may be incomplete` });
+      decision = null;
       break;
     }
 
-    // Parse the agent's decision
-    const decision = parseAgentResponse(raw);
-    const { reasoning, action, input } = decision;
+    if (finished) break;
+    if (!decision) continue; // skip step, move to next
 
+    const { reasoning, action, input } = decision;
     onThought({ reasoning, action, input, step });
 
-    // Validate tool exists
     if (!tools[action]) {
       memory.record('invalid_action', { action }, { error: `Unknown tool: ${action}` }, reasoning);
       continue;
@@ -149,7 +184,6 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
 
     onToolCall({ action, input, step });
 
-    // Execute the tool
     let result;
     try {
       result = await tools[action].execute(input || {});
@@ -158,18 +192,14 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
     }
 
     onToolResult({ action, input, result, step });
-
-    // Record in memory
     memory.record(action, input, result, reasoning);
     lastResult = result;
 
-    // Check if agent is done
     if (action === 'finish' || result?.done === true) {
       finished = true;
     }
   }
 
-  // If loop hit maxSteps without finishing, record that
   if (!finished) {
     memory.record(
       'finish',
@@ -179,21 +209,13 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
     );
   }
 
-  return memory.synthesize();
+  // Attach warning metadata to result
+  const result = memory.synthesize();
+  result.parseErrors   = parseErrors;
+  result.hasWarnings   = parseErrors > 0;
+  return result;
 }
 
-// ── Mini loop for sub-tasks (verifier uses this) ──────────────────────────────
-/**
- * Lightweight ReAct loop for sub-tasks like conflict verification.
- * Returns structured result rather than full memory synthesis.
- *
- * @param {string}  task
- * @param {object}  tools
- * @param {AgentMemory} memory
- * @param {number}  maxSteps
- * @param {string}  expectedOutputKey  — key to extract from last finish result
- */
 export async function runMiniLoop(task, tools, memory, maxSteps = 3) {
-  const result = await runAgentLoop(task, tools, memory, maxSteps);
-  return result;
+  return runAgentLoop(task, tools, memory, maxSteps);
 }

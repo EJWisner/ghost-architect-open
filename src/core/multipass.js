@@ -32,14 +32,49 @@ function sessionFilePath(label) {
 }
 
 export function loadSession(label) {
-  const p = sessionFilePath(label);
-  if (!fs.existsSync(p)) return null;
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+  const finalPath = sessionFilePath(label);
+  const bakPath   = finalPath + '.bak';
+
+  // Try main file first
+  if (fs.existsSync(finalPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(finalPath, 'utf8'));
+    } catch {
+      // Main file corrupted — try backup
+      if (fs.existsSync(bakPath)) {
+        try {
+          const session = JSON.parse(fs.readFileSync(bakPath, 'utf8'));
+          // Restore backup as main file
+          fs.copyFileSync(bakPath, finalPath);
+          return session;
+        } catch { /* backup also corrupted */ }
+      }
+      return null;
+    }
+  }
+  return null;
 }
 
 export function saveSession(label, session) {
   ensureSessionsDir();
-  fs.writeFileSync(sessionFilePath(label), JSON.stringify(session, null, 2));
+  const finalPath = sessionFilePath(label);
+  const tmpPath   = finalPath + '.tmp';
+  const bakPath   = finalPath + '.bak';
+
+  try {
+    // Write to temp file first
+    fs.writeFileSync(tmpPath, JSON.stringify(session, null, 2));
+    // Back up existing session before overwriting
+    if (fs.existsSync(finalPath)) {
+      fs.copyFileSync(finalPath, bakPath);
+    }
+    // Atomic rename — POSIX guarantees this is atomic
+    fs.renameSync(tmpPath, finalPath);
+  } catch (err) {
+    // Clean up temp file if something went wrong
+    if (fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } }
+    throw err; // re-throw so caller knows save failed
+  }
 }
 
 export function deleteSession(label) {
