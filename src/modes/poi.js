@@ -171,7 +171,7 @@ export async function runPOIMode(codebaseContext) {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
         cost: `$${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
-        version: '3.2.1'
+        version: '4.5.0'
       };
       const saved = await saveReport(buffer, 'ghost-poi', label, meta);
       console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
