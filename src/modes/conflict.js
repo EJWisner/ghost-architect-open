@@ -123,6 +123,12 @@ export async function runConflictMode(codebaseContext) {
             console.log(chalk.green(`  ✓ Pass ${data.passNum} complete`));
             break;
 
+          case 'resuming':
+            console.log(chalk.magenta(
+              `\n  ⚡ Resuming from Pass ${data.fromPass + 1} of ${data.totalPasses} — prior passes restored.\n`
+            ));
+            break;
+
           case 'candidates_found':
             if (spinner) spinner.stop();
             console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found — running verification...\n`));
@@ -170,7 +176,23 @@ export async function runConflictMode(codebaseContext) {
             console.log('\n');
             break;
         }
-      }
+      },
+
+      async onSessionPrompt({ session, totalPasses }) {
+        console.log(chalk.yellow(
+          `\n  ⚡ Partial conflict session found — ` +
+          `${session.completedPassCount} of ${totalPasses} passes completed.\n`
+        ));
+        const { action } = await inquirer.prompt([{
+          type: 'list', name: 'action',
+          message: chalk.cyan('Resume or restart?'),
+          choices: [
+            { name: `Resume from Pass ${session.completedPassCount + 1}`, value: 'resume' },
+            { name: 'Restart from scratch',                                value: 'restart' },
+          ],
+        }]);
+        return action;
+      },
     };
 
     const result = await runConflictScan(fileMap, callbacks);

@@ -8,18 +8,20 @@
  * Works on any language or platform.
  *
  * v4.2: Agent verifier wired in — candidates are verified before surfacing.
- * False positives are eliminated. Narrator writes the final report.
+ * v4.5.1: Session resumability — rate limit hits no longer lose completed passes.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemConflict, buildConflictPrompt } from '../../prompts/conflict.js';
 import { prioritizeFileMap } from '../prioritizer.js';
-import { verifyConflicts, Verdict } from './agent/verifier.js';
+import { verifyConflicts } from './agent/verifier.js';
 import { narrateConflictReport } from './agent/narrator.js';
+import { loadSession, saveSession, deleteSession } from './multipass.js';
 
 const PASS_TOKEN_LIMIT  = 50000;
 const MAX_SINGLE_PASS   = 60000;
+const SESSION_PREFIX    = 'conflict-';
 
 // ── Claude helpers ─────────────────────────────────────────────────────────────
 
@@ -89,7 +91,6 @@ async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFin
 }
 
 // ── Extract conflict candidates from raw pass results ─────────────────────────
-// Parses numbered findings from scan output into structured candidate objects
 
 function extractCandidates(rawResults) {
   const candidates = [];
@@ -128,7 +129,6 @@ function extractCandidates(rawResults) {
         continue;
       }
 
-      // Accumulate description lines
       if (t && !t.startsWith('---') && t.length > 10) {
         current.description += (current.description ? ' ' : '') + t;
       }
@@ -136,7 +136,6 @@ function extractCandidates(rawResults) {
   }
   if (current) candidates.push(current);
 
-  // Deduplicate by title similarity
   const seen = new Set();
   return candidates.filter(c => {
     const key = c.title.toLowerCase().slice(0, 40);
@@ -182,24 +181,26 @@ async function mergeConflictResults(results, onChunk) {
   return callClaude(prompt, buildSystemConflict(), 8096, onChunk);
 }
 
+// ── Session key helper ─────────────────────────────────────────────────────────
+
+function conflictSessionKey(projectLabel) {
+  return `${SESSION_PREFIX}${projectLabel || 'default'}`;
+}
+
 // ── Main entry point ───────────────────────────────────────────────────────────
 /**
  * Run conflict detection scan.
  *
  * callbacks:
- *   onProgress({ type, ...data })  — status events for CLI to display
- *   onChunk(text)                  — streaming final report text
- *
- * Flow with agent verifier:
- *   1. Scan passes → raw findings (same as before)
- *   2. Extract candidates from raw findings
- *   3. Verify each candidate (CONFIRMED / POSSIBLE / FALSE_POSITIVE)
- *   4. Narrator writes final report from verified results
+ *   onProgress({ type, ...data })   — status events for CLI to display
+ *   onChunk(text)                   — streaming final report text
+ *   onSessionPrompt({ session, totalPasses }) → Promise<'resume'|'restart'>
  */
 export async function runConflictScan(fileMap, callbacks = {}) {
   const {
-    onProgress = () => {},
-    onChunk    = () => {},
+    onProgress    = () => {},
+    onChunk       = () => {},
+    onSessionPrompt = async () => 'resume',
   } = callbacks;
 
   const info       = getConflictPassInfo(fileMap);
@@ -212,17 +213,44 @@ export async function runConflictScan(fileMap, callbacks = {}) {
 
   onProgress({ type: 'start', totalFiles, totalPasses: info.passes.length, singlePass: info.singlePass });
 
-  // ── Phase 1: Scan passes → collect raw findings ────────────────────────────
+  // ── Session resumability (multi-pass only) ─────────────────────────────────
 
-  const passResults = [];
-  const skeletons   = [];
+  let passResults   = [];
+  let skeletons     = [];
+  let startFromPass = 0;
+
+  if (!info.singlePass) {
+    const sessionKey     = conflictSessionKey(info.projectLabel);
+    const existingSession = loadSession(sessionKey);
+
+    if (existingSession && existingSession.completedPassCount > 0) {
+      const action = await onSessionPrompt({
+        session:     existingSession,
+        totalPasses: info.passes.length,
+      });
+
+      if (action === 'restart') {
+        deleteSession(sessionKey);
+      } else {
+        // Resume — restore completed pass state
+        passResults   = existingSession.passResults   || [];
+        skeletons     = existingSession.skeletons     || [];
+        startFromPass = existingSession.completedPassCount;
+        onProgress({ type: 'resuming', fromPass: startFromPass, totalPasses: info.passes.length });
+      }
+    }
+  }
+
+  // ── Phase 1: Scan passes → collect raw findings ────────────────────────────
 
   if (info.singlePass) {
     onProgress({ type: 'scanning', fileCount: totalFiles, tokens: info.totalTokens });
     const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null);
     passResults.push(result);
   } else {
-    for (let i = 0; i < info.passes.length; i++) {
+    const sessionKey = conflictSessionKey(info.projectLabel);
+
+    for (let i = startFromPass; i < info.passes.length; i++) {
       const pass      = info.passes[i];
       const passNum   = i + 1;
       const fileCount = Object.keys(pass.files).length;
@@ -235,7 +263,20 @@ export async function runConflictScan(fileMap, callbacks = {}) {
       passResults.push(result);
 
       onProgress({ type: 'passComplete', passNum, totalPasses: info.passes.length });
+
+      // Checkpoint after every pass
+      saveSession(sessionKey, {
+        projectLabel:       info.projectLabel || 'conflict',
+        startedAt:          new Date().toISOString(),
+        completedPassCount: passNum,
+        totalPassCount:     info.passes.length,
+        passResults,
+        skeletons,
+      });
     }
+
+    // All passes done — clean up session
+    deleteSession(sessionKey);
   }
 
   // ── Phase 2: Extract candidates from raw findings ──────────────────────────
@@ -243,7 +284,6 @@ export async function runConflictScan(fileMap, callbacks = {}) {
   const candidates = extractCandidates(passResults);
   onProgress({ type: 'candidates_found', count: candidates.length });
 
-  // If no candidates extracted, fall back to legacy merge
   if (candidates.length === 0) {
     onProgress({ type: 'merging', count: passResults.length });
     const finalReport = await mergeConflictResults(passResults, onChunk);
