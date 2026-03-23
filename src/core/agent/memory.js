@@ -6,14 +6,19 @@
  */
 
 export class AgentMemory {
-  constructor() {
-    this.filesRead       = new Map();  // path → content or summary
-    this.actionsHistory  = [];         // full ReAct trace
+  constructor(options = {}) {
+    this.filesRead       = new Map();  // path → content or summary (LRU capped)
+    this.actionsHistory  = [];         // ReAct trace (trimmed periodically)
     this.findings        = [];         // confirmed findings from flagFinding()
     this.resolvedClasses = new Map();  // className → file path
     this.searchResults   = new Map();  // query → results array
     this.startedAt       = new Date().toISOString();
     this.stepCount       = 0;
+
+    // LRU caps — prevent memory exhaustion on large codebases
+    this.maxCachedFiles  = options.maxCachedFiles  || 50;   // ~2.5MB at 50KB avg
+    this.maxHistorySize  = options.maxHistorySize  || 50;   // keep last 50 actions
+    this.maxSearchCache  = options.maxSearchCache  || 20;   // keep last 20 searches
   }
 
   // ── Record a completed action ─────────────────────────────────────────────
@@ -30,18 +35,30 @@ export class AgentMemory {
     };
     this.actionsHistory.push(entry);
 
-    // Side-effect caching by action type
-    if (action === 'readFile' && input?.path) {
-      this.filesRead.set(input.path, result);
+    // Trim history — keep last N actions to prevent unbounded growth
+    if (this.actionsHistory.length > this.maxHistorySize) {
+      this.actionsHistory = this.actionsHistory.slice(-this.maxHistorySize);
     }
-    if (action === 'summarizeFile' && input?.path) {
-      this.filesRead.set(input.path, result); // summary counts as read
+
+    // Side-effect caching by action type — with LRU eviction
+    if ((action === 'readFile' || action === 'summarizeFile') && input?.path) {
+      this.filesRead.set(input.path, result);
+      // LRU eviction — remove oldest entry when cap exceeded
+      if (this.filesRead.size > this.maxCachedFiles) {
+        const oldestKey = this.filesRead.keys().next().value;
+        this.filesRead.delete(oldestKey);
+      }
     }
     if (action === 'resolveClass' && input?.className && result?.path) {
       this.resolvedClasses.set(input.className, result.path);
     }
     if (action === 'searchFiles' && input?.query) {
       this.searchResults.set(input.query, result);
+      // Cap search cache
+      if (this.searchResults.size > this.maxSearchCache) {
+        const oldestKey = this.searchResults.keys().next().value;
+        this.searchResults.delete(oldestKey);
+      }
     }
   }
 
@@ -95,6 +112,10 @@ export class AgentMemory {
     const elapsed = Math.round(
       (new Date() - new Date(this.startedAt)) / 1000
     );
+    // Approximate heap usage for this memory instance
+    const approxHeapMB = Math.round(
+      (this.filesRead.size * 50 + this.actionsHistory.length * 2) / 1024
+    );
     return {
       filesAnalyzed:    this.filesRead.size,
       findings:         this.findings,
@@ -105,6 +126,7 @@ export class AgentMemory {
       resolvedClasses:  Object.fromEntries(this.resolvedClasses),
       startedAt:        this.startedAt,
       completedAt:      new Date().toISOString(),
+      approxHeapMB,
     };
   }
 

@@ -1,5 +1,62 @@
 import chalk from 'chalk';
 
+
+// ── Stateful parsers for complex patterns (immune to ReDoS) ──────────────────
+
+function parseKeyBlocks(content, beginPattern, endMarker, replacement) {
+  let result   = content;
+  let offset   = 0;
+  let safetyLimit = 100; // max blocks to redact per file
+
+  while (safetyLimit-- > 0) {
+    const beginIdx = result.indexOf(beginPattern, offset);
+    if (beginIdx === -1) break;
+
+    const searchFrom = beginIdx + beginPattern.length;
+    const endIdx     = result.indexOf(endMarker, searchFrom);
+
+    if (endIdx === -1) {
+      // No closing marker — stop to avoid runaway
+      break;
+    }
+
+    const blockEnd = endIdx + endMarker.length;
+    const blockLen = blockEnd - beginIdx;
+
+    // Skip implausibly large blocks (>12KB is not a real key)
+    if (blockLen > 12000) {
+      offset = beginIdx + 1;
+      continue;
+    }
+
+    result = result.slice(0, beginIdx) + replacement + result.slice(blockEnd);
+    // Don't advance offset — replacement is shorter, recheck from same position
+  }
+
+  return result;
+}
+
+function parsePrivateKeyBlocks(content) {
+  // Handle all variants: RSA PRIVATE KEY, EC PRIVATE KEY, PRIVATE KEY, etc.
+  const variants = [
+    { begin: '-----BEGIN RSA PRIVATE KEY-----',     end: '-----END RSA PRIVATE KEY-----' },
+    { begin: '-----BEGIN EC PRIVATE KEY-----',      end: '-----END EC PRIVATE KEY-----' },
+    { begin: '-----BEGIN DSA PRIVATE KEY-----',     end: '-----END DSA PRIVATE KEY-----' },
+    { begin: '-----BEGIN PRIVATE KEY-----',          end: '-----END PRIVATE KEY-----' },
+    { begin: '-----BEGIN ENCRYPTED PRIVATE KEY-----', end: '-----END ENCRYPTED PRIVATE KEY-----' },
+    { begin: '-----BEGIN OPENSSH PRIVATE KEY-----', end: '-----END OPENSSH PRIVATE KEY-----' },
+  ];
+  let result = content;
+  for (const { begin, end } of variants) {
+    result = parseKeyBlocks(result, begin, end, '[REDACTED:PRIVATE_KEY_BLOCK]');
+  }
+  return result;
+}
+
+function parseCertificateBlocks(content) {
+  return parseKeyBlocks(content, '-----BEGIN CERTIFICATE-----', '-----END CERTIFICATE-----', '[REDACTED:CERTIFICATE_BLOCK]');
+}
+
 // Patterns to detect and redact sensitive data
 const REDACTION_RULES = [
   // API Keys & Tokens — specific service patterns (high confidence, low false positive)
@@ -41,10 +98,20 @@ export function redactContent(content) {
 
   for (const rule of REDACTION_RULES) {
     try {
-      const matches = redacted.match(rule.regex);
-      if (matches && matches.length > 0) {
-        findings.push(`${rule.name} (${matches.length} instance${matches.length > 1 ? 's' : ''})`);
-        redacted = redacted.replace(rule.regex, rule.replacement);
+      if (rule.parser) {
+        // Stateful parser path (ReDoS-safe)
+        const before  = redacted;
+        redacted       = rule.parser(redacted);
+        if (redacted !== before) {
+          findings.push(`${rule.name} (redacted)`);
+        }
+      } else {
+        // Regex path
+        const matches = redacted.match(rule.regex);
+        if (matches && matches.length > 0) {
+          findings.push(`${rule.name} (${matches.length} instance${matches.length > 1 ? 's' : ''})`);
+          redacted = redacted.replace(rule.regex, rule.replacement);
+        }
       }
     } catch (err) {
       // Rule failed — skip it, don't block the scan
