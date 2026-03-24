@@ -79,17 +79,7 @@ export async function runConflictMode(codebaseContext) {
   }]);
   if (!proceed) { console.log(chalk.gray('\nCancelled.\n')); return; }
 
-  // ── Verification cost warning — shown before scan starts ─────────────────
-  // Shown here so user knows verification cost BEFORE committing to the scan.
-  // Estimate: ~$0.10 per candidate for full verification, ~$0.01 for quick.
-  const candidateEstimate = Math.max(5, Math.ceil(info.totalFiles * 0.15));
-  const fullVerifyCost    = (candidateEstimate * 0.10).toFixed(2);
-  const quickVerifyCost   = (candidateEstimate * 0.01).toFixed(2);
 
-  console.log(chalk.gray(
-    `\n  ℹ  Conflict verification runs after scanning.\n` +
-    `     Est. candidates: ~${candidateEstimate} | Full verify: ~$${fullVerifyCost} | Quick verify: ~$${quickVerifyCost}\n`
-  ));
 
   let buffer  = '';
   let started = false;
@@ -179,6 +169,26 @@ export async function runConflictMode(codebaseContext) {
             console.log('\n');
             break;
         }
+      },
+
+      async onVerifyPrompt({ count, quickCost, fullCost }) {
+        console.log(chalk.cyan(
+          `\n  🔍 ${count} conflict candidates found\n`
+        ));
+        console.log(chalk.gray(
+          `     Quick verify: ~${quickCost}  ~${Math.ceil(count * 0.5)} min\n` +
+          `     Full verify:  ~${fullCost}  ~${Math.ceil(count * 5)} min\n`
+        ));
+        const { choice } = await inquirer.prompt([{
+          type: 'list', name: 'choice',
+          message: chalk.cyan('Choose verification depth:'),
+          choices: [
+            { name: `Quick  — fast scan, surfaces candidates for review  (~${quickCost})`, value: 'quick' },
+            { name: `Full   — deep agent verification per candidate       (~${fullCost})`,  value: 'full' },
+            { name: `Skip   — no verification, surface all as manual review ($0)`,            value: 'skip' },
+          ],
+        }]);
+        return choice;
       },
 
       async onSessionPrompt({ session, totalPasses }) {

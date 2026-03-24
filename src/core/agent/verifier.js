@@ -119,14 +119,25 @@ Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in
  * @param {object}  callbacks   — { onVerifying, onVerified, onProgress }
  * @returns {object}            — { confirmed, possible, falsePositives, insufficient, all }
  */
-export async function verifyConflicts(candidates, fileMap, callbacks = {}) {
+export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode = 'full') {
   const { onProgress } = callbacks;
   const results = [];
 
   for (let i = 0; i < candidates.length; i++) {
     if (onProgress) onProgress({ current: i + 1, total: candidates.length });
 
-    const verified = await verifyOne(candidates[i], fileMap, callbacks);
+    const verified = mode === 'quick'
+      ? await quickVerify(candidates[i], fileMap)
+      : await verifyOne(candidates[i], fileMap, callbacks);
+
+    // Normalize quickVerify verdict to match verifyOne output
+    if (mode === 'quick' && verified.verdict === 'INSUFFICIENT') {
+      verified.verdict = Verdict.INSUFFICIENT;
+    }
+
+    // Emit onVerified for CLI display
+    if (callbacks.onVerified) callbacks.onVerified({ verified });
+
     results.push(verified);
   }
 

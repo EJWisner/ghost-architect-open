@@ -198,9 +198,10 @@ function conflictSessionKey(projectLabel) {
  */
 export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   const {
-    onProgress    = () => {},
-    onChunk       = () => {},
+    onProgress      = () => {},
+    onChunk         = () => {},
     onSessionPrompt = async () => 'resume',
+    onVerifyPrompt  = async () => 'full',
   } = callbacks;
 
   const info       = getConflictPassInfo(fileMap);
@@ -293,6 +294,38 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   // ── Phase 3: Verify each candidate ────────────────────────────────────────
 
+  const quickCost = (candidates.length * 0.01).toFixed(2);
+  const fullCost  = (candidates.length * 0.10).toFixed(2);
+
+  const verifyChoice = await onVerifyPrompt({
+    count:     candidates.length,
+    quickCost,
+    fullCost,
+  });
+
+  if (verifyChoice === 'skip') {
+    onProgress({ type: 'narrating' });
+    const skippedResult = {
+      confirmed:      [],
+      possible:       [],
+      falsePositives: [],
+      insufficient:   candidates,
+      all:            candidates,
+      stats: {
+        total:          candidates.length,
+        confirmed:      0,
+        possible:       0,
+        falsePositives: 0,
+        insufficient:   candidates.length,
+        eliminated:     0,
+        surfaced:       0,
+      },
+    };
+    const finalReport = await narrateConflictReport(skippedResult, { rates }, onChunk);
+    onProgress({ type: 'done', passCount: info.passes.length });
+    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, stats: skippedResult.stats };
+  }
+
   onProgress({ type: 'verification_start', count: candidates.length });
 
   const verificationResult = await verifyConflicts(candidates, fileMap, {
@@ -302,7 +335,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
       onProgress({ type: 'verified', title: verified.title, verdict: verified.verdict }),
     onProgress: ({ current, total }) =>
       onProgress({ type: 'verification_progress', current, total }),
-  });
+  }, verifyChoice);
 
   onProgress({
     type:  'verification_done',
