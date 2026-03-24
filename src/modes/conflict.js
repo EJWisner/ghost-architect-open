@@ -176,15 +176,15 @@ export async function runConflictMode(codebaseContext) {
           `\n  🔍 ${count} conflict candidates found\n`
         ));
         console.log(chalk.gray(
-          `     Quick verify: ~${quickCost}  ~${Math.ceil(count * 3 / 60)} min\n` +
-          `     Full verify:  ~${fullCost}  ~${Math.ceil(count * 10 / 60)} min\n`
+          `     Quick verify: ~$${quickCost}  ~${Math.ceil(count * 3 / 60)} min\n` +
+          `     Full verify:  ~$${fullCost}  ~${Math.ceil(count * 10 / 60)} min\n`
         ));
         const { choice } = await inquirer.prompt([{
           type: 'list', name: 'choice',
           message: chalk.cyan('Choose verification depth:'),
           choices: [
-            { name: `Quick  — fast scan, surfaces candidates for review  (~${quickCost})`, value: 'quick' },
-            { name: `Full   — deep agent verification per candidate       (~${fullCost})`,  value: 'full' },
+            { name: `Quick  — fast scan, surfaces candidates for review  (~$${quickCost})`, value: 'quick' },
+            { name: `Full   — deep agent verification per candidate       (~$${fullCost})`,  value: 'full' },
             { name: `Skip   — no verification, surface all as manual review ($0)`,            value: 'skip' },
           ],
         }]);
