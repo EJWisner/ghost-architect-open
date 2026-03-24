@@ -35,9 +35,11 @@ export async function saveReport(content, prefix, label, meta = {}) {
 
   // Save PDF — branded professional report, client-friendly
   const pdfPath = path.join(dir, `${baseName}.pdf`);
-  const reportType = prefix === 'ghost-poi' ? 'Points of Interest Report'
-    : prefix === 'ghost-blast' ? 'Blast Radius Analysis + Rollback Plan'
-    : 'Chat Transcript';
+  const reportType = prefix === 'ghost-poi'      ? 'Points of Interest Report'
+    : prefix === 'ghost-blast'    ? 'Blast Radius Analysis + Rollback Plan'
+    : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
+    : prefix === 'ghost-chat'     ? 'Chat Transcript'
+    : 'Report';
   const metaWithType = { ...meta, project: label || 'Project Analysis', reportType };
   
   try {
@@ -66,9 +68,10 @@ function convertToMarkdown(content, prefix, label, meta, timestamp) {
   const date = new Date().toLocaleString();
 
   // Build report type label
-  const typeLabel = prefix === 'ghost-poi' ? 'Points of Interest Report'
-    : prefix === 'ghost-blast' ? 'Blast Radius Analysis'
-    : prefix === 'ghost-chat' ? 'Chat Transcript'
+  const typeLabel = prefix === 'ghost-poi'      ? 'Points of Interest Report'
+    : prefix === 'ghost-blast'    ? 'Blast Radius Analysis'
+    : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
+    : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
   // Build header

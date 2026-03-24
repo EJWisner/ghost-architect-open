@@ -176,8 +176,8 @@ export async function runConflictMode(codebaseContext) {
           `\n  🔍 ${count} conflict candidates found\n`
         ));
         console.log(chalk.gray(
-          `     Quick verify: ~${quickCost}  ~${Math.ceil(count * 0.5)} min\n` +
-          `     Full verify:  ~${fullCost}  ~${Math.ceil(count * 5)} min\n`
+          `     Quick verify: ~${quickCost}  ~${Math.ceil(count * 3 / 60)} min\n` +
+          `     Full verify:  ~${fullCost}  ~${Math.ceil(count * 10 / 60)} min\n`
         ));
         const { choice } = await inquirer.prompt([{
           type: 'list', name: 'choice',

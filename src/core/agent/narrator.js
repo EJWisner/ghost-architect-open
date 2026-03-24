@@ -171,8 +171,10 @@ export async function narrateConflictReport(verificationResult, context = {}, on
   const allInconclusive = stats.confirmed === 0 && stats.possible === 0 && (insufficient || []).length > 0;
 
   const rates  = context.rates || { junior: 85, mid: 125, senior: 200 };
+  const today  = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const prompt =
     `Write a Ghost Architect Conflict Detection report as a senior architect.\n\n` +
+    `Today's date is ${today}. Use this as the Report Date in the report header.\n\n` + +
     `VERIFICATION STATS:\n` +
     `- Candidates analyzed: ${stats.total}\n` +
     `- Confirmed conflicts: ${stats.confirmed}\n` +
