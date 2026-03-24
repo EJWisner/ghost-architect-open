@@ -149,7 +149,7 @@ export async function narrateExecutiveSummary(memoryResult, context = {}) {
 export async function narrateConflictReport(verificationResult, context = {}, onChunk = () => {}) {
   const anthropic = getClient();
 
-  const { confirmed, possible, falsePositives, stats } = verificationResult;
+  const { confirmed, possible, falsePositives, insufficient, stats } = verificationResult;
 
   const confirmedList = confirmed.map(c =>
     `CONFIRMED [${c.severity || 'HIGH'}]: ${c.title || c.description}\n` +
@@ -163,6 +163,13 @@ export async function narrateConflictReport(verificationResult, context = {}, on
     `Evidence: ${c.evidence}`
   ).join('\n\n');
 
+  const insufficientList = (insufficient || []).slice(0, 20).map(c =>
+    `INCONCLUSIVE [${c.severity || 'MEDIUM'}]: ${c.title || c.description}\n` +
+    `Files: ${(c.files || []).join(', ')}`
+  ).join('\n\n');
+
+  const allInconclusive = stats.confirmed === 0 && stats.possible === 0 && (insufficient || []).length > 0;
+
   const rates  = context.rates || { junior: 85, mid: 125, senior: 200 };
   const prompt =
     `Write a Ghost Architect Conflict Detection report as a senior architect.\n\n` +
@@ -170,14 +177,22 @@ export async function narrateConflictReport(verificationResult, context = {}, on
     `- Candidates analyzed: ${stats.total}\n` +
     `- Confirmed conflicts: ${stats.confirmed}\n` +
     `- Possible conflicts: ${stats.possible}\n` +
-    `- False positives eliminated: ${stats.falsePositives}\n\n` +
-    (confirmedList ? `CONFIRMED CONFLICTS:\n${confirmedList}\n\n` : 'No confirmed conflicts.\n\n') +
-    (possibleList  ? `POSSIBLE CONFLICTS:\n${possibleList}\n\n`  : '') +
+    `- False positives eliminated: ${stats.falsePositives}\n` +
+    `- Inconclusive (requires manual review): ${(insufficient || []).length}\n\n` +
+    (allInconclusive
+      ? `IMPORTANT: The verifier could not confirm or eliminate any candidates due to limited file context. ` +
+        `Do NOT say the codebase is safe. Instead surface the top candidates as requiring manual review.\n\n`
+      : '') +
+    (confirmedList    ? `CONFIRMED CONFLICTS:\n${confirmedList}\n\n`       : 'No confirmed conflicts.\n\n') +
+    (possibleList     ? `POSSIBLE CONFLICTS:\n${possibleList}\n\n`          : '') +
+    (insufficientList ? `REQUIRES MANUAL REVIEW (top 20 of ${(insufficient||[]).length}):\n${insufficientList}\n\n` : '') +
     `Write a complete report:\n` +
-    `- Open with deployment recommendation (safe/unsafe/conditional)\n` +
+    `- Open with deployment recommendation (safe/unsafe/conditional/inconclusive)\n` +
+    `- If all results are inconclusive, say so clearly — do NOT claim the codebase is conflict-free\n` +
     `- Detail each confirmed conflict: impact, affected flows, fix\n` +
     `- Note possible conflicts with investigation guidance\n` +
-    `- Close with remediation estimates at $${rates.junior}/$${rates.mid}/$${rates.senior}/hr\n` +
+    `- List inconclusive candidates as requiring manual review\n` +
+    `- Close with remediation estimates at ${rates.junior}/${rates.mid}/${rates.senior}/hr\n` +
     `Use markdown. Be direct and specific:`;
 
   let report = '';
