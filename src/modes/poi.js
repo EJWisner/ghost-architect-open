@@ -81,6 +81,7 @@ export async function runPOIMode(codebaseContext) {
 
   let buffer  = '';
   let started = false;
+  let spinner = null;
 
   try {
     if (useMultiPass) {
@@ -92,32 +93,35 @@ export async function runPOIMode(codebaseContext) {
         },
         onProgress({ type, ...data }) {
           if (type === 'narrating') {
-            console.log(chalk.gray('\n  Ghost is writing the final report...\n'));
+            if (spinner) { spinner.stop(); spinner = null; }
+            console.log(chalk.gray("\n  Ghost is writing the final report...\n"));
           }
-          if (type === 'passStart') {
-            console.log(chalk.gray(
-              `  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files (~${(data.tokens||0).toLocaleString()} tokens)...`
-            ));
+          if (type === "passStart") {
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.gray(`  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files (~${(data.tokens||0).toLocaleString()} tokens)...`), color: "cyan" }).start();
           }
-          if (type === 'passComplete') {
-            console.log(chalk.green(`  ✓ Pass ${data.passNum} complete\n`));
+          if (type === "passComplete") {
+            if (spinner) { spinner.succeed(chalk.green(`  ✓ Pass ${data.passNum} complete`)); spinner = null; }
+            console.log("");
           }
-          if (type === 'merging') {
-            console.log(chalk.gray(`  🔀 Merging batch of ${data.count} passes...`));
+          if (type === "merging") {
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.gray(`  Merging batch of ${data.count} passes...`), color: "cyan" }).start();
           }
-          if (type === 'mergeDone') {
-            console.log(chalk.green(`  ✓ Batch merged\n`));
+          if (type === "mergeDone") {
+            if (spinner) { spinner.succeed(chalk.green("  Batch merged")); spinner = null; }
+            console.log("");
           }
-          if (type === 'synthesizing') {
-            console.log(chalk.cyan(`  🧠 Synthesizing ${data.groups} groups into final report...\n`));
+          if (type === "synthesizing") {
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.cyan(`  Synthesizing ${data.groups} groups into final report...`), color: "cyan" }).start();
           }
-          if (type === 'passInfo') {
-            console.log(chalk.cyan(`  🔄 Multi-pass: ${data.totalPasses} total passes, ${data.remaining} remaining`));
-            console.log(chalk.gray(`     Full run: ~${data.estCost} and ~${data.estMinutes} minutes\n`));
+          if (type === "passInfo") {
+            console.log(chalk.cyan(`  Multi-pass: ${data.totalPasses} total passes, ${data.remaining} remaining`));
+            console.log(chalk.gray(`     Full run: ~${data.estCost} and ~${data.estMinutes} minutes
+`));
           }
         },
-        async onPassCapPrompt({ remaining, defaultCap }) {
-          const { passCap } = await inquirer.prompt([{
             type: 'input', name: 'passCap',
             message: chalk.cyan(`Passes to run now?`) + chalk.gray(` (max ${remaining}, Enter for ${defaultCap})`),
             default: String(defaultCap),
