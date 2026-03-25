@@ -116,7 +116,6 @@ export async function runPOIMode(codebaseContext) {
           }
         },
         async onPassCapPrompt({ remaining, defaultCap }) {
-          const { inquirer: inq } = await import('inquirer');
           const { passCap } = await inquirer.prompt([{
             type: 'input', name: 'passCap',
             message: chalk.cyan(`Passes to run now?`) + chalk.gray(` (max ${remaining}, Enter for ${defaultCap})`),
