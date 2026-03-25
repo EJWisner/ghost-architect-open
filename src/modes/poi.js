@@ -95,18 +95,64 @@ export async function runPOIMode(codebaseContext) {
           }
           if (type === 'passStart') {
             console.log(chalk.gray(
-              `  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files...`
+              `  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files (~${(data.tokens||0).toLocaleString()} tokens)...`
             ));
           }
           if (type === 'passComplete') {
-            console.log(chalk.green(`  ✓ Pass ${data.passNum} complete`));
+            console.log(chalk.green(`  ✓ Pass ${data.passNum} complete\n`));
           }
           if (type === 'merging') {
-            console.log(chalk.gray(`  🔀 Merging ${data.count} passes...`));
+            console.log(chalk.gray(`  🔀 Merging batch of ${data.count} passes...`));
+          }
+          if (type === 'mergeDone') {
+            console.log(chalk.green(`  ✓ Batch merged\n`));
           }
           if (type === 'synthesizing') {
-            console.log(chalk.gray('  Synthesizing findings...'));
+            console.log(chalk.cyan(`  🧠 Synthesizing ${data.groups} groups into final report...\n`));
           }
+          if (type === 'passInfo') {
+            console.log(chalk.cyan(`  🔄 Multi-pass: ${data.totalPasses} total passes, ${data.remaining} remaining`));
+            console.log(chalk.gray(`     Full run: ~${data.estCost} and ~${data.estMinutes} minutes\n`));
+          }
+        },
+        async onPassCapPrompt({ remaining, defaultCap }) {
+          const { inquirer: inq } = await import('inquirer');
+          const { passCap } = await inquirer.prompt([{
+            type: 'input', name: 'passCap',
+            message: chalk.cyan(`Passes to run now?`) + chalk.gray(` (max ${remaining}, Enter for ${defaultCap})`),
+            default: String(defaultCap),
+            validate: v => { const n = parseInt(v); return (!isNaN(n) && n >= 1 && n <= remaining) ? true : `Enter 1–${remaining}`; }
+          }]);
+          console.log('');
+          return parseInt(passCap);
+        },
+        async onSessionPrompt({ session, allPassCount, pct }) {
+          console.log(chalk.cyan(`\n📂  Saved session: ${session.projectLabel} — ${session.completedPassCount}/${allPassCount} passes (${pct}% coverage)\n`));
+          const { action } = await inquirer.prompt([{
+            type: 'list', name: 'action',
+            message: chalk.cyan('What would you like to do?'),
+            choices: [
+              { name: `Continue from pass ${session.completedPassCount + 1}`, value: 'continue' },
+              { name: 'Generate report from completed passes now',             value: 'report'   },
+              { name: 'Start over',                                            value: 'restart'  },
+            ]
+          }]);
+          if (action === 'report') console.log(chalk.cyan('\n  🧠 Generating report from completed passes...\n'));
+          return action;
+        },
+        async onCompletePrompt({ coverage, remaining, passCount }) {
+          console.log(chalk.cyan(`\n  ✓ ${passCount} passes complete — ${coverage}% coverage`));
+          console.log(chalk.gray(`  ${remaining} passes remain. Session saved.\n`));
+          const { next } = await inquirer.prompt([{
+            type: 'list', name: 'next',
+            message: chalk.cyan('What would you like to do?'),
+            choices: [
+              { name: 'Generate report from completed passes now', value: 'report' },
+              { name: 'Save and exit — continue next session',     value: 'save'   },
+            ]
+          }]);
+          if (next === 'save') console.log(chalk.green(`\n  ✓ Session saved — continue from pass ${passCount + 1} next time\n`));
+          return next;
         },
       });
 
