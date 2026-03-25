@@ -68,15 +68,15 @@ export async function runPOIMode(codebaseContext) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
   }
 
+  // Smart project label prompt — shows existing projects, fuzzy matches, confirms
+  const label = await promptProjectLabel();
+  console.log('');
+
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
     message: chalk.cyan('Proceed with scan?'), default: true
   }]);
   if (!proceed) { console.log(chalk.gray('\nScan cancelled.\n')); return; }
-
-  // Smart project label prompt — shows existing projects, fuzzy matches, confirms
-  const label = await promptProjectLabel();
-  console.log('');
 
   let buffer  = '';
   let started = false;
