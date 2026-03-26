@@ -118,10 +118,11 @@ export async function runPOIMode(codebaseContext) {
           }
           if (type === "passInfo") {
             console.log(chalk.cyan(`  Multi-pass: ${data.totalPasses} total passes, ${data.remaining} remaining`));
-            console.log(chalk.gray(`     Full run: ~${data.estCost} and ~${data.estMinutes} minutes
-`));
+            console.log(chalk.gray(`     Full run: ~${data.estCost} and ~${data.estMinutes} minutes\n`));
           }
         },
+        async onPassCapPrompt({ remaining, defaultCap }) {
+          const { passCap } = await inquirer.prompt([{
             type: 'input', name: 'passCap',
             message: chalk.cyan(`Passes to run now?`) + chalk.gray(` (max ${remaining}, Enter for ${defaultCap})`),
             default: String(defaultCap),
