@@ -60,7 +60,7 @@ function stripEmoji(s) {
           .replace(/[🚩⚠✅❌🔴🟠🟡🟢👻💬📁🐙⚙🚪🗜■]/gu, '');
 }
 function stripMd(s) { return s.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/`(.+?)`/g,'$1'); }
-function clean(s)   { return stripEmoji(stripMd(stripAnsi(s))).trim(); }
+function clean(s)   { return stripEmoji(stripMd(stripAnsi(s))).replace(/!'/g, '->').trim(); }
 
 function sevColor(t) {
   const u = t.toUpperCase();
@@ -234,17 +234,32 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
             i++;
           }
           const cols = rows.length ? Math.max(...rows.map(ro => ro.length)) : 0;
-          const cw2 = CW / (cols || 1);
+          // Smart column widths — Finding column (index 1) gets 35%, others share the rest
+          function getColWidths(numCols, totalW) {
+            if (numCols === 6) return [totalW*0.07, totalW*0.28, totalW*0.14, totalW*0.14, totalW*0.16, totalW*0.21];
+            if (numCols === 5) return [totalW*0.08, totalW*0.34, totalW*0.16, totalW*0.16, totalW*0.26];
+            const w = totalW / (numCols || 1);
+            return Array(numCols).fill(w);
+          }
+          const colWidths = getColWidths(cols, CW);
           for (let ri = 0; ri < rows.length; ri++) {
-            need(18);
-            box(doc, ML, y, CW, 18, ri===0 ? C.NAVY : (ri%2===0 ? C.CARD_BG : C.WHITE));
+            // Calculate row height based on tallest cell with word wrap
+            doc.font(ri===0?'Helvetica-Bold':'Helvetica').fontSize(8);
+            const cellHeights = rows[ri].map((cell, ci) =>
+              doc.heightOfString(cell, { width: colWidths[ci] - 10 })
+            );
+            const rowH = Math.max(18, Math.max(...cellHeights) + 10);
+            need(rowH);
+            box(doc, ML, y, CW, rowH, ri===0 ? C.NAVY : (ri%2===0 ? C.CARD_BG : C.WHITE));
+            let cx = ML;
             rows[ri].forEach((cell, ci) => {
               doc.font(ri===0?'Helvetica-Bold':'Helvetica').fontSize(8)
                  .fillColor(ri===0?C.WHITE:C.TEXT_DARK)
-                 .text(cell, ML+ci*cw2+6, y+5, { width: cw2-10, lineBreak: false });
+                 .text(cell, cx+6, y+5, { width: colWidths[ci]-10 });
+              cx += colWidths[ci];
             });
-            doc.save().rect(ML, y, CW, 18).lineWidth(0.3).stroke(C.LIGHT_GRAY).restore();
-            y += 18;
+            doc.save().rect(ML, y, CW, rowH).lineWidth(0.3).stroke(C.LIGHT_GRAY).restore();
+            y += rowH;
           }
           if (rows.length) y += 6;
           continue;

@@ -119,7 +119,7 @@ export function getPassInfo(fileMap) {
   const totalFiles = Object.keys(fileMap).length;
   const remaining  = passes.length;
   const estCost    = (remaining * 0.25).toFixed(2);
-  const estMinutes = Math.round(remaining * 0.75);
+  const estMinutes = Math.max(3, Math.round(remaining * 3.5));
   return { passes, topFiles, totalFiles, remaining, estCost, estMinutes, defaultCap: Math.min(DEFAULT_PASS_CAP, remaining) };
 }
 
@@ -370,7 +370,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
   const remaining  = allPasses.length - startFromPass;
   const estCost    = (remaining * 0.25).toFixed(2);
-  const estMinutes = Math.round(remaining * 0.75);
+  const estMinutes = Math.max(3, Math.round(remaining * 3.5));
   const defaultCap = Math.min(DEFAULT_PASS_CAP, remaining);
 
   onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining, estCost, estMinutes });
