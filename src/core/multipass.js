@@ -139,6 +139,23 @@ function extractSkeleton(passResult) {
 
 // ── Claude API ────────────────────────────────────────────────────────────────
 
+
+// ── Retry / resilience helpers ────────────────────────────────────────────────
+const OVERLOAD_RETRY_DELAYS = [15, 30, 60]; // seconds between retries
+const PASS_TIMEOUT_MS       = 8 * 60 * 1000; // 8 minutes — warn if exceeded
+
+function sleep(s) { return new Promise(r => setTimeout(r, s * 1000)); }
+
+function isOverloadErr(err) {
+  const msg = err?.message || '';
+  return err?.status === 529 || msg.includes('529') || msg.includes('overloaded');
+}
+
+function isRateLimitErr(err) {
+  const msg = err?.message || '';
+  return err?.status === 429 || msg.includes('429') || msg.includes('rate_limit');
+}
+
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
 function getRates()  {
@@ -146,19 +163,93 @@ function getRates()  {
   return { junior: cfg.get('rateJunior') || 85, mid: cfg.get('rateMid') || 125, senior: cfg.get('rateSenior') || 200 };
 }
 
-async function callClaude(prompt, system, maxTokens = 8096) {
+async function callClaudeRaw(prompt, system, maxTokens = 8096) {
   const anthropic = getClient();
   let result = '';
-  const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: maxTokens, system,
-    messages: [{ role: 'user', content: prompt }]
-  });
-  for await (const chunk of stream) {
-    if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-      result += chunk.delta.text;
+  
+  // Timeout warning — if no response after PASS_TIMEOUT_MS, warn user
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    process.stdout.write(chalk.yellow('\n  ⚠  Pass is taking longer than expected — API may be slow. Still waiting...\n'));
+  }, PASS_TIMEOUT_MS);
+
+  try {
+    const stream = anthropic.messages.stream({
+      model: getModel(), max_tokens: maxTokens, system,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    for await (const chunk of stream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
+        result += chunk.delta.text;
+      }
     }
+  } finally {
+    clearTimeout(timeoutHandle);
   }
   return result;
+}
+
+async function callClaude(prompt, system, maxTokens = 8096) {
+  for (let attempt = 0; attempt <= OVERLOAD_RETRY_DELAYS.length; attempt++) {
+    try {
+      return await callClaudeRaw(prompt, system, maxTokens);
+    } catch (err) {
+      const isLast = attempt === OVERLOAD_RETRY_DELAYS.length;
+      if (isOverloadErr(err) || isRateLimitErr(err)) {
+        if (isLast) throw err; // give up after all retries
+        const wait = OVERLOAD_RETRY_DELAYS[attempt];
+        process.stdout.write(chalk.yellow(`\n  ⏳ API overloaded — waiting ${wait}s and retrying (attempt ${attempt + 1}/${OVERLOAD_RETRY_DELAYS.length})...\n`));
+        await sleep(wait);
+        process.stdout.write(chalk.gray('  Retrying...\n'));
+        continue;
+      }
+      throw err; // non-retryable error — rethrow immediately
+    }
+  }
+}
+
+
+// ── Checkpoint helpers ────────────────────────────────────────────────────────
+function getCheckpointPath(projectLabel) {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const dir  = path.join(home, 'Ghost Architect Reports', '.checkpoints');
+  fs.mkdirSync(dir, { recursive: true });
+  const safe = (projectLabel || 'unnamed').replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+  return path.join(dir, `${safe}.checkpoint.json`);
+}
+
+export function writeCheckpoint(projectLabel, passNum, totalPasses, passResults) {
+  try {
+    const cpPath = getCheckpointPath(projectLabel);
+    const data = {
+      projectLabel,
+      completedPass: passNum,
+      totalPasses,
+      passResults,
+      timestamp: Date.now(),
+    };
+    fs.writeFileSync(cpPath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) { /* checkpoint write failure is non-fatal */ }
+}
+
+export function readCheckpoint(projectLabel) {
+  try {
+    const cpPath = getCheckpointPath(projectLabel);
+    if (!fs.existsSync(cpPath)) return null;
+    const data = JSON.parse(fs.readFileSync(cpPath, 'utf8'));
+    // Only valid if < 24 hours old and has at least one completed pass
+    const ageHours = (Date.now() - data.timestamp) / (1000 * 60 * 60);
+    if (ageHours > 24 || !data.passResults?.length) return null;
+    return data;
+  } catch (e) { return null; }
+}
+
+export function clearCheckpoint(projectLabel) {
+  try {
+    const cpPath = getCheckpointPath(projectLabel);
+    if (fs.existsSync(cpPath)) fs.unlinkSync(cpPath);
+  } catch (e) { /* non-fatal */ }
 }
 
 // ── Single pass ───────────────────────────────────────────────────────────────

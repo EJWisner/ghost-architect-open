@@ -4,6 +4,9 @@ import os from 'os';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import { generatePDF } from './pdf-generator.js';
+import { createRequire } from 'module';
+const _require = createRequire(import.meta.url);
+const { version: GHOST_VERSION } = _require('../package.json');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,7 +43,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
-  const metaWithType = { ...meta, project: label || 'Project Analysis', reportType };
+  const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION };
   
   try {
     await generatePDF(stripAnsi(content), pdfPath, metaWithType);
@@ -82,7 +85,7 @@ function convertToMarkdown(content, prefix, label, meta, timestamp) {
   if (meta.filesAnalyzed) md += `| **Files Analyzed** | ${meta.filesAnalyzed} |\n`;
   if (meta.totalFiles) md += `| **Total Files in Project** | ${meta.totalFiles} |\n`;
   if (meta.cost) md += `| **Analysis Cost** | ${meta.cost} |\n`;
-  md += `| **Tool** | Ghost Architect v3.2.0 |\n`;
+  md += `| **Tool** | Ghost Architect v${GHOST_VERSION} |\n`;
   md += `| **Copyright** | © 2026 Ghost Architect. All rights reserved. |\n\n`;
   md += `---\n\n`;
 
