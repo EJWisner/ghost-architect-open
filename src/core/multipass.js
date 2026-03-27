@@ -163,29 +163,45 @@ function getRates()  {
   return { junior: cfg.get('rateJunior') || 85, mid: cfg.get('rateMid') || 125, senior: cfg.get('rateSenior') || 200 };
 }
 
+function isContextLimitErr(err) {
+  const msg = err?.message || '';
+  return err?.status === 400 ||
+    msg.includes('too large') ||
+    msg.includes('context') ||
+    msg.includes('token') && msg.includes('limit') ||
+    msg.includes('maximum') ||
+    msg.includes('reduce');
+}
+
 async function callClaudeRaw(prompt, system, maxTokens = 8096) {
   const anthropic = getClient();
   let result = '';
-  
+  let activeStream = null;
+
   // Timeout warning — if no response after PASS_TIMEOUT_MS, warn user
-  let timedOut = false;
   const timeoutHandle = setTimeout(() => {
-    timedOut = true;
     process.stdout.write(chalk.yellow('\n  ⚠  Pass is taking longer than expected — API may be slow. Still waiting...\n'));
   }, PASS_TIMEOUT_MS);
 
   try {
-    const stream = anthropic.messages.stream({
+    activeStream = anthropic.messages.stream({
       model: getModel(), max_tokens: maxTokens, system,
       messages: [{ role: 'user', content: prompt }]
     });
-    for await (const chunk of stream) {
+    for await (const chunk of activeStream) {
       if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
         result += chunk.delta.text;
       }
     }
+  } catch (err) {
+    // Abort stream cleanly before rethrowing — prevents orphaned background processes
+    if (activeStream) {
+      try { activeStream.abort(); } catch (e) { /* ignore abort errors */ }
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutHandle);
+    activeStream = null;
   }
   return result;
 }
@@ -196,15 +212,32 @@ async function callClaude(prompt, system, maxTokens = 8096) {
       return await callClaudeRaw(prompt, system, maxTokens);
     } catch (err) {
       const isLast = attempt === OVERLOAD_RETRY_DELAYS.length;
+
+      // Context limit — never retry, give clean message
+      if (isContextLimitErr(err)) {
+        process.stdout.write(chalk.yellow('\n  ⚠  This pass exceeds the API context limit. The file is too large for a single pass.\n'));
+        process.stdout.write(chalk.gray('  Tip: Try scanning a subfolder or ZIP of specific modules rather than the full repo.\n\n'));
+        throw err;
+      }
+
+      // Overload or rate limit — retry with backoff
       if (isOverloadErr(err) || isRateLimitErr(err)) {
-        if (isLast) throw err; // give up after all retries
+        if (isLast) throw err;
         const wait = OVERLOAD_RETRY_DELAYS[attempt];
         process.stdout.write(chalk.yellow(`\n  ⏳ API overloaded — waiting ${wait}s and retrying (attempt ${attempt + 1}/${OVERLOAD_RETRY_DELAYS.length})...\n`));
         await sleep(wait);
         process.stdout.write(chalk.gray('  Retrying...\n'));
         continue;
       }
-      throw err; // non-retryable error — rethrow immediately
+
+      // Any other error — retry once, then give up
+      if (!isLast && attempt === 0) {
+        process.stdout.write(chalk.yellow(`\n  ⏳ Pass failed — waiting 10s and retrying...\n`));
+        await sleep(10);
+        continue;
+      }
+
+      throw err;
     }
   }
 }
