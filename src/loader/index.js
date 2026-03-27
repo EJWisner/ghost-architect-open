@@ -9,6 +9,8 @@ import inquirer from 'inquirer';
 import { getConfig } from '../config.js';
 
 const IGNORED_DIRS = ['node_modules', '.git', 'vendor', 'dist', 'build', '.next', '__pycache__', '.cache'];
+const IGNORED_FILES = ['package-lock.json', 'yarn.lock', 'composer.lock', 'package.json.lock', 'Gemfile.lock', 'poetry.lock'];
+const MAX_FILE_TOKENS = 50000; // ~200KB — skip files larger than this
 const CODE_EXTENSIONS = [
   '.php', '.js', '.ts', '.jsx', '.tsx', '.py', '.rb', '.java', '.go',
   '.cs', '.cpp', '.c', '.h', '.vue', '.svelte', '.sql', '.xml', '.json',
@@ -64,9 +66,17 @@ async function loadFromZip() {
     if (!CODE_EXTENSIONS.includes(ext)) continue;
     const ignored = IGNORED_DIRS.some(d => entry.entryName.includes(`/${d}/`) || entry.entryName.startsWith(`${d}/`));
     if (ignored) continue;
+    const filename = path.basename(entry.entryName);
+    if (IGNORED_FILES.includes(filename)) continue;
 
     try {
       const content = entry.getData().toString('utf8');
+      // Skip files that exceed token limit — they crash the API
+      const estTokens = Math.ceil(content.length / 4);
+      if (estTokens > MAX_FILE_TOKENS) {
+        console.log(chalk.gray(`  ⚠ Skipped ${filename} — too large (${Math.round(estTokens/1000)}k tokens)`));
+        continue;
+      }
       fileMap[entry.entryName] = content;
       count++;
     } catch {}
