@@ -15,7 +15,7 @@ import { runConflictMode } from '../src/modes/conflict.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-const VERSION   = '4.5.8';
+const VERSION   = '4.5.9';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 // ── Banner ──────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ async function selectInputMethod() {
 
 async function selectMode(codebaseContext) {
   console.log('\n' + boxen(
-    chalk.green.bold('✓ Project processed') + '\n' +
+    chalk.green.bold(SYM.check + ' Project processed') + '\n' +
     chalk.gray(`${codebaseContext.loadedFiles} files | ${codebaseContext.fileIndex.slice(0, 3).join(', ')}${codebaseContext.fileIndex.length > 3 ? '...' : ''}`),
     { padding: { top: 0, bottom: 0, left: 1, right: 1 }, borderColor: 'green', borderStyle: 'round' }
   ));
@@ -176,6 +176,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(chalk.red('\n✗ Fatal error:'), err.message);
+  console.error(chalk.red('\n' + SYM.cross + ' Fatal error:'), err.message);
   process.exit(1);
 });

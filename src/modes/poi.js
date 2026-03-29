@@ -1,4 +1,6 @@
 import { showFriendlyError } from '../utils/errors.js';
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -101,7 +103,7 @@ export async function runPOIMode(codebaseContext) {
             spinner = ora({ text: chalk.gray(`  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files (~${(data.tokens||0).toLocaleString()} tokens)...`), color: "cyan" }).start();
           }
           if (type === "passComplete") {
-            if (spinner) { spinner.succeed(chalk.green(`  ✓ Pass ${data.passNum} complete`)); spinner = null; }
+            if (spinner) { spinner.succeed(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`)); spinner = null; }
             console.log("");
           }
           if (type === "merging") {
@@ -146,7 +148,7 @@ export async function runPOIMode(codebaseContext) {
           return action;
         },
         async onCompletePrompt({ coverage, remaining, passCount }) {
-          console.log(chalk.cyan(`\n  ✓ ${passCount} passes complete — ${coverage}% coverage`));
+          console.log(chalk.cyan(`\n  ${SYM.check} ${passCount} passes complete — ${coverage}% coverage`));
           console.log(chalk.gray(`  ${remaining} passes remain. Session saved.\n`));
           const { next } = await inquirer.prompt([{
             type: 'list', name: 'next',
@@ -156,7 +158,7 @@ export async function runPOIMode(codebaseContext) {
               { name: 'Save and exit — continue next session',     value: 'save'   },
             ]
           }]);
-          if (next === 'save') console.log(chalk.green(`\n  ✓ Session saved — continue from pass ${passCount + 1} next time\n`));
+          if (next === 'save') console.log(chalk.green(`\n  ${SYM.check} Session saved — continue from pass ${passCount + 1} next time\n`));
           return next;
         },
       });
@@ -174,7 +176,7 @@ export async function runPOIMode(codebaseContext) {
         }
         console.log('\n');
         console.log(chalk.cyan(
-          `  ✓ Multi-pass complete — ${multiResult.passCount} passes, ` +
+          `  ${SYM.check} Multi-pass complete — ${multiResult.passCount} passes, ` +
           `${multiResult.coverage}% of ${multiResult.totalFiles} files analyzed\n`
         ));
       }
@@ -229,7 +231,7 @@ export async function runPOIMode(codebaseContext) {
         version: '4.5.0'
       };
       const saved = await saveReport(buffer, 'ghost-poi', label, meta);
-      console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
+      console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));

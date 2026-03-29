@@ -1,4 +1,6 @@
 import fs from 'fs';
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 import path from 'path';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -66,7 +68,7 @@ export async function runCompareMode() {
   if (resolved.length === 0) {
     console.log(chalk.gray('  None\n'));
   } else {
-    resolved.forEach(f => console.log(chalk.green(`  ✓ ${f.title}`) + chalk.gray(` [${f.severity}]`)));
+    resolved.forEach(f => console.log(chalk.green(`  ${SYM.check} ${f.title}`) + chalk.gray(` [${f.severity}]`)));
     console.log('');
   }
 
@@ -74,7 +76,7 @@ export async function runCompareMode() {
   if (remaining.length === 0) {
     console.log(chalk.gray('  None\n'));
   } else {
-    remaining.forEach(f => console.log(chalk.red(`  ✗ ${f.title}`) + chalk.gray(` [${f.severity}]`)));
+    remaining.forEach(f => console.log(chalk.red(`  ${SYM.cross} ${f.title}`) + chalk.gray(` [${f.severity}]`)));
     console.log('');
   }
 
@@ -95,8 +97,8 @@ export async function runCompareMode() {
     chalk.white.bold('COMPARISON SUMMARY') + '\n\n' +
     chalk.gray('Before: ') + chalk.white(`${beforeFindings.length} findings`) + '\n' +
     chalk.gray('After:  ') + chalk.white(`${afterFindings.length} findings`) + '\n\n' +
-    chalk.green(`✓ ${resolved.length} resolved`) + '  ' +
-    chalk.red(`✗ ${remaining.length} remaining`) + '  ' +
+    chalk.green(`${SYM.check} ${resolved.length} resolved`) + '  ' +
+    chalk.red(`${SYM.cross} ${remaining.length} remaining`) + '  ' +
     chalk.yellow(`⚠ ${newIssues.length} new`) + '\n\n' +
     chalk.cyan.bold(`Progress: ${progress}% of original issues resolved`),
     { padding: 1, borderColor: progress >= 75 ? 'green' : progress >= 40 ? 'yellow' : 'red', borderStyle: 'round' }
@@ -119,7 +121,7 @@ export async function runCompareMode() {
 
     const content = buildCompareReport(beforeName, afterName, resolved, remaining, newIssues, progress);
     fs.writeFileSync(outPath, content);
-    console.log(chalk.green(`\n✓ Comparison saved: ghost-compare-${timestamp}.txt\n`));
+    console.log(chalk.green(`\n${SYM.check} Comparison saved: ghost-compare-${timestamp}.txt\n`));
   }
 }
 
@@ -214,7 +216,7 @@ function buildCompareReport(beforeName, afterName, resolved, remaining, newIssue
   out += `PROGRESS: ${progress}% of original issues resolved\n\n`;
 
   out += `✅ RESOLVED (${resolved.length})\n`;
-  resolved.forEach(f => { out += `  ✓ [${f.severity}] ${f.title}\n`; });
+  resolved.forEach(f => { out += `  ${SYM.check} [${f.severity}] ${f.title}\n`; });
   out += '\n';
 
   out += `🔴 REMAINING (${remaining.length})\n`;

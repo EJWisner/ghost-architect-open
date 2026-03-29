@@ -1,4 +1,6 @@
 /**
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
  * Ghost Architect — Multi-Pass Scanner (CLI layer)
  * Thin wrapper: handles all prompts and display for core/multipass.js
  */
@@ -37,13 +39,13 @@ export async function runMultiPassPOI(fileMap, projectLabel, onChunk) {
           console.log(chalk.gray(`  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files (~${data.tokens.toLocaleString()} tokens)...`));
           break;
         case 'passComplete':
-          console.log(chalk.green(`  ✓ Pass ${data.passNum} complete\n`));
+          console.log(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete\n`));
           break;
         case 'merging':
           console.log(chalk.gray(`  🔀 Merging batch of ${data.count} passes...`));
           break;
         case 'mergeDone':
-          console.log(chalk.green(`  ✓ Batch merged\n`));
+          console.log(chalk.green(`  ${SYM.check} Batch merged\n`));
           break;
         case 'mergingFinal':
           console.log(chalk.gray(`  🔀 Merging final batch...`));
@@ -81,7 +83,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, onChunk) {
     },
 
     async onCompletePrompt({ coverage, remaining, passCount }) {
-      console.log(chalk.cyan(`\n  ✓ ${passCount} passes complete — ${coverage}% coverage`));
+      console.log(chalk.cyan(`\n  ${SYM.check} ${passCount} passes complete — ${coverage}% coverage`));
       console.log(chalk.gray(`  ${remaining} passes remain. Session saved.\n`));
       const { next } = await inquirer.prompt([{
         type: 'list', name: 'next',
@@ -92,7 +94,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, onChunk) {
         ]
       }]);
       if (next === 'save') {
-        console.log(chalk.green(`\n  ✓ Session saved — continue from pass ${passCount + 1} next time\n`));
+        console.log(chalk.green(`\n  ${SYM.check} Session saved — continue from pass ${passCount + 1} next time\n`));
       }
       return next;
     },

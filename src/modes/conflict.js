@@ -1,4 +1,6 @@
 /**
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
  * Ghost Architect — Conflict Detection Mode (CLI layer)
  * Thin wrapper: handles all prompts and display for core/conflict.js
  */
@@ -113,7 +115,7 @@ export async function runConflictMode(codebaseContext) {
             break;
 
           case 'passComplete':
-            console.log(chalk.green(`  ✓ Pass ${data.passNum} complete`));
+            console.log(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`));
             break;
 
           case 'resuming':
@@ -137,9 +139,9 @@ export async function runConflictMode(codebaseContext) {
 
           case 'verified': {
             const icon =
-              data.verdict === 'CONFIRMED'      ? chalk.red('  ✗  CONFIRMED') :
+              data.verdict === 'CONFIRMED'      ? chalk.red('  ' + SYM.cross + '  CONFIRMED') :
               data.verdict === 'POSSIBLE'        ? chalk.yellow('  ?  POSSIBLE ') :
-              data.verdict === 'FALSE_POSITIVE'  ? chalk.green('  ✓  ELIMINATED') :
+              data.verdict === 'FALSE_POSITIVE'  ? chalk.green('  ' + SYM.check + '  ELIMINATED') :
                                                    chalk.gray('  ~  UNCLEAR  ');
             console.log(`${icon}  ${chalk.gray(data.title.slice(0, 55))}`);
             break;
@@ -244,7 +246,7 @@ export async function runConflictMode(codebaseContext) {
         verificationStats: result.stats || null,
       };
       const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
-      console.log(chalk.green(`\n✓ Conflict report saved to ~/Ghost Architect Reports/`));
+      console.log(chalk.green(`\n${SYM.check} Conflict report saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.magenta(`  📑 ${saved.pdfFile}  ← client-ready PDF`));

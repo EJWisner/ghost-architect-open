@@ -1,4 +1,6 @@
 import { showFriendlyError } from '../utils/errors.js';
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -121,7 +123,7 @@ export async function runBlastMode(codebaseContext) {
 
     if (doSave) {
       const saved = await saveReport(buffer, 'ghost-blast', target.trim());
-      console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
+      console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
