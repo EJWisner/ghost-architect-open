@@ -10,6 +10,9 @@ import { loadCodebase } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
+
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 import { runCompareMode } from '../src/modes/compare.js';
 import { runConflictMode } from '../src/modes/conflict.js';
 import { showProjectDashboard } from '../src/projects.js';
