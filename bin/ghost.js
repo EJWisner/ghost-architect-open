@@ -49,7 +49,7 @@ function printBanner() {
 
   // Env var notice
   if (usingEnvKey()) {
-    console.log(chalk.gray('  ') + chalk.green('⚡ Using ANTHROPIC_API_KEY from environment') + '\n');
+    console.log(chalk.gray('  ') + chalk.green(IS_WINDOWS ? '[KEY] Using ANTHROPIC_API_KEY from environment' : '⚡ Using ANTHROPIC_API_KEY from environment') + '\n');
   }
 }
 
@@ -57,19 +57,19 @@ function printBanner() {
 
 async function selectInputMethod() {
   const choices = [
-    { name: '📁  Local directory', value: 'files' },
-    { name: '🗜   ZIP file', value: 'zip' },
-    { name: '🐙  GitHub repository', value: 'github' },
+    { name: IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory', value: 'files' },
+    { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
+    { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
     new inquirer.Separator(),
-    { name: '📊  Project Dashboard  ' + chalk.gray('— Remediation progress across all projects'), value: 'dashboard' },
-    { name: '🔍  Compare Reports  ' + chalk.gray('— Before/after diff of two saved reports'), value: 'compare' },
+    { name: IS_WINDOWS ? '[DSH] Project Dashboard  ' : IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ' + chalk.gray('— Remediation progress across all projects'), value: 'dashboard' },
+    { name: IS_WINDOWS ? '[CMP] Compare Reports  ' : IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ' + chalk.gray('— Before/after diff of two saved reports'), value: 'compare' },
     new inquirer.Separator(),
   ];
 
   if (!usingEnvKey()) {
-    choices.push({ name: '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
+    choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect' : '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
   }
-  choices.push({ name: '🚪  Exit', value: 'exit' });
+  choices.push({ name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' });
 
   const { method } = await inquirer.prompt([{
     type: 'list',
@@ -96,14 +96,14 @@ async function selectMode(codebaseContext) {
     message: chalk.cyan('\nWhat do you want to do?'),
     theme: inquirerTheme,
     choices: [
-      { name: '💬  Chat  ' + chalk.gray('— Ask anything about this project'), value: 'chat' },
-      { name: '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
-      { name: '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
-      { name: '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
+      { name: IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ' + chalk.gray('— Ask anything about this project'), value: 'chat' },
+      { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
+      { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
+      { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
       { name: '🔍  Compare Reports  ' + chalk.gray('— Before/after diff of two saved reports'), value: 'compare' },
       { name: '📊  Project Dashboard  ' + chalk.gray('— Remediation progress across all projects'), value: 'dashboard' },
       new inquirer.Separator(),
-      { name: '🔄  Load different project', value: 'reload' },
+      { name: IS_WINDOWS ? '[RLD] Load different project' : '🔄  Load different project', value: 'reload' },
       { name: '🚪  Exit', value: 'exit' },
     ]
   }]);
