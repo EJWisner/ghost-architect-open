@@ -13,6 +13,14 @@ import { runBlastMode } from '../src/modes/blast.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+// Override Inquirer Unicode symbols on Windows
+if (process.platform === 'win32') {
+  process.env.FORCE_STDIN_TTY = '1';
+}
+const inquirerTheme = process.platform === 'win32' ? {
+  icon: { cursor: '>' }
+} : {};
+
 import { runCompareMode } from '../src/modes/compare.js';
 import { runConflictMode } from '../src/modes/conflict.js';
 import { showProjectDashboard } from '../src/projects.js';
@@ -67,6 +75,7 @@ async function selectInputMethod() {
     type: 'list',
     name: 'method',
     message: chalk.cyan('Load project from:'),
+    theme: inquirerTheme,
     choices
   }]);
   return method;
@@ -85,6 +94,7 @@ async function selectMode(codebaseContext) {
     type: 'list',
     name: 'mode',
     message: chalk.cyan('\nWhat do you want to do?'),
+    theme: inquirerTheme,
     choices: [
       { name: '💬  Chat  ' + chalk.gray('— Ask anything about this project'), value: 'chat' },
       { name: '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
