@@ -61,8 +61,8 @@ async function selectInputMethod() {
     { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
     { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
     new inquirer.Separator(),
-    { name: IS_WINDOWS ? '[DSH] Project Dashboard  ' : IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ' + chalk.gray('— Remediation progress across all projects'), value: 'dashboard' },
-    { name: IS_WINDOWS ? '[CMP] Compare Reports  ' : IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ' + chalk.gray('— Before/after diff of two saved reports'), value: 'compare' },
+    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
+    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
     new inquirer.Separator(),
   ];
 
@@ -100,11 +100,11 @@ async function selectMode(codebaseContext) {
       { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
       { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
       { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
-      { name: '🔍  Compare Reports  ' + chalk.gray('— Before/after diff of two saved reports'), value: 'compare' },
-      { name: '📊  Project Dashboard  ' + chalk.gray('— Remediation progress across all projects'), value: 'dashboard' },
+      { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
+      { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
       new inquirer.Separator(),
       { name: IS_WINDOWS ? '[RLD] Load different project' : '🔄  Load different project', value: 'reload' },
-      { name: '🚪  Exit', value: 'exit' },
+      { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
     ]
   }]);
 
