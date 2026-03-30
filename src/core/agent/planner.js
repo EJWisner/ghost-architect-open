@@ -92,7 +92,7 @@ function estimateCosts(fileMap, mode = 'poi') {
   // Rough estimate: each pass ~$0.20-0.35 depending on output verbosity
   const costPerPass = mode === 'conflict' ? 0.30 : 0.25;
   const estCost     = (estimatedPasses * costPerPass).toFixed(2);
-  const estMinutes  = Math.round(estimatedPasses * 0.75);
+  const estMinutes  = Math.max(3, Math.round(estimatedPasses * 3.5));
 
   // Agent overhead: planner (1 call) + optional verifier calls
   const agentOverhead = mode === 'conflict'

@@ -194,18 +194,18 @@ export async function runConflictMode(codebaseContext) {
       },
 
       async onSessionPrompt({ session, totalPasses }) {
-        console.log(chalk.yellow(
-          `\n  ⚡ Partial conflict session found — ` +
-          `${session.completedPassCount} of ${totalPasses} passes completed.\n`
-        ));
+        const pct = Math.round((session.completedPassCount / totalPasses) * 100);
+        console.log(chalk.cyan(`\n📂  Saved session: ${session.projectLabel} — ${session.completedPassCount}/${totalPasses} passes (${pct}% coverage)\n`));
         const { action } = await inquirer.prompt([{
           type: 'list', name: 'action',
-          message: chalk.cyan('Resume or restart?'),
+          message: chalk.cyan('What would you like to do?'),
           choices: [
-            { name: `Resume from Pass ${session.completedPassCount + 1}`, value: 'resume' },
-            { name: 'Restart from scratch',                                value: 'restart' },
+            { name: `Continue from pass ${session.completedPassCount + 1}`, value: 'resume'  },
+            { name: 'Generate report from completed passes now',              value: 'report'  },
+            { name: 'Restart from scratch',                                   value: 'restart' },
           ],
         }]);
+        if (action === 'report') console.log(chalk.cyan('\n  🧠 Generating report from completed passes...\n'));
         return action;
       },
     };

@@ -134,17 +134,50 @@ async function loadFromGitHub() {
       return !IGNORED_DIRS.some(d => item.path.includes(`${d}/`));
     });
 
-    spinner.text = `Fetching ${codeFiles.length} files...`;
+    spinner.stop();
+
+    // Get root-level folders
+    const rootFolders = [...new Set(
+      codeFiles
+        .map(f => f.path.includes('/') ? f.path.split('/')[0] : '(root)')
+        .filter(Boolean)
+    )].sort();
+
+    let selectedFolders = rootFolders;
+
+    if (rootFolders.length > 1) {
+      const { chosen } = await inquirer.prompt([{
+        type: 'checkbox',
+        name: 'chosen',
+        message: chalk.cyan('Select folders to scan (space to toggle, enter to confirm):'),
+        choices: rootFolders,
+        default: rootFolders,
+        validate: (v) => v.length > 0 ? true : 'Select at least one folder'
+      }]);
+      selectedFolders = chosen;
+    }
+
+    const filteredFiles = codeFiles.filter(f => {
+      const root = f.path.includes('/') ? f.path.split('/')[0] : '(root)';
+      return selectedFolders.includes(root);
+    });
+
+    spinner.start(`Fetching ${filteredFiles.length} files from ${selectedFolders.length} folder(s)...`);
 
     // Fetch files (cap at 200 for API limits)
-    const filesToFetch = codeFiles.slice(0, 200);
+    const filesToFetch = filteredFiles.slice(0, 200);
     let fetched = 0;
 
     for (const file of filesToFetch) {
       try {
-        const { data } = await octokit.rest.repos.getContent({ owner, repo, path: file.path });
+        const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: file.sha });
         if (data.content) {
           const content = Buffer.from(data.content, 'base64').toString('utf8');
+          const estTokens = Math.ceil(content.length / 4);
+          if (estTokens > MAX_FILE_TOKENS) {
+            console.log(chalk.gray(`  ⚠ Skipped ${file.path} — too large (${Math.round(estTokens/1000)}k tokens)`));
+            continue;
+          }
           fileMap[file.path] = content;
           fetched++;
         }
