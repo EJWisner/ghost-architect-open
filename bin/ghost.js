@@ -21,10 +21,22 @@ const inquirerTheme = process.platform === 'win32' ? {
   icon: { cursor: '>' }
 } : {};
 
-import { runCompareMode } from '../src/modes/compare.js';
+
 import { runConflictMode } from '../src/modes/conflict.js';
-import { showProjectDashboard } from '../src/projects.js';
+
 import { SessionCostTracker } from '../src/estimator.js';
+// Ghost Open — Pro features unavailable in this version
+function showUpgradePrompt(feature) {
+  console.log('\n' + boxen(
+    chalk.yellow.bold('⬆  Ghost Pro Feature') + '\n\n' +
+    chalk.white(feature + ' is available in Ghost Pro.\n') +
+    chalk.gray('Full PDF, markdown, multipass, project intelligence.\n') +
+    chalk.gray('Know what you are inheriting before you commit.\n\n') +
+    chalk.cyan('ghostarchitect.dev'),
+    { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+  ));
+}
+
 
 const VERSION   = '4.6.0';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
@@ -61,8 +73,8 @@ async function selectInputMethod() {
     { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
     { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
     new inquirer.Separator(),
-    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
-    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
+    { name: (IS_WINDOWS ? '[PRO] Project Dashboard  ' : '⬆   Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'dashboard_locked' },
+    { name: (IS_WINDOWS ? '[PRO] Compare Reports  ' : '⬆   Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'compare_locked' },
     new inquirer.Separator(),
   ];
 
@@ -100,8 +112,8 @@ async function selectMode(codebaseContext) {
       { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
       { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
       { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
-      { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
-      { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
+      { name: (IS_WINDOWS ? '[PRO] Compare Reports  ' : '⬆   Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'compare_locked' },
+      { name: (IS_WINDOWS ? '[PRO] Project Dashboard  ' : '⬆   Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'dashboard_locked' },
       new inquirer.Separator(),
       { name: IS_WINDOWS ? '[RLD] Load different project' : '🔄  Load different project', value: 'reload' },
       { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
@@ -147,13 +159,8 @@ async function main() {
         continue;
       }
 
-      if (method === 'dashboard') {
-        await showProjectDashboard();
-        continue;
-      }
-
-      if (method === 'compare') {
-        await runCompareMode();
+      if (method === 'dashboard_locked' || method === 'compare_locked') {
+        showUpgradePrompt(method === 'dashboard_locked' ? 'Project Dashboard' : 'Compare Reports');
         continue;
       }
 
@@ -182,8 +189,8 @@ async function main() {
       case 'poi':       await runPOIMode(codebaseContext);      break;
       case 'blast':     await runBlastMode(codebaseContext);    break;
       case 'conflict':  await runConflictMode(codebaseContext); break;
-      case 'compare':   await runCompareMode();                 break;
-      case 'dashboard': await showProjectDashboard();           break;
+      case 'compare_locked':   showUpgradePrompt('Compare Reports');   break;
+      case 'dashboard_locked': showUpgradePrompt('Project Dashboard'); break;
     }
   }
 }
