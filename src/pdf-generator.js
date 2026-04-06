@@ -159,6 +159,8 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       const lines = reportText.split('\n');
       let i = 0;
       let lastSection = '';
+      let findingCount = 0;
+      const MAX_FREE_FINDINGS = 4;
 
       while (i < lines.length) {
         const line = lines[i].trim();
@@ -186,6 +188,28 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
         const isMdFind    = /^###\s/.test(line);
         const isGhostFind = /^\d+\.\s+[A-Z]/.test(line) && line.length > 10;
         if (isMdFind || isGhostFind) {
+          // Ghost Open truncation — stop at MAX_FREE_FINDINGS
+          if (findingCount >= MAX_FREE_FINDINGS) {
+            const remaining = reportText.split('\n').filter(l => /^###\s/.test(l.trim()) || (/^\d+\.\s+[A-Z]/.test(l.trim()) && l.trim().length > 10)).length - MAX_FREE_FINDINGS;
+            need(120);
+            box(doc, ML, y, CW, 100, C.DARK_BG);
+            doc.font('Helvetica-Bold').fontSize(13).fillColor(C.WHITE)
+               .text('Ghost Pro — Full Report Available', ML + 16, y + 14, { width: CW - 32, lineBreak: false });
+            doc.font('Helvetica').fontSize(9).fillColor(C.TEAL)
+               .text(`You are looking at 4 of ${remaining + MAX_FREE_FINDINGS} findings. The rest are in Ghost Pro —`, ML + 16, y + 34, { width: CW - 32 });
+            doc.font('Helvetica').fontSize(9).fillColor(C.LIGHT_GRAY)
+               .text('full PDF, markdown, multipass, project intelligence.', ML + 16, y + 48, { width: CW - 32 });
+            doc.font('Helvetica').fontSize(9).fillColor(C.LIGHT_GRAY)
+               .text('Know what you are inheriting before you commit.', ML + 16, y + 62, { width: CW - 32 });
+            doc.font('Helvetica-Bold').fontSize(10).fillColor(C.TEAL)
+               .text('ghostarchitect.dev', ML + 16, y + 78, { width: CW - 32 });
+            y += 110;
+            doc.end();
+            stream.on('finish', resolve);
+            stream.on('error', reject);
+            return;
+          }
+          findingCount++;
           // Look ahead: estimate height of this entire finding block
           let lookahead = 28; // finding header
           let j = i + 1;
