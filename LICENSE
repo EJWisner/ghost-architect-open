@@ -1,19 +1,9 @@
-Ghost Architect
-Copyright © 2026 Ernst J. Wisner. All rights reserved.
+MIT License
 
-PROPRIETARY SOFTWARE LICENSE
+Copyright (c) 2026 Ghost Architect
 
-This software and associated documentation files (the "Software") are the 
-exclusive intellectual property of Ernst J. Wisner ("Owner"). 
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
-All rights reserved. Unauthorized use, reproduction, modification, distribution,
-transmission, republication, display, or performance of this Software is strictly
-prohibited without the express written permission of the Owner.
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-This Software was independently created by Ernst J. Wisner on March 18, 2026,
-prior to any commercial arrangement, employment agreement, or licensing engagement
-with any third party.
-
-For licensing inquiries: contact the Owner directly.
-
-Ghost Architect v1.7.0 — Created March 18, 2026
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
