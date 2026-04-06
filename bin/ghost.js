@@ -45,7 +45,7 @@ const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 function printBanner() {
   console.clear();
-  const title = figlet.textSync('GHOST', { font: 'Doom', horizontalLayout: 'default' });
+  const title = figlet.textSync('GHOST  OPEN', { font: 'Doom', horizontalLayout: 'default' });
   const ghostGradient = gradient(['#00ffff', '#0088ff', '#004488']);
   console.log(ghostGradient(title));
 
