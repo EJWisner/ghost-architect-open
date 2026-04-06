@@ -96,19 +96,19 @@ function convertToMarkdown(content, prefix, label, meta, timestamp) {
     .replace(/^## (.+)$/gm, '## $1')
     .replace(/^### (.+)$/gm, '### $1')
     // Severity badges — convert to bold colored text
-    .replace(/CRITICAL/g, '🔴 **CRITICAL**')
-    .replace(/\bHIGH\b/g, '🟠 **HIGH**')
-    .replace(/\bMEDIUM\b/g, '🟡 **MEDIUM**')
-    .replace(/\bLOW\b/g, '🟢 **LOW**')
+      .replace(/(?<!\*\*\s)CRITICAL(?!\*\*)/g, '🔴 **CRITICAL**')
+      .replace(/(?<!\*\*\s)\bHIGH\b(?!\*\*)/g, '🟠 **HIGH**')
+      .replace(/(?<!\*\*\s)\bMEDIUM\b(?!\*\*)/g, '🟡 **MEDIUM**')
+      .replace(/(?<!\*\*\s)\bLOW\b(?!\*\*)/g, '🟢 **LOW**')
     // Section dividers
     .replace(/^---+$/gm, '\n---\n')
     // Clean up excessive blank lines
     .replace(/\n{4,}/g, '\n\n\n');
-
+  const bodyNoSummary = body.replace(/## 📊 REMEDIATION SUMMARY[\s\S]*$/, '');
   // Ghost Open: MD truncated to Critical + High findings only
-  const findingBlocks = body.split(/(?=\n---\n)/);
-  const shownFindings = (body.match(/🔴 \*\*CRITICAL\*\*|🟠 \*\*HIGH\*\*/g) || []).length;
-  const totalFindings = (body.match(/🔴 \*\*CRITICAL\*\*|🟠 \*\*HIGH\*\*|🟡 \*\*MEDIUM\*\*|🟢 \*\*LOW\*\*/g) || []).length;
+  const findingBlocks = bodyNoSummary.split(/(?=\n---\n)/);
+  const shownFindings = (bodyNoSummary.match(/\bCRITICAL\b|\bHIGH\b/g) || []).length;
+  const totalFindings = (bodyNoSummary.match(/\bCRITICAL\b|\bHIGH\b|\bMEDIUM\b|\bLOW\b/g) || []).length;
   const critHighBlocks = findingBlocks.filter(block =>
     /🔴 \*\*CRITICAL\*\*|🟠 \*\*HIGH\*\*/.test(block)
   );
