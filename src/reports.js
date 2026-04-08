@@ -146,4 +146,4 @@ function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*m/g, '');
 }
 
-export { REPORTS_DIR };
+export { REPORTS_DIR, convertToMarkdown };

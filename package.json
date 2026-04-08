@@ -12,7 +12,8 @@
   "type": "module",
   "scripts": {
     "start": "node bin/ghost.js",
-    "dev": "node bin/ghost.js"
+    "dev": "node bin/ghost.js",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -31,5 +32,9 @@
     "ora": "^8.0.1",
     "pdfkit": "^0.18.0"
   },
-  "homepage": "https://ghostarchitect.dev"
+  "homepage": "https://ghostarchitect.dev",
+  "devDependencies": {
+    "@jest/globals": "^30.3.0",
+    "jest": "^30.3.0"
+  }
 }
