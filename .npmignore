@@ -1,0 +1,16 @@
+.env
+.env.*
+*.log
+.DS_Store
+.git
+.github
+node_modules
+test
+tests
+*.test.js
+web/
+fix-456.mjs
+test-agent.js
+.claude/
+CLAUDE.md
+assets/
