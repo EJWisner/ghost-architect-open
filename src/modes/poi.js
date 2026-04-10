@@ -14,7 +14,8 @@ import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
-export async function runPOIMode(codebaseContext) {
+export async function runPOIMode(codebaseContext, opts = {}) {
+  const nonInteractive = opts.nonInteractive || false;
   const fileMap      = codebaseContext.fileMap || {};
   const passes       = Object.keys(fileMap).length > 0 ? buildPasses(fileMap) : [];
   const useMultiPass = passes.length > 1;
@@ -72,14 +73,16 @@ export async function runPOIMode(codebaseContext) {
   }
 
   // Smart project label prompt — shows existing projects, fuzzy matches, confirms
-  const label = await promptProjectLabel();
+  const label = nonInteractive ? null : await promptProjectLabel();
   console.log('');
 
-  const { proceed } = await inquirer.prompt([{
-    type: 'confirm', name: 'proceed',
-    message: chalk.cyan('Proceed with scan?'), default: true
-  }]);
-  if (!proceed) { console.log(chalk.gray('\nScan cancelled.\n')); return; }
+  if (!nonInteractive) {
+    const { proceed } = await inquirer.prompt([{
+      type: 'confirm', name: 'proceed',
+      message: chalk.cyan('Proceed with scan?'), default: true
+    }]);
+    if (!proceed) { console.log(chalk.gray('\nScan cancelled.\n')); return; }
+  }
 
   let buffer  = '';
   let started = false;
@@ -124,6 +127,7 @@ export async function runPOIMode(codebaseContext) {
           }
         },
         async onPassCapPrompt({ remaining, defaultCap }) {
+          if (nonInteractive) return defaultCap;
           const { passCap } = await inquirer.prompt([{
             type: 'input', name: 'passCap',
             message: chalk.cyan(`Passes to run now?`) + chalk.gray(` (max ${remaining}, Enter for ${defaultCap})`),

@@ -6,7 +6,7 @@ import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
 import { isConfigured, runSetupWizard, reconfigure, usingEnvKey } from '../src/config.js';
-import { loadCodebase } from '../src/loader/index.js';
+import { loadCodebase, loadFromPath } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
@@ -38,7 +38,7 @@ function showUpgradePrompt(feature) {
 }
 
 
-const VERSION   = '4.7.1';
+const VERSION   = '4.7.2';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 // ── Banner ──────────────────────────────────────────────────────────────────
@@ -126,6 +126,15 @@ async function selectMode(codebaseContext) {
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 async function main() {
+  // Non-interactive scan mode for Claude Code plugin
+  if (process.argv.includes("--scan")) {
+    const dirPath = process.cwd();
+    console.log(`Ghost Architect scanning: ${dirPath}`);
+    const codebaseContext = await loadFromPath(dirPath);
+    if (codebaseContext) await runPOIMode(codebaseContext, { nonInteractive: true });
+    process.exit(0);
+  }
+
   printBanner();
 
   if (!isConfigured()) {

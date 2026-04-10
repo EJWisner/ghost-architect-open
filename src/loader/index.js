@@ -306,3 +306,16 @@ function buildContext(fileMap) {
 
   return { context, fileIndex, totalFiles, loadedFiles, fileMap };
 }
+
+export async function loadFromPath(dirPath) {
+  const spinner = ora('Scanning files...').start();
+  const files = await glob(`${dirPath}/**/*`, {
+    nodir: true,
+    ignore: IGNORED_DIRS.map(d => `**/${d}/**`)
+  });
+
+  const codeFiles = files.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+  spinner.succeed(`Found ${codeFiles.length} code files`);
+
+  return await readFiles(codeFiles, dirPath);
+}
