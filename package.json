@@ -1,6 +1,6 @@
 {
   "name": "ghost-architect-open",
-  "version": "4.7.2",
+  "version": "4.7.3",
   "description": "AI-powered codebase archaeology — understand what you inherited",
   "author": "Ghost Architect",
   "license": "SEE LICENSE IN LICENSE",
@@ -32,6 +32,23 @@
     "ora": "^8.0.1",
     "pdfkit": "^0.18.0"
   },
+  "keywords": [
+    "codebase-triage",
+    "code-audit",
+    "security",
+    "magento",
+    "adobe-commerce",
+    "ai",
+    "anthropic",
+    "static-analysis",
+    "codebase-intelligence",
+    "developer-tools",
+    "cli",
+    "php",
+    "ecommerce",
+    "architecture",
+    "security-audit"
+  ],
   "homepage": "https://ghostarchitect.dev",
   "devDependencies": {
     "@jest/globals": "^30.3.0",
