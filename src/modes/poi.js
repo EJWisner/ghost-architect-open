@@ -122,8 +122,14 @@ export async function runPOIMode(codebaseContext, opts = {}) {
             spinner = ora({ text: chalk.cyan(`  Synthesizing ${data.groups} groups into final report...`), color: "cyan" }).start();
           }
           if (type === "passInfo") {
-            console.log(chalk.cyan(`  Multi-pass: ${data.totalPasses} total passes, ${data.remaining} remaining`));
-            console.log(chalk.gray(`     Full run: ~$${data.estCost} and ~${data.estMinutes} minutes\n`));
+            if (data.isSelected) {
+              // Update display with user-selected pass count and corrected estimates
+              console.log(chalk.cyan(`  Running: ${data.remaining} pass${data.remaining === 1 ? '' : 'es'} selected`));
+              console.log(chalk.gray(`     Est. cost: ~${data.estCost} and ~${data.estMinutes} minutes\n`));
+            } else {
+              console.log(chalk.cyan(`  Multi-pass: ${data.totalPasses} total passes available, ${data.remaining} remaining`));
+              console.log(chalk.gray(`     Full run: ~${data.estCost} and ~${data.estMinutes} minutes\n`));
+            }
           }
         },
         async onPassCapPrompt({ remaining, defaultCap }) {
