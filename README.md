@@ -122,6 +122,18 @@ Ghost Architect does not collect telemetry. It does not phone home.
 
 ---
 
+## From the Blog
+
+Real scans, real findings, and how to think about codebase triage:
+
+- [What Does a Codebase Triage Actually Look Like? A Real Walkthrough](https://ghostarchitect.dev/blog/codebase-triage-walkthrough.html)
+- [We Ran Ghost Architect on a Real Meta Magento Extension — 18 Findings in 10 Minutes](https://ghostarchitect.dev/blog/meta-extension-scan.html)
+- [The $0.23 Audit: How Much Does AI Codebase Analysis Actually Cost?](https://ghostarchitect.dev/blog/cost-of-ai-codebase-analysis.html)
+- [Why Claude Code Is Not Your Starting Point](https://ghostarchitect.dev/blog/why-claude-code-is-not-your-starting-point.html)
+- [Magento 2.4.4 Hits End of Life — Here's What That Actually Means for Your Codebase](https://ghostarchitect.dev/blog/magento-244-eol.html)
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
