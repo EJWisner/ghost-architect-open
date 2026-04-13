@@ -493,13 +493,18 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
   }
 
   const remaining  = allPasses.length - startFromPass;
-  const estCost    = (remaining * 0.25).toFixed(2);
-  const estMinutes = Math.max(3, Math.round(remaining * 3.5));
   const defaultCap = Math.min(DEFAULT_PASS_CAP, remaining);
 
-  onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining, estCost, estMinutes });
+  // Emit passInfo BEFORE cap prompt so UI can show full context
+  onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining, estCost: (remaining * 0.25).toFixed(2), estMinutes: Math.max(3, Math.round(remaining * 3.5)) });
 
-  const cap     = await onPassCapPrompt({ remaining, defaultCap, estCost, estMinutes });
+  const cap     = await onPassCapPrompt({ remaining, defaultCap });
+
+  // After cap is known, emit corrected cost/time for the selected passes
+  const capCost    = (cap * 0.25).toFixed(2);
+  const capMinutes = Math.max(3, Math.round(cap * 3.5));
+  onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining: cap, estCost: capCost, estMinutes: capMinutes, isSelected: true });
+
   const endPass = Math.min(startFromPass + cap, allPasses.length);
 
   // Run passes
