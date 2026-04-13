@@ -7,7 +7,7 @@
   "copyright": "Copyright © 2026 Ghost Architect. All rights reserved.",
   "main": "bin/ghost.js",
   "bin": {
-    "ghost": "./bin/ghost.js"
+    "ghost": "bin/ghost.js"
   },
   "type": "module",
   "scripts": {
