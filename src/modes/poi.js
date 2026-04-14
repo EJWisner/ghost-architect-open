@@ -140,6 +140,9 @@ export async function runPOIMode(codebaseContext) {
         },
         async onSessionPrompt({ session, allPassCount, pct }) {
           console.log(chalk.cyan(`\n📂  Saved session: ${session.projectLabel} — ${session.completedPassCount}/${allPassCount} passes (${pct}% coverage)\n`));
+          const promptSpinner = ora({ text: chalk.gray('Preparing options...'), color: 'cyan' }).start();
+          await new Promise(r => setTimeout(r, 600));
+          promptSpinner.stop();
           const { action } = await inquirer.prompt([{
             type: 'list', name: 'action',
             message: chalk.cyan('What would you like to do?'),
@@ -155,6 +158,9 @@ export async function runPOIMode(codebaseContext) {
         async onCompletePrompt({ coverage, remaining, passCount }) {
           console.log(chalk.cyan(`\n  ${SYM.check} ${passCount} passes complete — ${coverage}% coverage`));
           console.log(chalk.gray(`  ${remaining} passes remain. Session saved.\n`));
+          const promptSpinner = ora({ text: chalk.gray('Preparing options...'), color: 'cyan' }).start();
+          await new Promise(r => setTimeout(r, 600));
+          promptSpinner.stop();
           const { next } = await inquirer.prompt([{
             type: 'list', name: 'next',
             message: chalk.cyan('What would you like to do?'),
