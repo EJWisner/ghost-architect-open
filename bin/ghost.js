@@ -5,6 +5,7 @@ import gradient from 'gradient-string';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
+import Configstore from 'configstore';
 import { isConfigured, runSetupWizard, reconfigure, usingEnvKey } from '../src/config.js';
 import { loadCodebase, loadFromPath } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
@@ -13,19 +14,14 @@ import { runBlastMode } from '../src/modes/blast.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
-// Override Inquirer Unicode symbols on Windows
 if (process.platform === 'win32') {
   process.env.FORCE_STDIN_TTY = '1';
 }
-const inquirerTheme = process.platform === 'win32' ? {
-  icon: { cursor: '>' }
-} : {};
-
+const inquirerTheme = process.platform === 'win32' ? { icon: { cursor: '>' } } : {};
 
 import { runConflictMode } from '../src/modes/conflict.js';
-
 import { SessionCostTracker } from '../src/estimator.js';
-// Ghost Open — Pro features unavailable in this version
+
 function showUpgradePrompt(feature) {
   console.log('\n' + boxen(
     chalk.yellow.bold('⬆  Ghost Pro Feature') + '\n\n' +
@@ -37,9 +33,54 @@ function showUpgradePrompt(feature) {
   ));
 }
 
+const VERSION      = '4.7.8';
+const NPM_PACKAGE  = 'ghost-architect-open';
+const COPYRIGHT    = 'Copyright © 2026 Ghost Architect. All rights reserved.';
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
-const VERSION   = '4.7.7';
-const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
+// ── Update checker ────────────────────────────────────────────────────────────
+
+let _updateMessage = null;
+
+async function checkForUpdate() {
+  try {
+    const store = new Configstore('ghost-architect');
+    const lastCheck    = store.get('updateLastChecked')    || 0;
+    const cachedLatest = store.get('updateLatestVersion')  || null;
+
+    const now = Date.now();
+    let latestVersion = cachedLatest;
+
+    if (now - lastCheck > UPDATE_CHECK_INTERVAL || !cachedLatest) {
+      const response = await fetch(`https://registry.npmjs.org/${NPM_PACKAGE}/latest`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        latestVersion = data.version;
+        store.set('updateLastChecked', now);
+        store.set('updateLatestVersion', latestVersion);
+      }
+    }
+
+    if (!latestVersion) return;
+
+    const current = VERSION.split('.').map(Number);
+    const latest  = latestVersion.split('.').map(Number);
+
+    for (let i = 0; i < 3; i++) {
+      if ((latest[i] || 0) > (current[i] || 0)) {
+        _updateMessage = `v${latestVersion} available  →  npm install -g ${NPM_PACKAGE}@latest`;
+        break;
+      }
+      if ((latest[i] || 0) < (current[i] || 0)) break;
+    }
+  } catch {
+    // Fail silently — never block startup
+  }
+}
+
+const updateCheckPromise = checkForUpdate();
 
 // ── Banner ──────────────────────────────────────────────────────────────────
 
@@ -56,12 +97,14 @@ function printBanner() {
     chalk.gray(`  v${VERSION}\n`)
   );
 
-  // Copyright line
   console.log(chalk.gray(`  ${COPYRIGHT}\n`));
 
-  // Env var notice
   if (usingEnvKey()) {
     console.log(chalk.gray('  ') + chalk.green(IS_WINDOWS ? '[KEY] Using ANTHROPIC_API_KEY from environment' : '⚡ Using ANTHROPIC_API_KEY from environment') + '\n');
+  }
+
+  if (_updateMessage) {
+    console.log(chalk.gray('  ') + chalk.yellow('💡 ' + _updateMessage) + '\n');
   }
 }
 
@@ -134,6 +177,9 @@ async function main() {
     if (codebaseContext) await runPOIMode(codebaseContext, { nonInteractive: true });
     process.exit(0);
   }
+
+  // Wait briefly for update check before first banner
+  await Promise.race([updateCheckPromise, new Promise(r => setTimeout(r, 500))]);
 
   printBanner();
 
