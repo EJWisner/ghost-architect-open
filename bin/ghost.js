@@ -103,7 +103,7 @@ async function selectMode(codebaseContext) {
       { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
       { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
       new inquirer.Separator(),
-      { name: IS_WINDOWS ? '[RLD] Load different project' : '🔄  Load different project', value: 'reload' },
+      { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
       { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
     ]
   }]);
