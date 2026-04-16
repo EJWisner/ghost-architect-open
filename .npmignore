@@ -1,0 +1,9 @@
+# Cleanup scripts — one-time maintenance tools, not part of the package
+cleanup-*.mjs
+
+# Test config
+jest.config.js
+
+# Git
+.git
+.gitignore
