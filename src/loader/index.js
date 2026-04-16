@@ -26,12 +26,30 @@ export async function loadCodebase(method) {
 }
 
 async function loadFromFiles() {
-  const { dirPath } = await inquirer.prompt([{
-    type: 'input',
-    name: 'dirPath',
-    message: chalk.cyan('Path to codebase directory:'),
-    validate: (v) => fs.existsSync(v) ? true : 'Directory not found'
-  }]);
+  // Retry loop — re-prompt on bad path instead of exiting to main menu
+  let dirPath;
+  while (true) {
+    const answer = await inquirer.prompt([{
+      type: 'input',
+      name: 'dirPath',
+      message: chalk.cyan('Path to codebase directory:'),
+    }]);
+    const trimmed = answer.dirPath.trim();
+    if (!trimmed) {
+      console.log(chalk.yellow('  Path is required. Try again.\n'));
+      continue;
+    }
+    if (!fs.existsSync(trimmed)) {
+      console.log(chalk.yellow(`  Directory not found: ${trimmed}\n  Check the path and try again.\n`));
+      continue;
+    }
+    if (!fs.statSync(trimmed).isDirectory()) {
+      console.log(chalk.yellow(`  That path is a file, not a directory. Try again.\n`));
+      continue;
+    }
+    dirPath = trimmed;
+    break;
+  }
 
   const spinner = ora('Scanning files...').start();
   const files = await glob(`${dirPath}/**/*`, {
@@ -71,7 +89,6 @@ async function loadFromZip() {
 
     try {
       const content = entry.getData().toString('utf8');
-      // Skip files that exceed token limit — they crash the API
       const estTokens = Math.ceil(content.length / 4);
       if (estTokens > MAX_FILE_TOKENS) {
         console.log(chalk.gray(`  ⚠ Skipped ${filename} — too large (${Math.round(estTokens/1000)}k tokens)`));
@@ -97,7 +114,6 @@ async function loadFromGitHub() {
     validate: (v) => v.length > 0 ? true : 'Required'
   }]);
 
-  // Parse owner/repo from URL or shorthand
   let owner, repo;
   const match = repoUrl.match(/github\.com\/([^/]+)\/([^/\s]+)/);
   if (match) {
@@ -116,11 +132,9 @@ async function loadFromGitHub() {
     const octokit = new Octokit({ auth: githubToken || undefined });
     const fileMap = {};
 
-    // Get default branch
     const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
     const branch = repoData.default_branch;
 
-    // Get tree recursively
     const { data: tree } = await octokit.rest.git.getTree({
       owner, repo,
       tree_sha: branch,
@@ -136,7 +150,6 @@ async function loadFromGitHub() {
 
     spinner.stop();
 
-    // Get root-level folders
     const rootFolders = [...new Set(
       codeFiles
         .map(f => f.path.includes('/') ? f.path.split('/')[0] : '(root)')
@@ -164,7 +177,6 @@ async function loadFromGitHub() {
 
     spinner.start(`Fetching ${filteredFiles.length} files from ${selectedFolders.length} folder(s)...`);
 
-    // Fetch files (cap at 200 for API limits)
     const filesToFetch = filteredFiles.slice(0, 200);
     let fetched = 0;
 
@@ -222,7 +234,6 @@ async function loadFromGitHub() {
 // Max per-file size — files larger than this are truncated to prevent context overflow
 const MAX_FILE_CHARS = 120000; // ~30K tokens — safe headroom under 200K limit
 
-// Patterns that indicate minified/bundled files — not worth analyzing
 const MINIFIED_PATTERNS = [
   /\.min\.(js|css)$/i,
   /[-.]bundle\.(js|css)$/i,
@@ -233,9 +244,7 @@ const MINIFIED_PATTERNS = [
 ];
 
 function isMinified(filePath, content) {
-  // Check filename patterns
   if (MINIFIED_PATTERNS.some(p => p.test(filePath))) return true;
-  // Check if file is suspiciously long single line (minified code signature)
   const firstLine = content.split('\n')[0] || '';
   if (firstLine.length > 10000) return true;
   return false;
@@ -251,13 +260,11 @@ async function readFiles(filePaths, basePath) {
       const content      = fs.readFileSync(filePath, 'utf8');
       const relativePath = path.relative(basePath, filePath);
 
-      // Skip minified/bundled files entirely
       if (isMinified(relativePath, content)) {
         skipped++;
         continue;
       }
 
-      // Truncate oversized files — keeps them in analysis but safe
       if (content.length > MAX_FILE_CHARS) {
         fileMap[relativePath] = content.slice(0, MAX_FILE_CHARS) +
           '\n\n// [TRUNCATED: file exceeded ' + MAX_FILE_CHARS + ' char limit]';
