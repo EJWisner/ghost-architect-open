@@ -1,16 +1,9 @@
-.env
-.env.*
-*.log
-.DS_Store
+# Cleanup scripts
+cleanup-*.mjs
+
+# Test config
+jest.config.js
+
+# Git
 .git
-.github
-node_modules
-test
-tests
-*.test.js
-web/
-fix-456.mjs
-test-agent.js
-.claude/
-CLAUDE.md
-assets/
+.gitignore
