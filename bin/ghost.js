@@ -115,7 +115,7 @@ async function selectMode(codebaseContext) {
       { name: (IS_WINDOWS ? '[PRO] Compare Reports  ' : '⬆   Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'compare_locked' },
       { name: (IS_WINDOWS ? '[PRO] Project Dashboard  ' : '⬆   Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'dashboard_locked' },
       new inquirer.Separator(),
-      { name: IS_WINDOWS ? '[RLD] Load different project' : '🔄  Load different project', value: 'reload' },
+      { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
       { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
     ]
   }]);
