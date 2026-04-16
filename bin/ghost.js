@@ -38,7 +38,7 @@ function showUpgradePrompt(feature) {
 }
 
 
-const VERSION   = '4.7.5';
+const VERSION   = '4.7.6';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 // ── Banner ──────────────────────────────────────────────────────────────────
