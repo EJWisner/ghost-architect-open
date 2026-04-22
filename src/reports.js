@@ -107,16 +107,51 @@ function convertToMarkdown(content, prefix, label, meta, timestamp) {
     .replace(/^---+$/gm, '\n---\n')
     // Clean up excessive blank lines
     .replace(/\n{4,}/g, '\n\n\n');
-  const bodyNoSummary = body.replace(/## 📊 .*?SUMMARY[\s\S]*$/i, '');
-  // Ghost Open: MD truncated to Critical + High findings only
-  const findingBlocks = bodyNoSummary.split(/(?=\n---\n)/);
-  const shownFindings = (bodyNoSummary.match(/🔴 \*\*CRITICAL\*\*|🟠 \*\*HIGH\*\*/g) || []).length;
-  const totalFindings = (bodyNoSummary.match(/🔴 \*\*CRITICAL\*\*|🟠 \*\*HIGH\*\*|🟡 \*\*MEDIUM\*\*|🟢 \*\*LOW\*\*/g) || []).length;
-  const critHighBlocks = findingBlocks.filter(block =>
-    /🔴 \*\*CRITICAL\*\*|🟠 \*\*HIGH\*\*/.test(block)
-  );
-  const truncatedBody = critHighBlocks.join('');
-  md += truncatedBody;
+  const bodyNoSummary = body.replace(/## 📊 .*?SUMMARY[\s\S]*$/i, '')
+                           .replace(/## Remediation Summary[\s\S]*$/i, '')
+                           .replace(/## Recommended Remediation Sequence[\s\S]*$/i, '');
+
+  // Ghost Open: MD truncated to Critical + High severity sections only.
+  // The narrator produces section headers like:
+  //   ## 🔴 Critical: ...
+  //   ## 🔴 High-Severity Issues
+  //   ## ⚠️ Medium-Severity Issues
+  //   ## 🪦 Dead Code ...
+  //   ## 🏛️ Architectural Strengths
+  // Findings are nested under those headers as `### N. Title` blocks.
+  // We keep only Critical + High sections and count findings.
+
+  const isSeverityHeader = (line) =>
+    /^##\s+.*(?:🔴|🟠|🟡|🟢|⚠️|⚠)/.test(line) ||
+    /^##\s+(?:Critical|High|Medium|Low)[-:\s]/i.test(line);
+  const isCritHighHeader = (line) =>
+    /^##\s+🔴/.test(line) ||
+    /^##\s+(?:Critical|High)[-:\s]/i.test(line);
+
+  const lines = bodyNoSummary.split('\n');
+  let totalFindings = 0;
+  let shownFindings = 0;
+  const kept = [];
+  let inSeveritySection = false;
+  let inCritHighSection = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^##\s+/.test(line)) {
+      inSeveritySection = isSeverityHeader(line);
+      inCritHighSection = inSeveritySection && isCritHighHeader(line);
+      if (inCritHighSection) kept.push(line);
+      continue;
+    }
+    if (inSeveritySection && /^###\s+/.test(line)) {
+      totalFindings++;
+      if (inCritHighSection) shownFindings++;
+    }
+    if (inCritHighSection) kept.push(line);
+  }
+
+  const truncatedBody = kept.join('\n').trim();
+  md += truncatedBody || '_No Critical or High severity findings in this scan._';
 
   md += `\n\n---\n\n`;
   md += `> You are looking at ${shownFindings} of ${totalFindings} findings. The rest are in Ghost Pro — full PDF, markdown, multipass, project intelligence. Know what you are inheriting before you commit. [ghostarchitect.dev](https://ghostarchitect.dev)\n`;
