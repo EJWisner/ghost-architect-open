@@ -128,12 +128,34 @@ async function loadFromGitHub() {
 
   const spinner = ora(`Fetching ${owner}/${repo}...`).start();
 
-  try {
-    const octokit = new Octokit({ auth: githubToken || undefined });
-    const fileMap = {};
-
+  // Helper: attempt fetch with given auth (or none)
+  async function tryFetch(auth) {
+    const octokit = new Octokit({ auth: auth || undefined });
     const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
+    return { octokit, repoData };
+  }
+
+  try {
+    let octokit, repoData;
+
+    // First attempt: use configured token if we have one
+    try {
+      ({ octokit, repoData } = await tryFetch(githubToken));
+    } catch (err) {
+      // If the configured token is bad (401) and we actually had one, retry anonymously.
+      // Public repos work without auth — don't let a dead token block access to them.
+      if (err.status === 401 && githubToken) {
+        spinner.stop();
+        console.log(chalk.yellow('  ⚠  Configured GitHub token was rejected — retrying anonymously for public repo access...'));
+        spinner.start(`Fetching ${owner}/${repo}...`);
+        ({ octokit, repoData } = await tryFetch(null));
+      } else {
+        throw err;
+      }
+    }
+
     const branch = repoData.default_branch;
+    const fileMap = {};
 
     const { data: tree } = await octokit.rest.git.getTree({
       owner, repo,

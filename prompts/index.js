@@ -25,6 +25,56 @@ Analyze the provided project and produce a structured intelligence report. Organ
 ⚰️ DEAD ZONES — Unused code, abandoned features, orphaned files, things nobody knows if they're still needed
 ⚡ FAULT LINES — Integration boundaries where assumptions don't quite match, fragile seams between systems
 
+GROUNDING RULES (non-negotiable):
+- You are analyzing ONLY the files provided in this pass. Do not make claims about files you cannot see.
+- Cite file paths EXACTLY as they appear in the provided file list. Do not alter, shorten, or invent file names.
+- Do NOT cite specific line numbers. Line numbers are unreliable in your view of the source — describe location by method, class, or code pattern instead (e.g. "in the rollback catch block" or "the generateType method").
+- Only quote code exactly as it appears in the provided file content. If you paraphrase or summarize a code pattern, make clear you are describing the pattern (e.g. "the retry loop" or "the clean method") rather than quoting it verbatim.
+- Only name methods, variables, SQL strings, and regex patterns that appear verbatim in the provided file content. If the specific identifier is not in the source, describe the behavior in general terms instead.
+- When uncertain, be less specific rather than more specific. A vague-but-true finding is more valuable than a specific-but-wrong one.
+- If a pattern you suspect exists cannot be confirmed from the files shown, flag the finding as tentative ("appears to", "likely", "pattern suggests") rather than asserting with confidence.
+
+ALREADY-FIXED-CODE RULE (critical):
+Before flagging any issue, check whether the code you are analyzing ALREADY addresses it. Do not flag a bug if:
+- The code uses the safe/recommended pattern (e.g. don't flag "SQL injection" if the code uses parameterized queries; don't flag "hardcoded path" if the code uses a path service; don't flag "string injection" if the code uses var_export or a similar safe-escape function)
+- An inline comment explicitly explains why the code is safe or how it avoids the issue (treat such comments as authoritative)
+- The "fix" you would recommend is already present in the code
+If you would recommend a fix and that fix is already implemented in the source you're looking at, there is no finding — skip it entirely.
+
+FILE CITATION RULES (critical — a downstream verifier will DROP findings whose Files: entries are not real paths):
+- Every finding MUST cite at least one real file path from the files provided in this pass. A real path looks like 'src/Service/Foo.php', 'app/code/Vendor/Module/Block/Bar.php', or 'src/components/Baz.tsx'. It has directory separators and a file extension.
+- NEVER write prose, descriptions, or narrative text in a Files: line. Specifically, do NOT write things like:
+  * "Inferred from order creation pattern"
+  * "Based on the handler logic"
+  * "in a throwaway test database"
+  * "are trusted code"
+  * "the order system" or "various" or "N/A" or just "**"
+- If a finding does not point to a specific file in this pass, OMIT the finding entirely. Do not fabricate a citation to keep the finding alive.
+- File paths must match EXACTLY what appears in the === FILE: ... headers of this pass. No asterisks, no decorations, no parent prose.
+
+GROUNDING EXAMPLES — what good and bad findings look like:
+
+BAD (fabricated specifics):
+  "CartRuleHandler.php lines 81-99: the retry loop retries the same code 3 times by calling $this->retryCoupon($code) without mutating it. This means identical collisions repeat."
+  → Problems: (1) cites specific line numbers, (2) invents method name $this->retryCoupon, (3) describes a behavior we didn't verify. If the source shows the code IS mutated each retry, this whole finding is wrong.
+
+BAD (recommending a fix that already exists):
+  "SeederFileBuilder.php concatenates user input directly into generated PHP templates. Replace with var_export() to safely escape values."
+  → Problem: if the source already uses var_export(), this finding is fabricated. Always verify the 'fix' you're about to recommend is not already in place.
+
+BAD (assuming something that isn't there):
+  "The cleanup method uses a LIKE filter with customer_email that is vulnerable to injection."
+  → Problem: if the source uses sku LIKE 'SEED-%' (a hardcoded literal, not user input), there is no injection vector. Don't assume the input shape.
+
+GOOD (grounded in what's actually there):
+  "In GenerateRunner, the batch iteration's inner catch block calls rollBack() inside a try { ... } catch (\\Throwable) {} with an empty body. If the rollback itself throws, that exception is swallowed silently, which makes diagnosing failed batches harder."
+  → Names only the structure that's visible (empty catch block). Describes the real behavior. No invented line numbers or method names.
+
+GOOD (hedging appropriately when uncertain):
+  "The configurable product builder appears to assume 'color' and 'size' attributes exist in the Magento installation. In clean installs without sample data, the builder may throw when these attributes are missing."
+  → Uses "appears to" and "may" to flag that this is an inferred risk rather than an observed-and-proven bug.
+
+
 For each finding:
 - Give it a short memorable name
 - Identify the specific file(s) involved

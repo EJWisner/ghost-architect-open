@@ -10,10 +10,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
 import { narrateReport } from './agent/narrator.js';
+import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
+import { verifyReport, formatVerifierReport } from './verifier.js';
+import { createLLMVerifier } from './llm-verifier.js';
 
 const PASS_TOKEN_LIMIT = 45000;
 const MERGE_BATCH_SIZE = 6;
@@ -62,18 +66,17 @@ export function saveSession(label, session) {
   const bakPath   = finalPath + '.bak';
 
   try {
-    // Write to temp file first
     fs.writeFileSync(tmpPath, JSON.stringify(session, null, 2));
-    // Back up existing session before overwriting
     if (fs.existsSync(finalPath)) {
       fs.copyFileSync(finalPath, bakPath);
     }
-    // Atomic rename — POSIX guarantees this is atomic
     fs.renameSync(tmpPath, finalPath);
+    return true;
   } catch (err) {
-    // Clean up temp file if something went wrong
     if (fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } }
-    throw err; // re-throw so caller knows save failed
+    // Finding 6: warn user that session save failed
+    process.stdout.write(`\n  ⚠ Progress checkpoint failed to save — resume may not work (${err.message})\n`);
+    return false;
   }
 }
 
@@ -124,17 +127,16 @@ export function getPassInfo(fileMap) {
 }
 
 // ── Cross-pass skeleton extraction ───────────────────────────────────────────
+// DISABLED as of April 22 2026: The skeleton compression (max 40 lines, kept
+// only last 3 passes) produced such a thin view of prior findings that it
+// encouraged later passes to hallucinate details to fill gaps. Each pass now
+// stands alone; the merge stage handles duplicate detection instead.
+//
+// Keeping the function signature as a no-op so callers don't break; the
+// passSkeletons array stays empty and contributes nothing to later passes.
 
-function extractSkeleton(passResult) {
-  const lines    = passResult.split('\n');
-  const skeleton = [];
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith('**Files:**') || t.startsWith('Files:'))        skeleton.push(t.replace(/\*\*/g, ''));
-    if (/^\d+\.\s+\*?\*?.+/.test(t) && t.length < 100)              skeleton.push(t.replace(/\*\*/g, ''));
-    if (/Severity:/i.test(t))                                         skeleton.push(t);
-  }
-  return skeleton.slice(0, 40).join('\n');
+function extractSkeleton(_passResult) {
+  return '';
 }
 
 // ── Claude API ────────────────────────────────────────────────────────────────
@@ -263,7 +265,17 @@ export function writeCheckpoint(projectLabel, passNum, totalPasses, passResults)
       timestamp: Date.now(),
     };
     fs.writeFileSync(cpPath, JSON.stringify(data, null, 2), 'utf8');
-  } catch (e) { /* checkpoint write failure is non-fatal */ }
+    return true;
+  } catch (e) {
+    // Finding 6: log checkpoint failures instead of silently swallowing them
+    try {
+      const logDir  = path.join(process.env.HOME || process.env.USERPROFILE || '', 'Ghost Architect Reports', '.checkpoints');
+      const logPath = path.join(logDir, '.ghost-errors.log');
+      fs.mkdirSync(logDir, { recursive: true });
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] Checkpoint write failed for ${projectLabel}: ${e.message}\n`);
+    } catch { /* log write also failed — nothing we can do */ }
+    return false;
+  }
 }
 
 export function readCheckpoint(projectLabel) {
@@ -372,13 +384,14 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     messages: [{
       role: 'user',
       content:
-        `Final synthesis: ${completedPasses} of ${totalPasses} passes complete (${coverage}% of ${totalFiles} files).\n\n` +
+        `Final synthesis: ${completedPasses} of ${totalPasses} passes complete.\n\n` +
         `Produce the final unified Points of Interest Report:\n` +
         `1. Merge remaining duplicates, rank by severity and business impact\n` +
-        `2. Note coverage: this analysis covers ${coverage}% of the codebase\n` +
+        `2. Analysis was distributed across ${totalFiles} files in ${totalPasses} passes; ${completedPasses} passes completed.\n` +
         `3. Produce complete REMEDIATION SUMMARY with tiered rates:\n` +
-        `   LOW complexity: $${rates.junior}/hr | MEDIUM: $${rates.mid}/hr | HIGH/CRITICAL: $${rates.senior}/hr\n` +
+        `   LOW complexity: ${rates.junior}/hr | MEDIUM: ${rates.mid}/hr | HIGH/CRITICAL: ${rates.senior}/hr\n` +
         `4. Use full Ghost Architect report format\n\n` +
+        `GROUNDING: Only cite file paths, method names, line numbers, and code strings that appear verbatim in the findings below. If a detail is not in the source material, describe the issue in general terms.\n\n` +
         `FINDINGS:\n${combined}\n\nFinal report:`
     }]
   });
@@ -394,27 +407,89 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
 
   const findings = extractFindingsForNarrator(rawSynthesis);
 
-  // If narrator produces nothing useful, fall back to raw synthesis
-  if (findings.length === 0) {
-    for (const char of rawSynthesis) onChunk(char);
-    return rawSynthesis;
-  }
+  // Real finding count — use the shared report parser, not a raw digit-line regex.
+  // The old approach (rawSynthesis.match(/^\d+\./gm)) counted numbered recommendation
+  // steps and fix-priority items as findings, inflating the count dramatically
+  // (e.g. reporting "65 findings" when only 17 real findings existed).
+  let actualFindingCount = findings.length;
+  try {
+    const parsed = extractFindingsFromReport(rawSynthesis);
+    if (parsed.length > 0) actualFindingCount = parsed.length;
+  } catch { /* fall back to narrator findings count */ }
 
+  // Build memory result — use raw synthesis as detail if extraction yields few findings
   const memoryResult = {
-    findings,
-    findingCount:  findings.length,
+    findings: findings.length >= 3 ? findings : [{
+      title: 'See full analysis below',
+      severity: 'HIGH',
+      detail: rawSynthesis.slice(0, 2000),
+      files: [],
+      confidence: 90,
+    }],
+    findingCount:  actualFindingCount,
     filesAnalyzed: totalFiles,
     stepCount:     completedPasses,
     auditTrail:    [],
+    rawSynthesis,  // pass through so narrator can reference it directly
+  };
+
+  // Build enhanced narrator prompt that explicitly requires remediation table
+  const narratorContext = {
+    projectLabel: options.projectLabel || 'project',
+    mode: 'poi',
+    rates,
+    requireRemediationTable: true,
+    rawSynthesis: rawSynthesis.slice(0, 8000), // give narrator the raw text directly
+    fileMap: options.fileMap,                  // source-ground the narrator against real code
   };
 
   const narratedReport = await narrateReport(
     memoryResult,
-    { projectLabel: options.projectLabel || 'project', mode: 'poi', rates },
+    narratorContext,
     onChunk
   );
 
-  return narratedReport || rawSynthesis;
+  // Validate narrator produced a remediation table — if not, fall back to raw
+  const hasTable = narratedReport && (
+    narratedReport.includes('| Category |') ||
+    narratedReport.includes('| Finding |') ||
+    narratedReport.includes('Remediation Summary') ||
+    narratedReport.includes('REMEDIATION')
+  );
+
+  let finalOutput;
+  if (!hasTable && rawSynthesis.includes('Remediation')) {
+    // Narrator dropped the table — append it from raw synthesis
+    const remStart = rawSynthesis.indexOf('Remediation');
+    const remSection = rawSynthesis.slice(remStart);
+    finalOutput = (narratedReport || rawSynthesis) + '\n\n' + remSection;
+  } else {
+    finalOutput = narratedReport || rawSynthesis;
+  }
+
+  // Verifier — two-pass grounding check against actual source code.
+  //   Pass 1: cheap regex check (method existence, line bounds, safe-pattern detection)
+  //   Pass 2: LLM check (semantic correctness against the actual source)
+  // Both drop false positives entirely; single-flaw findings are annotated UNVERIFIED.
+  if (options.fileMap) {
+    try {
+      if (options.onVerifierStart) options.onVerifierStart();
+      const { annotatedReport, report: verifierCard } = await verifyReport(
+        finalOutput,
+        options.fileMap,
+        { llmVerifier: createLLMVerifier() }
+      );
+      finalOutput = annotatedReport;
+      if (options.onVerifierReport) options.onVerifierReport(verifierCard);
+    } catch (err) {
+      // Verifier failure must never block the report — surface a note and continue.
+      if (options.onVerifierReport) {
+        options.onVerifierReport({ error: err.message, note: 'Verifier errored; report returned unverified.' });
+      }
+    }
+  }
+
+  return finalOutput;
 }
 
 // ── Session-based synthesis ───────────────────────────────────────────────────
@@ -470,10 +545,16 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
     if (action === 'restart') {
       deleteSession(projectLabel);
-      session = null;
+      session = null;  // Finding 8: explicit null to prevent stale state leak
+      startFromPass = 0;
     } else if (action === 'report') {
       onProgress({ type: 'synthesizing', groups: 1 });
-      const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, { projectLabel });
+      const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, {
+        projectLabel,
+        fileMap,
+        onVerifierStart:  () => onProgress({ type: 'verifying' }),
+        onVerifierReport: (card) => onProgress({ type: 'verifierReport', card }),
+      });
       deleteSession(projectLabel);
       const coverage = Math.round((session.completedPassCount / allPasses.length) * 100);
       return { finalReport, passCount: session.completedPassCount, totalFiles, coverage };
@@ -523,14 +604,17 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     session.pendingPassResults.push({ passNum, fileCount, findings: result });
     session.completedPassCount = passNum;
 
+    // Always acknowledge the pass completed FIRST — gives users clear feedback
+    // that every pass they selected actually ran. Without this, hitting the
+    // merge threshold would swallow the final pass's "complete" message.
+    onProgress({ type: 'passComplete', passNum });
+
     if (session.pendingPassResults.length >= MERGE_BATCH_SIZE) {
       onProgress({ type: 'merging', count: session.pendingPassResults.length });
       const merged = await mergePassResults(session.pendingPassResults, projectLabel);
       session.mergedGroups.push(merged);
       session.pendingPassResults = [];
       onProgress({ type: 'mergeDone' });
-    } else {
-      onProgress({ type: 'passComplete', passNum });
     }
 
     saveSession(projectLabel, session);
@@ -565,7 +649,10 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     session.completedPassCount, allPasses.length, coverage, onChunk,
     {
       projectLabel,
-      onNarratorStart: () => onProgress({ type: 'narrating' }),
+      fileMap,  // pass source map to verifier for grounding checks
+      onNarratorStart:    () => onProgress({ type: 'narrating' }),
+      onVerifierStart:    () => onProgress({ type: 'verifying' }),
+      onVerifierReport:   (card) => onProgress({ type: 'verifierReport', card }),
     }
   );
 

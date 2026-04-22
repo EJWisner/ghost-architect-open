@@ -3,6 +3,8 @@ import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST } from '../../prompts/index.js';
 import { narrateReport, narrateExecutiveSummary } from '../core/agent/narrator.js';
+import { verifyReport } from '../core/verifier.js';
+import { createLLMVerifier } from '../core/llm-verifier.js';
 
 let client = null;
 
@@ -128,11 +130,38 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
 
   const narratedReport = await narrateReport(
     memoryResult,
-    { projectLabel: options.projectLabel || 'project', mode: 'poi', rates },
+    {
+      projectLabel: options.projectLabel || 'project',
+      mode: 'poi',
+      rates,
+      fileMap: options.fileMap || codebaseContext.fileMap,
+    },
     onChunk
   );
 
-  return narratedReport || rawOutput;
+  let finalOutput = narratedReport || rawOutput;
+
+  // Verifier — two-pass source-grounded check against fileMap.
+  //   Pass 1: cheap regex check
+  //   Pass 2: LLM semantic check
+  if (options.fileMap || codebaseContext.fileMap) {
+    try {
+      if (options.onVerifierStart) options.onVerifierStart();
+      const { annotatedReport, report: verifierCard } = await verifyReport(
+        finalOutput,
+        options.fileMap || codebaseContext.fileMap,
+        { llmVerifier: createLLMVerifier() }
+      );
+      finalOutput = annotatedReport;
+      if (options.onVerifierReport) options.onVerifierReport(verifierCard);
+    } catch (err) {
+      if (options.onVerifierReport) {
+        options.onVerifierReport({ error: err.message, note: 'Verifier errored; report returned unverified.' });
+      }
+    }
+  }
+
+  return finalOutput;
 }
 
 // ── Blast Radius — with narrator ──────────────────────────────────────────────

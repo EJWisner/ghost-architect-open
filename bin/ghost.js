@@ -26,7 +26,7 @@ import { runConflictMode } from '../src/modes/conflict.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-const VERSION   = '4.6.1';
+const VERSION   = '4.8.0';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 // ── Banner ──────────────────────────────────────────────────────────────────
