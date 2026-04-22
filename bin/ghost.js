@@ -33,7 +33,7 @@ function showUpgradePrompt(feature) {
   ));
 }
 
-const VERSION      = '4.7.8';
+const VERSION      = '4.8.0';
 const NPM_PACKAGE  = 'ghost-architect-open';
 const COPYRIGHT    = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours

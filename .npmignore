@@ -1,9 +1,30 @@
 # Cleanup scripts
 cleanup-*.mjs
+fix-*.mjs
 
-# Test config
+# Tests
 jest.config.js
+test-agent.js
+src/__tests__/
+**/*.test.js
+
+# Internal / Claude Code
+.claude/
+CLAUDE.md
+HALLUCINATION_AUDIT.md
+
+# Web (separate Next.js marketing site — not part of CLI package)
+web/
+
+# Development / editor noise
+.DS_Store
+.vscode/
+.idea/
 
 # Git
 .git
 .gitignore
+.gitattributes
+
+# CI / internal config
+.github/

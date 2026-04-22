@@ -14,8 +14,7 @@ import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
-export async function runPOIMode(codebaseContext, opts = {}) {
-  const nonInteractive = opts.nonInteractive || false;
+export async function runPOIMode(codebaseContext) {
   const fileMap      = codebaseContext.fileMap || {};
   const passes       = Object.keys(fileMap).length > 0 ? buildPasses(fileMap) : [];
   const useMultiPass = passes.length > 1;
@@ -73,16 +72,14 @@ export async function runPOIMode(codebaseContext, opts = {}) {
   }
 
   // Smart project label prompt — shows existing projects, fuzzy matches, confirms
-  const label = nonInteractive ? null : await promptProjectLabel();
+  const label = await promptProjectLabel();
   console.log('');
 
-  if (!nonInteractive) {
-    const { proceed } = await inquirer.prompt([{
-      type: 'confirm', name: 'proceed',
-      message: chalk.cyan('Proceed with scan?'), default: true
-    }]);
-    if (!proceed) { console.log(chalk.gray('\nScan cancelled.\n')); return; }
-  }
+  const { proceed } = await inquirer.prompt([{
+    type: 'confirm', name: 'proceed',
+    message: chalk.cyan('Proceed with scan?'), default: true
+  }]);
+  if (!proceed) { console.log(chalk.gray('\nScan cancelled.\n')); return; }
 
   let buffer  = '';
   let started = false;
@@ -92,14 +89,42 @@ export async function runPOIMode(codebaseContext, opts = {}) {
     if (useMultiPass) {
       const multiResult = await runMultiPassPOI(fileMap, label || 'project', {
         onChunk(chunk) {
-          if (!started) { started = true; console.log(''); }
+          // Capture the report to the buffer, but do NOT stream it to stdout.
+          // Streaming the raw report:
+          //   1. Looks messy — wall of markdown scrolling past at high speed
+          //   2. On Ghost Open, leaks the full pre-paywall report into scrollback
+          // A spinner (started when 'narrating' fires) shows progress instead.
           buffer += chunk;
-          process.stdout.write(colorizeOutput(chunk));
+          started = true;
         },
         onProgress({ type, ...data }) {
           if (type === 'narrating') {
             if (spinner) { spinner.stop(); spinner = null; }
-            console.log(chalk.gray("\n  Ghost is writing the final report...\n"));
+            spinner = ora({ text: chalk.cyan('  Ghost is writing the final report...'), color: 'cyan' }).start();
+          }
+          if (type === 'verifying') {
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.cyan('  Verifying findings against source...'), color: 'cyan' }).start();
+          }
+          if (type === 'verifierReport') {
+            // Stash the verifier card so we can show it after save decision
+            // (it arrives between narrating and report ready)
+            if (data.card) {
+              if (data.card.error) {
+                console.log(chalk.gray(`\n  ⚠  Verifier: ${data.card.note || data.card.error}\n`));
+              } else {
+                const { verified, unverified, falsePositives, totalFindings, note } = data.card;
+                if (note) {
+                  console.log(chalk.gray(`\n  Verifier: ${note}\n`));
+                } else {
+                  const parts = [];
+                  parts.push(chalk.green(`${verified}/${totalFindings} grounded`));
+                  if (unverified > 0)     parts.push(chalk.yellow(`${unverified} unverified`));
+                  if (falsePositives > 0) parts.push(chalk.red(`${falsePositives} false positives dropped`));
+                  console.log(chalk.gray(`\n  Verification: `) + parts.join(chalk.gray(', ')) + '\n');
+                }
+              }
+            }
           }
           if (type === "passStart") {
             if (spinner) { spinner.stop(); spinner = null; }
@@ -108,6 +133,9 @@ export async function runPOIMode(codebaseContext, opts = {}) {
           if (type === "passComplete") {
             if (spinner) { spinner.succeed(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`)); spinner = null; }
             console.log("");
+            // Holding spinner covers the gap before merging/synthesizing fires.
+            // It's immediately replaced if 'merging' or 'synthesizing' fires next — that's fine.
+            spinner = ora({ text: chalk.gray('  Preparing the final report...'), color: 'cyan' }).start();
           }
           if (type === "merging") {
             if (spinner) { spinner.stop(); spinner = null; }
@@ -119,11 +147,17 @@ export async function runPOIMode(codebaseContext, opts = {}) {
           }
           if (type === "synthesizing") {
             if (spinner) { spinner.stop(); spinner = null; }
-            spinner = ora({ text: chalk.cyan(`  Synthesizing ${data.groups} groups into final report...`), color: "cyan" }).start();
+            // Show pass count instead of group count — more meaningful to the user
+            const passLabel = data.passCount
+              ? `${data.passCount} pass${data.passCount === 1 ? '' : 'es'}`
+              : null;
+            const label = passLabel
+              ? `  Preparing the final report (${passLabel})...`
+              : `  Preparing the final report...`;
+            spinner = ora({ text: chalk.cyan(label), color: "cyan" }).start();
           }
           if (type === "passInfo") {
             if (data.isSelected) {
-              // Update display with user-selected pass count and corrected estimates
               console.log(chalk.cyan(`  Running: ${data.remaining} pass${data.remaining === 1 ? '' : 'es'} selected`));
               console.log(chalk.gray(`     Est. cost: ~${data.estCost} and ~${data.estMinutes} minutes\n`));
             } else {
@@ -133,7 +167,6 @@ export async function runPOIMode(codebaseContext, opts = {}) {
           }
         },
         async onPassCapPrompt({ remaining, defaultCap }) {
-          if (nonInteractive) return defaultCap;
           const { passCap } = await inquirer.prompt([{
             type: 'input', name: 'passCap',
             message: chalk.cyan(`Passes to run now?`) + chalk.gray(` (max ${remaining}, Enter for ${defaultCap})`),
@@ -185,6 +218,8 @@ export async function runPOIMode(codebaseContext, opts = {}) {
         console.log(chalk.cyan(`\n  Session saved — run Ghost again to continue from where you left off.\n`));
         return;
       } else if (multiResult.finalReport) {
+        // Stop the narrator spinner cleanly now that the full report is in hand.
+        if (spinner) { spinner.succeed(chalk.green('  Report ready')); spinner = null; }
         buffer = multiResult.finalReport;
         // Use multipass total — reflects all files analyzed across all passes
         if (multiResult.totalFiles) {
@@ -198,22 +233,32 @@ export async function runPOIMode(codebaseContext, opts = {}) {
       }
 
     } else {
-      const spinner = ora({ text: chalk.gray('Ghost is reading your project...'), color: 'cyan' }).start();
+      // Single-pass path: smaller codebases. Same rule — capture to buffer, no stream.
+      const readSpinner = ora({ text: chalk.gray('Ghost is reading your project...'), color: 'cyan' }).start();
+      let narratorSpinner = null;
       await runPOIScan(
         codebaseContext,
         (chunk) => {
-          if (!started) { spinner.stop(); started = true; console.log(''); }
+          // Silent capture; spinner covers the UX.
+          if (!started) {
+            started = true;
+            readSpinner.stop();
+            narratorSpinner = ora({ text: chalk.cyan('  Ghost is writing the final report...'), color: 'cyan' }).start();
+          }
           buffer += chunk;
-          process.stdout.write(colorizeOutput(chunk));
         },
         {
           onNarratorStart: () => {
-            spinner.stop();
-            console.log(chalk.gray('\n  Ghost is writing the final report...\n'));
+            if (readSpinner && readSpinner.isSpinning) readSpinner.stop();
+            if (!narratorSpinner) {
+              narratorSpinner = ora({ text: chalk.cyan('  Ghost is writing the final report...'), color: 'cyan' }).start();
+            }
           },
           projectLabel: label || 'project',
         }
       );
+      if (narratorSpinner) { narratorSpinner.succeed(chalk.green('  Report ready')); narratorSpinner = null; }
+      if (readSpinner && readSpinner.isSpinning) readSpinner.stop();
       console.log('\n');
     }
 
@@ -225,33 +270,160 @@ export async function runPOIMode(codebaseContext, opts = {}) {
     showActualCost(inputTokens, outputTokens, model);
 
     // Project Intelligence — auto-compare against baseline
+    let projectIntelResult = null;
     if (label) {
-      const meta = {
+      const piMeta = {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         rates,
       };
-      await handleProjectIntelligence(label, buffer, meta);
+      projectIntelResult = await handleProjectIntelligence(label, buffer, piMeta);
     }
 
-    // Save
+    // Save prompt
     const { doSave } = await inquirer.prompt([{
       type: 'confirm', name: 'doSave',
       message: chalk.cyan('Save this report to ~/Ghost Architect Reports/?'), default: true
     }]);
 
+    // Parse severity counts using the finding parser — counts actual findings,
+    // not raw word occurrences which over-count due to summary tables/headers
+    const { extractFindings } = await import('../utils/finding-parser.js');
+    const parsedFindings = extractFindings(buffer);
+    const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+    const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
+    const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+    const lowCount      = parsedFindings.filter(f => f.severity === 'LOW').length;
+    const findingCount  = parsedFindings.length;
+
+    // Parse total hours and cost from the remediation summary section.
+    // Reports come in two formats:
+    //   RANGE:  "Total Estimated Cost: $1,524–$2,269"
+    //   SINGLE: "Grand Total: 55 hours | $7,865"
+    // We support both. If neither matches, totals stay null so downstream UI
+    // can render “—” instead of a misleading $0.
+    let totalHours = null;
+    let totalCost  = null;
+
+    // ── Hours: range patterns first, then single values ──
+    const hoursRangeMatch =
+         buffer.match(/Total Estimated Effort[:\s]+([\d.]+)[\u2013\-]([\d.]+)\s*hours/i)
+      || buffer.match(/Grand Total[:\s\S]{0,40}?([\d.]+)[\u2013\-]([\d.]+)\s*hours/i)
+      || buffer.match(/Total[^\n]*?([\d]+)[\u2013\-]([\d]+)\s*hours/i);
+    if (hoursRangeMatch) {
+      totalHours = Math.round((parseFloat(hoursRangeMatch[1]) + parseFloat(hoursRangeMatch[2])) / 2);
+    } else {
+      const hoursSingleMatch =
+           buffer.match(/Total Estimated Effort[:\s]+([\d.]+)\s*hours/i)
+        || buffer.match(/Grand Total[^\n]*?([\d.]+)\s*hours/i)
+        || buffer.match(/^\s*(?:\*\*)?Total(?:\*\*)?[^\n]*?([\d.]+)\s*hours/im);
+      if (hoursSingleMatch) {
+        totalHours = Math.round(parseFloat(hoursSingleMatch[1]));
+      }
+    }
+
+    // ── Cost: range patterns first, then single values ──
+    const costRangeMatch =
+         buffer.match(/Total Estimated Cost[:\s]+\$([\d,]+)[\u2013\-]\$([\d,]+)/i)
+      || buffer.match(/Grand Total[:\s\S]{0,80}?\$([\d,]+)[\u2013\-]\$([\d,]+)/i)
+      || buffer.match(/Total[^\n]*?\$([\d,]+)[\u2013\-]\$([\d,]+)/i);
+    if (costRangeMatch) {
+      const lo = parseInt(costRangeMatch[1].replace(/,/g, ''));
+      const hi = parseInt(costRangeMatch[2].replace(/,/g, ''));
+      totalCost = Math.round((lo + hi) / 2);
+    } else {
+      const costSingleMatch =
+           buffer.match(/Total Estimated Cost[:\s]+\$([\d,]+)(?!\s*[\u2013\-])/i)
+        || buffer.match(/Grand Total[\s\S]{0,120}?\$([\d,]+)(?!\s*[\u2013\-])/i)
+        || buffer.match(/^\s*(?:\*\*)?Grand Total(?:\*\*)?[\s\S]{0,120}?\$([\d,]+)/im);
+      if (costSingleMatch) {
+        totalCost = parseInt(costSingleMatch[1].replace(/,/g, ''));
+      }
+    }
+
+    // Last-resort fallback: if we still have nothing, scan for the LAST dollar
+    // amount that looks like a grand total. Better than showing $0.
+    if (totalCost == null) {
+      const allRanges = [...buffer.matchAll(/\$([\d,]+)[\u2013\-]\$([\d,]+)/g)];
+      if (allRanges.length > 0) {
+        const last = allRanges[allRanges.length - 1];
+        const lo = parseInt(last[1].replace(/,/g, ''));
+        const hi = parseInt(last[2].replace(/,/g, ''));
+        totalCost = Math.round((lo + hi) / 2);
+      } else {
+        const allSingles = [...buffer.matchAll(/\$([\d,]{4,})/g)]; // 4+ digits = meaningful totals, not $50
+        if (allSingles.length > 0) {
+          const last = allSingles[allSingles.length - 1];
+          totalCost = parseInt(last[1].replace(/,/g, ''));
+        }
+      }
+    }
+    if (totalHours == null) {
+      const allHoursRanges = [...buffer.matchAll(/(\d+)[\u2013\-](\d+)\s*hours/g)];
+      if (allHoursRanges.length > 0) {
+        const last = allHoursRanges[allHoursRanges.length - 1];
+        totalHours = Math.round((parseInt(last[1]) + parseInt(last[2])) / 2);
+      } else {
+        const allHoursSingles = [...buffer.matchAll(/(\d+)\s*hours/g)];
+        if (allHoursSingles.length > 0) {
+          const last = allHoursSingles[allHoursSingles.length - 1];
+          totalHours = parseInt(last[1]);
+        }
+      }
+    }
+
+    // Resolved count: use project intelligence fuzzy match result if available,
+    // otherwise fall back to baseline - current (simple delta)
+    const baselineCount = projectIntelResult?.baselineCount || findingCount;
+    const resolvedCount = projectIntelResult?.resolved != null
+      ? projectIntelResult.resolved
+      : Math.max(0, baselineCount - findingCount);
+
+    const meta = {
+      filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
+      totalFiles: codebaseContext.totalFiles,
+      cost: `${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
+      version: '4.5.0',
+      findingCount,
+      critical: criticalCount,
+      high: highCount,
+      medium: mediumCount,
+      low: lowCount,
+      totalHours,
+      totalCost,
+      // Project intelligence — baseline comparison results
+      baselineCount,
+      baselineDate:   projectIntelResult?.baselineDate   || null,
+      resolved:       resolvedCount,
+      newFindings:    projectIntelResult?.newIssues      || 0,
+      scans:          [],
+    };
+
     if (doSave) {
-      const meta = {
-        filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
-        totalFiles: codebaseContext.totalFiles,
-        cost: `$${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
-        version: '4.5.0'
-      };
+      // Save locally — saveReport also auto-publishes to Ghost Mobile if configured
       const saved = await saveReport(buffer, 'ghost-poi', label, meta);
       console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
+    } else if (label) {
+      // No local save — but still publish to Ghost Mobile if configured
+      try {
+        const { isPublishConfigured, publishProject } = await import('../core/mobile-publish.js');
+        if (isPublishConfigured()) {
+          const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+          await publishProject(
+            { label, slug: projectSlug, baselineDate: null, baselineCount: 0, scans: [] },
+            {
+              date: new Date().toISOString(),
+              version: '4.7.0',
+              findingCount: 0,
+              cost: meta.cost,
+            }
+          );
+          console.log(chalk.gray(`\n  📱 Published to Ghost Mobile (local save skipped)\n`));
+        }
+      } catch { /* non-fatal */ }
     }
 
   } catch (err) {
