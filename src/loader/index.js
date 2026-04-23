@@ -7,6 +7,34 @@ import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { getConfig } from '../config.js';
+import { resolveContextCap } from './tierCaps.js';
+import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
+
+// Scan-time options set by bin/ghost.js from CLI flags / prompts.
+// Read by buildContext and the three loader entry points.
+let SCAN_OPTIONS = {
+  tier: 'open',
+  maxContextOverride: null,   // number | null
+  excludePresets: [],         // string[]
+  excludePatterns: [],        // string[]
+};
+
+/**
+ * Called from bin/ghost.js to seed tier + flag values before a scan runs.
+ * Safe to call multiple times; last call wins.
+ */
+export function setScanOptions(opts = {}) {
+  SCAN_OPTIONS = {
+    tier: opts.tier || SCAN_OPTIONS.tier || 'open',
+    maxContextOverride: opts.maxContextOverride ?? null,
+    excludePresets: Array.isArray(opts.excludePresets) ? opts.excludePresets : [],
+    excludePatterns: Array.isArray(opts.excludePatterns) ? opts.excludePatterns : [],
+  };
+}
+
+export function getScanOptions() {
+  return { ...SCAN_OPTIONS };
+}
 
 const IGNORED_DIRS = ['node_modules', '.git', 'vendor', 'dist', 'build', '.next', '__pycache__', '.cache'];
 const IGNORED_FILES = ['package-lock.json', 'yarn.lock', 'composer.lock', 'package.json.lock', 'Gemfile.lock', 'poetry.lock'];
@@ -17,7 +45,11 @@ const CODE_EXTENSIONS = [
   '.yaml', '.yml', '.env.example', '.sh', '.bash', '.md'
 ];
 
-export async function loadCodebase(method) {
+export async function loadCodebase(method, options) {
+  // Allow callers to pass per-scan options inline as a convenience.
+  if (options && typeof options === 'object') {
+    setScanOptions({ ...SCAN_OPTIONS, ...options });
+  }
   switch (method) {
     case 'files': return await loadFromFiles();
     case 'zip':   return await loadFromZip();
@@ -57,7 +89,18 @@ async function loadFromFiles() {
     ignore: IGNORED_DIRS.map(d => `**/${d}/**`)
   });
 
-  const codeFiles = files.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+  let codeFiles = files.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+
+  // Apply --exclude / --exclude-presets if any were set on SCAN_OPTIONS.
+  const patterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
+  if (patterns.length > 0) {
+    const { kept, excluded } = filterPaths(codeFiles, dirPath, patterns);
+    codeFiles = kept;
+    if (excluded > 0) {
+      console.log(chalk.gray(`  ℹ  Exclusions: skipped ${excluded} file(s) matching ${patterns.length} pattern(s)`));
+    }
+  }
+
   spinner.succeed(`Found ${codeFiles.length} code files`);
 
   return await readFiles(codeFiles, dirPath);
@@ -78,6 +121,9 @@ async function loadFromZip() {
   const fileMap = {};
   let count = 0;
 
+  const zipExcludePatterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
+  let zipExcludedCount = 0;
+
   for (const entry of entries) {
     if (entry.isDirectory) continue;
     const ext = path.extname(entry.entryName).toLowerCase();
@@ -86,6 +132,11 @@ async function loadFromZip() {
     if (ignored) continue;
     const filename = path.basename(entry.entryName);
     if (IGNORED_FILES.includes(filename)) continue;
+
+    if (zipExcludePatterns.length > 0 && isExcluded(entry.entryName, zipExcludePatterns)) {
+      zipExcludedCount++;
+      continue;
+    }
 
     try {
       const content = entry.getData().toString('utf8');
@@ -97,6 +148,10 @@ async function loadFromZip() {
       fileMap[entry.entryName] = content;
       count++;
     } catch {}
+  }
+
+  if (zipExcludedCount > 0) {
+    console.log(chalk.gray(`  ℹ  Exclusions: skipped ${zipExcludedCount} file(s) inside ZIP`));
   }
 
   spinner.succeed(`Extracted ${count} code files from ZIP`);
@@ -163,12 +218,24 @@ async function loadFromGitHub() {
       recursive: 'true'
     });
 
+    const ghExcludePatterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
+    let ghExcludedCount = 0;
+
     const codeFiles = tree.tree.filter(item => {
       if (item.type !== 'blob') return false;
       const ext = path.extname(item.path).toLowerCase();
       if (!CODE_EXTENSIONS.includes(ext)) return false;
-      return !IGNORED_DIRS.some(d => item.path.includes(`${d}/`));
+      if (IGNORED_DIRS.some(d => item.path.includes(`${d}/`))) return false;
+      if (ghExcludePatterns.length > 0 && isExcluded(item.path, ghExcludePatterns)) {
+        ghExcludedCount++;
+        return false;
+      }
+      return true;
     });
+
+    if (ghExcludedCount > 0) {
+      console.log(chalk.gray(`  ℹ  Exclusions: skipped ${ghExcludedCount} file(s) from remote tree`));
+    }
 
     spinner.stop();
 
@@ -322,7 +389,13 @@ export async function loadFromPath(dirPath) {
 
 function buildContext(fileMap) {
   const config = getConfig();
-  const maxTokens = config.get('maxTokensContext') || 50000;
+  const configuredMax = config.get('maxTokensContext') || 50000;
+
+  // Resolve the effective cap: tier ceiling vs. user's CLI override vs. config default.
+  // Precedence: CLI --max-context (if provided) > config.maxTokensContext > 50000 default.
+  // Tier cap always clamps the final value.
+  const userRequested = SCAN_OPTIONS.maxContextOverride ?? configuredMax;
+  const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested);
 
   let context = '';
   let fileIndex = [];
@@ -339,6 +412,12 @@ function buildContext(fileMap) {
 
   const totalFiles = Object.keys(fileMap).length;
   const loadedFiles = fileIndex.length;
+
+  // Announce the effective context cap once per scan so users understand what's in play.
+  const capLabel = clamped
+    ? `${maxTokens.toLocaleString()} tokens (clamped from ${userRequested.toLocaleString()} by ${tier} tier)`
+    : `${maxTokens.toLocaleString()} tokens (${tier} tier, cap ${tierCap.toLocaleString()})`;
+  console.log(chalk.gray(`  ℹ  Context cap: ${capLabel}`));
 
   if (loadedFiles < totalFiles) {
     console.log(chalk.yellow(`  ⚠ Context limit: processed ${loadedFiles} of ${totalFiles} files (~${approxTokens.toLocaleString()} tokens)`));

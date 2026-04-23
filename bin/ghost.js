@@ -7,10 +7,12 @@ import boxen from 'boxen';
 import inquirer from 'inquirer';
 import Configstore from 'configstore';
 import { isConfigured, runSetupWizard, reconfigure, usingEnvKey } from '../src/config.js';
-import { loadCodebase, loadFromPath } from '../src/loader/index.js';
+import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
+import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
+import { listPresets } from '../src/loader/excludes.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -33,7 +35,10 @@ function showUpgradePrompt(feature) {
   ));
 }
 
-const VERSION      = '4.8.0';
+const VERSION      = '4.9.0';
+// TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
+// When cherry-picking this file across branches, change this constant to match.
+const TIER         = 'open';
 const NPM_PACKAGE  = 'ghost-architect-open';
 const COPYRIGHT    = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
@@ -81,6 +86,87 @@ async function checkForUpdate() {
 }
 
 const updateCheckPromise = checkForUpdate();
+
+// ── CLI argument parsing ────────────────────────────────────────────────────
+// Supports:
+//   --max-context N             override context cap (will be clamped to tier cap)
+//   --exclude "glob"            exclude paths matching glob (repeatable)
+//   --exclude-presets a,b       apply named exclusion preset(s), comma-separated
+//   --help / -h                 print usage and exit
+//   --version / -v              print version and exit
+function parseArgs(argv) {
+  const out = {
+    maxContext: null,
+    excludes: [],
+    presets: [],
+    help: false,
+    version: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') { out.help = true; continue; }
+    if (a === '--version' || a === '-v') { out.version = true; continue; }
+    if (a === '--max-context') {
+      const v = argv[++i];
+      const n = parseInt(v, 10);
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(chalk.red(`✗ --max-context requires a positive integer (got: ${v})`));
+        process.exit(2);
+      }
+      out.maxContext = n;
+      continue;
+    }
+    if (a.startsWith('--max-context=')) {
+      const v = a.slice('--max-context='.length);
+      const n = parseInt(v, 10);
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(chalk.red(`✗ --max-context requires a positive integer (got: ${v})`));
+        process.exit(2);
+      }
+      out.maxContext = n;
+      continue;
+    }
+    if (a === '--exclude') { out.excludes.push(argv[++i] || ''); continue; }
+    if (a.startsWith('--exclude=')) { out.excludes.push(a.slice('--exclude='.length)); continue; }
+    if (a === '--exclude-presets') {
+      const v = argv[++i] || '';
+      out.presets.push(...v.split(',').map(s => s.trim()).filter(Boolean));
+      continue;
+    }
+    if (a.startsWith('--exclude-presets=')) {
+      const v = a.slice('--exclude-presets='.length);
+      out.presets.push(...v.split(',').map(s => s.trim()).filter(Boolean));
+      continue;
+    }
+    // Unknown arg — warn but don't crash, preserves interactive usage.
+    if (a.startsWith('-')) {
+      console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
+    }
+  }
+  return out;
+}
+
+function printUsage() {
+  const presets = listPresets().join(', ') || '(none)';
+  console.log(`
+Ghost Architect — AI-powered codebase archaeology (v${VERSION}, ${TIER} tier)
+
+Usage:
+  ghost [options]
+
+Options:
+  --max-context N          Override context cap in tokens. Clamped to your tier limit.
+                           Tier caps: open=${TIER_CAPS.open.toLocaleString()}, pro=${TIER_CAPS.pro.toLocaleString()}, team=${TIER_CAPS.team.toLocaleString()}, enterprise=${TIER_CAPS.enterprise.toLocaleString()}
+  --exclude "glob"         Exclude files matching glob pattern (repeatable).
+                           Example: --exclude "seeds/**" --exclude "*.fixture.js"
+  --exclude-presets a,b    Apply named exclusion preset(s), comma-separated.
+                           Available presets: ${presets}
+  --version, -v            Print version and exit.
+  --help, -h               Print this help and exit.
+
+When flags are omitted, Ghost runs interactively and uses your configured defaults.
+`);
+}
 
 // ── Banner ──────────────────────────────────────────────────────────────────
 
@@ -180,6 +266,23 @@ async function main() {
 
   // Wait briefly for update check before first banner
   await Promise.race([updateCheckPromise, new Promise(r => setTimeout(r, 500))]);
+
+  // Parse CLI flags so --help / --version / --max-context etc. are honored
+  // before we print the banner or run the setup wizard.
+  const argv = process.argv.slice(2);
+  const cliOpts = parseArgs(argv);
+
+  if (cliOpts.help)    { printUsage(); process.exit(0); }
+  if (cliOpts.version) { console.log(`ghost-architect v${VERSION} (${TIER})`); process.exit(0); }
+
+  // Seed the loader with this run's tier + CLI-driven options.
+  // Caps get clamped; excludes get merged with presets at scan time.
+  setScanOptions({
+    tier: TIER,
+    maxContextOverride: cliOpts.maxContext,
+    excludePresets: cliOpts.presets,
+    excludePatterns: cliOpts.excludes,
+  });
 
   printBanner();
 
