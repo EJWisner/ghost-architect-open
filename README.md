@@ -47,20 +47,25 @@ Ghost Architect is BYOK — bring your own key. You pay Anthropic directly for A
 
 ## Installation
 
-**1. Clone the repo**
+**Option A — npm (recommended)**
 
 ```bash
-git clone https://github.com/EJWisner/ghost-architect-open.git
-cd ghost-architect-open
+npm install -g ghost-architect-open
 ```
 
-**2. Install dependencies**
+Then run `ghost` from anywhere.
+
+**Option B — clone the repo**
 
 ```bash
+git clone https://github.com/EJWisner/ghost-architect.git
+cd ghost-architect
 npm install
 ```
 
-**3. Set your Anthropic API key**
+Then run `node bin/ghost.js`.
+
+**Set your Anthropic API key**
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here
@@ -73,17 +78,11 @@ echo 'export ANTHROPIC_API_KEY=your_key_here' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-**4. Run Ghost Architect**
-
-```bash
-node bin/ghost.js
-```
-
 ---
 
 ## Running a Scan
 
-On launch, Ghost presents a menu. Select **Scan a local directory** and point it at your codebase or a module directory.
+On launch, Ghost presents a menu. Select **Local directory** and point it at your codebase or a module directory.
 
 Ghost will analyze the files, score findings by severity, and save reports to:
 
@@ -94,6 +93,44 @@ Ghost will analyze the files, score findings by severity, and save reports to:
 Three files are generated per scan: `.txt`, `.md`, and `.pdf`.
 
 **Ghost Open reports include Critical and High findings only.**
+
+---
+
+## Cost Controls (v4.9.0+)
+
+Ghost ships with three flags for controlling what gets scanned and how much context gets sent to the model. Use them to dial costs down on large codebases.
+
+**`--max-context N`** — override the context cap in tokens. Ghost Open is capped at 50,000 tokens; higher values are clamped and warned.
+
+```bash
+ghost --max-context 40000
+```
+
+**`--exclude "glob"`** — skip files matching a glob pattern. Repeatable.
+
+```bash
+ghost --exclude "seeds/**" --exclude "*.fixture.js"
+```
+
+**`--exclude-presets name,name`** — apply curated exclusion bundles:
+
+- `test-data` — seeds, migrations, fixtures, tests, spec folders, `*.test.js`, `*.spec.js`, `*.test.php`, `*Test.php`
+- `generated` — `generated/`, `dist/`, `build/`, `.next/`, `out/`, `coverage/`
+- `vendor-cache` — `var/`, `tmp/`, `.cache/`, `pub/static/`, `pub/media/`
+
+```bash
+ghost --exclude-presets test-data,generated
+```
+
+Combine flags freely:
+
+```bash
+ghost --exclude-presets test-data --exclude "legacy/**" --max-context 45000
+```
+
+Most large-repo scans come in 60–80% cheaper just by running with `--exclude-presets test-data`.
+
+See all flags: `ghost --help`
 
 ---
 
