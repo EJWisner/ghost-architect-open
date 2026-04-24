@@ -12,6 +12,7 @@ import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
+import { loadProfile } from '../src/profile/index.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -39,6 +40,8 @@ const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 //   --max-context N             override context cap (will be clamped to tier cap)
 //   --exclude "glob"            exclude paths matching glob (repeatable)
 //   --exclude-presets a,b       apply named exclusion preset(s), comma-separated
+//   --profile path              Ghost Partner — load consultant profile from
+//                               .yaml/.yml/.md/.txt file and inject into scans
 //   --help / -h                 print usage and exit
 //   --version / -v              print version and exit
 function parseArgs(argv) {
@@ -46,6 +49,7 @@ function parseArgs(argv) {
     maxContext: null,
     excludes: [],
     presets: [],
+    profile: null,
     help: false,
     version: false,
   };
@@ -85,6 +89,8 @@ function parseArgs(argv) {
       out.presets.push(...v.split(',').map(s => s.trim()).filter(Boolean));
       continue;
     }
+    if (a === '--profile') { out.profile = argv[++i] || ''; continue; }
+    if (a.startsWith('--profile=')) { out.profile = a.slice('--profile='.length); continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -108,6 +114,10 @@ Options:
                            Example: --exclude "seeds/**" --exclude "*.fixture.js"
   --exclude-presets a,b    Apply named exclusion preset(s), comma-separated.
                            Available presets: ${presets}
+  --profile path           Ghost Partner — load consultant profile from a
+                           .yaml/.yml/.md/.txt file. Profile lens is injected
+                           into POI scans so findings reflect the consultant's
+                           methodology. Plain text uses LLM extraction (cached).
   --version, -v            Print version and exit.
   --help, -h               Print this help and exit.
 
@@ -217,6 +227,19 @@ async function main() {
     excludePatterns: cliOpts.excludes,
   });
 
+  // Ghost Partner — load profile at startup if --profile was given.
+  // Fail fast: a broken profile path should stop the CLI before any scan
+  // gets set up, so the user sees the error immediately rather than mid-scan.
+  let profile = null;
+  if (cliOpts.profile) {
+    try {
+      profile = await loadProfile(cliOpts.profile);
+    } catch (err) {
+      console.error(chalk.red(`\n${SYM.cross} Failed to load profile: ${err.message}\n`));
+      process.exit(2);
+    }
+  }
+
   printBanner();
 
   if (!isConfigured()) {
@@ -281,12 +304,12 @@ async function main() {
     }
 
     switch (mode) {
-      case 'chat':      await runChatMode(codebaseContext);     break;
-      case 'poi':       await runPOIMode(codebaseContext);      break;
-      case 'blast':     await runBlastMode(codebaseContext);    break;
-      case 'conflict':  await runConflictMode(codebaseContext); break;
-      case 'compare':   await runCompareMode();                 break;
-      case 'dashboard': await showProjectDashboard();           break;
+      case 'chat':      await runChatMode(codebaseContext);             break;
+      case 'poi':       await runPOIMode(codebaseContext, { profile });  break;
+      case 'blast':     await runBlastMode(codebaseContext);            break;
+      case 'conflict':  await runConflictMode(codebaseContext);         break;
+      case 'compare':   await runCompareMode();                         break;
+      case 'dashboard': await showProjectDashboard();                   break;
     }
   }
 }

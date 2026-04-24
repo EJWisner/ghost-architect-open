@@ -417,15 +417,35 @@ export async function verifyReport(reportText, fileMap, options = {}) {
             sourceChars:   source.length,
           };
           if (!verdict) return r;
-          if (verdict.verdict === 'contradicts' || verdict.verdict === 'not_supported') {
+          if (verdict.verdict === 'contradicts') {
+            // LLM read the source and saw it contradict the finding.
+            // High-confidence drop — the finding is wrong.
             return {
               ...r,
               status: 'false_positive',
               reasons: [
-                `LLM verifier: finding is ${verdict.verdict === 'contradicts' ? 'contradicted by' : 'not supported by'} the source code. ${verdict.reason || ''}`.trim(),
+                'LLM verifier: finding is contradicted by the source code. ' + (verdict.reason || ''),
                 ...r.reasons,
               ],
               warnings: [],
+            };
+          }
+          if (verdict.verdict === 'not_supported') {
+            // LLM couldn't find evidence FOR the finding in the source, but
+            // absence of evidence is not evidence of absence — the finding
+            // might be about a pattern the LLM missed in the truncated context.
+            // Annotate, don't drop. Lets a thoughtful reviewer judge.
+            return {
+              ...r,
+              status: 'unverified',
+              warnings: [
+                ...(r.warnings || []),
+                '⚠ LLM verifier could not confirm this finding from the source code provided. ' + (verdict.reason || 'Treat as a starting point for investigation rather than a confirmed issue.'),
+              ],
+              reasons: [
+                ...(r.reasons || []),
+                'LLM verifier marked as not_supported: ' + (verdict.reason || ''),
+              ],
             };
           }
           if (verdict.verdict === 'partial') {
@@ -496,18 +516,32 @@ export async function verifyReport(reportText, fileMap, options = {}) {
 
 /**
  * Rewrite the report to:
- *   - Drop false-positive findings entirely
+ *   - Drop false-positive findings entirely (prose AND remediation table row)
  *   - Prefix unverified findings with a [⚠ UNVERIFIED] marker and inline warning
  *   - Leave verified findings untouched
+ *   - Renumber the table's Priority column after drops
  * Also strips invented line numbers (narrator sometimes smuggles them through).
  */
 function applyAnnotations(reportText, results) {
   let out = reportText;
 
+  // Collect dropped titles up front so we can also strip table rows
+  const droppedTitles = results
+    .filter(r => r.status === 'false_positive')
+    .map(r => r.finding.title);
+
   // Drop false positives: replace the whole ### section with nothing
   for (const r of results) {
     if (r.status !== 'false_positive') continue;
     out = removeFindingSection(out, r.finding.title);
+  }
+
+  // Strip remediation table rows for any dropped finding, then renumber
+  // the Priority column so it remains 1..N. This keeps the table and the
+  // prose in sync — a row in the table without a finding above it is the
+  // most embarrassing kind of consultant-deliverable defect.
+  if (droppedTitles.length > 0) {
+    out = stripDroppedRowsFromTable(out, droppedTitles);
   }
 
   // Annotate unverified findings
@@ -524,6 +558,123 @@ function applyAnnotations(reportText, results) {
   out = out.replace(/\.ts:\d+(?:[\u2013\-]\d+)?/g, '.ts');
 
   return out;
+}
+
+/**
+ * Find the remediation table in the report and remove rows whose Finding
+ * column matches any of the dropped titles. After removal, renumber the
+ * Priority column so the surviving rows are numbered 1..N.
+ *
+ * Matching is fuzzy: we normalize whitespace and punctuation, then check
+ * whether the dropped title appears as a substring in the row's Finding
+ * cell (or vice versa). This handles cases where the narrator slightly
+ * polished the title between the prose and the table.
+ */
+function stripDroppedRowsFromTable(report, droppedTitles) {
+  const lines = report.split('\n');
+  const dropped = droppedTitles.map(t => normalizeForFuzzy(t)).filter(Boolean);
+
+  // Locate the remediation table. Heuristics:
+  //   - A header line containing "Priority" and "Finding" and "|" delimiters
+  //   - Followed by a separator line of dashes
+  //   - Followed by zero or more data rows starting with "|"
+  let headerIdx = -1;
+  let separatorIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!/^\s*\|/.test(l)) continue;
+    if (!/Priority/i.test(l) || !/Finding/i.test(l)) continue;
+    // Next non-blank line should be the separator
+    let j = i + 1;
+    while (j < lines.length && lines[j].trim() === '') j++;
+    if (j < lines.length && /^\s*\|[\s\-:|]+\|\s*$/.test(lines[j])) {
+      headerIdx = i;
+      separatorIdx = j;
+      break;
+    }
+  }
+  if (headerIdx < 0 || separatorIdx < 0) return report;
+
+  // Collect data rows: from separatorIdx+1 until first non-pipe line
+  const dataStart = separatorIdx + 1;
+  let dataEnd = dataStart;
+  while (dataEnd < lines.length && /^\s*\|/.test(lines[dataEnd])) dataEnd++;
+
+  const kept = [];
+  let removedCount = 0;
+  for (let i = dataStart; i < dataEnd; i++) {
+    const row = lines[i];
+    const cells = row.split('|').map(c => c.trim());
+    // Expected shape: ["", priority, finding, category, effort, complexity, cost, ""]
+    // The Finding column is index 2 (after the leading empty from leading "|").
+    const findingCell = cells[2] || '';
+    const findingNorm = normalizeForFuzzy(findingCell);
+    if (!findingNorm) {
+      kept.push(row);
+      continue;
+    }
+    const isDropped = dropped.some(d =>
+         findingNorm === d
+      || (findingNorm.includes(d) && d.length > 10)
+      || (d.includes(findingNorm) && findingNorm.length > 10)
+    );
+    if (isDropped) {
+      removedCount++;
+      continue;
+    }
+    kept.push(row);
+  }
+
+  if (removedCount === 0) return report;
+
+  // Renumber the Priority column on surviving rows so it remains 1..N.
+  const renumbered = kept.map((row, idx) => {
+    const cells = row.split('|');
+    if (cells.length < 3) return row;
+    // cells[0] is leading empty, cells[1] is priority
+    cells[1] = ' ' + (idx + 1) + ' ';
+    return cells.join('|');
+  });
+
+  // Splice the new data rows back in
+  const before = lines.slice(0, dataStart);
+  const after  = lines.slice(dataEnd);
+  let result = [...before, ...renumbered, ...after].join('\n');
+
+  // The totals lines below the table are now stale. Strip them — they say
+  // "Total findings = N" with the pre-drop N — and replace with a small
+  // disclaimer. We don't try to recompute the dollar total because the
+  // remaining rows are still valid line items; an inaccurate total is
+  // worse than no total.
+  result = result.replace(
+    /^\*\*Total findings:\*\*\s*\d+/m,
+    '**Total findings:** ' + renumbered.length
+  );
+  result = result.replace(
+    /^Total findings\s*=\s*\d+/m,
+    'Total findings = ' + renumbered.length
+  );
+  // Append a verifier note so the user knows the totals reflect post-verification counts.
+  if (!/_Verifier dropped/.test(result)) {
+    const noteAnchor = result.indexOf('## Risk');
+    const note = '\n\n_Verifier dropped ' + removedCount + ' finding' + (removedCount === 1 ? '' : 's') + ' as not supported by the source code. The remediation table above reflects the verified set._\n';
+    if (noteAnchor > 0) {
+      result = result.slice(0, noteAnchor) + note + '\n' + result.slice(noteAnchor);
+    } else {
+      result = result + note;
+    }
+  }
+
+  return result;
+}
+
+function normalizeForFuzzy(s) {
+  return (s || '')
+    .toLowerCase()
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function removeFindingSection(report, title) {

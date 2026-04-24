@@ -2,9 +2,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST } from '../../prompts/index.js';
-import { narrateReport, narrateExecutiveSummary } from '../core/agent/narrator.js';
+import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
+import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 
 let client = null;
 
@@ -27,34 +28,15 @@ function getRates() {
 
 // ── Extract findings from raw POI/Blast text for narrator ─────────────────────
 
-function extractFindings(rawText, mode = 'poi') {
-  const findings  = [];
-  const lines     = rawText.split('\n');
-  const findingRe = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const sevRe     = /severity[:\s]+?(CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
-  const filesRe   = /files?[:\s]+(.+)/i;
-
-  let current = null;
-  for (const line of lines) {
-    const t  = line.trim();
-    const fm = t.match(findingRe);
-    if (fm) {
-      if (current) findings.push(current);
-      current = { title: fm[1].replace(/\*\*/g, '').trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
-      continue;
-    }
-    if (current) {
-      const sm = t.match(sevRe);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
-      const fm2 = t.match(filesRe);
-      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim()).filter(Boolean); continue; }
-      if (t && t.length > 10 && !t.startsWith('---')) {
-        current.detail += (current.detail ? ' ' : '') + t;
-      }
-    }
+function extractFindings(rawText, _mode = 'poi') {
+  // Use the shared finding parser — splits on '### ' headers, ignores
+  // numbered fix-step bullets that the previous local regex was matching
+  // as findings. See multipass.js for full context on why this matters.
+  try {
+    return extractFindingsFromReport(rawText);
+  } catch {
+    return [];
   }
-  if (current) findings.push(current);
-  return findings;
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -97,9 +79,13 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
   const rates     = getRates();
 
   // Step 1: Run scan silently — collect raw output
+  // Temperature 0.3: reduces run-to-run variance so profile signal shows through.
+  const profileReminder = options.profile
+    ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
+    : '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, system: buildSystemPOI(rates),
-    messages: [{ role: 'user', content: `Perform a full Points of Interest scan on this codebase:\n\n${codebaseContext.context}` }]
+    model: getModel(), max_tokens: 8096, temperature: 0.3, system: buildSystemPOI(rates, options.profile),
+    messages: [{ role: 'user', content: `${profileReminder}Perform a full Points of Interest scan on this codebase:\n\n${codebaseContext.context}` }]
   });
 
   let rawOutput = '';
@@ -135,6 +121,7 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
       mode: 'poi',
       rates,
       fileMap: options.fileMap || codebaseContext.fileMap,
+      profile: options.profile,  // Ghost Partner — consultant lens for narrator voice
     },
     onChunk
   );
@@ -160,6 +147,11 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
       }
     }
   }
+
+  // Final scrub — see synthesizeFinal() in multipass.js for full rationale.
+  // Verifier removes false-positive findings without touching their parent
+  // ## category headers. Scrub here to clean up empty sections.
+  finalOutput = scrubEmptyHeaders(finalOutput);
 
   return finalOutput;
 }

@@ -14,7 +14,7 @@ import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
-import { narrateReport } from './agent/narrator.js';
+import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
@@ -187,7 +187,7 @@ async function callClaudeRaw(prompt, system, maxTokens = 8096) {
 
   try {
     activeStream = anthropic.messages.stream({
-      model: getModel(), max_tokens: maxTokens, system,
+      model: getModel(), max_tokens: maxTokens, temperature: 0.3, system,
       messages: [{ role: 'user', content: prompt }]
     });
     for await (const chunk of activeStream) {
@@ -299,7 +299,7 @@ export function clearCheckpoint(projectLabel) {
 
 // ── Single pass ───────────────────────────────────────────────────────────────
 
-async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons) {
+async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons, profile = null) {
   let context = '';
   for (const [fp, content] of Object.entries(pass.files)) {
     context += `\n\n=== FILE: ${fp} ===\n${content}`;
@@ -308,18 +308,26 @@ async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons) {
     ? `\n\nCROSS-PASS CONTEXT (findings from prior passes — use to identify relationships):\n${priorSkeletons.join('\n---\n')}\n\n`
     : '';
 
+  // Ghost Partner — reinforce the consultant lens in the user message too.
+  // System prompt has the CONSULTANT CONTEXT block; this user-turn reminder
+  // gives the model a second, shorter nudge right next to the code, which
+  // empirically pulls stronger adherence to the profile's vocabulary.
+  const profileReminder = profile
+    ? `You are scanning on behalf of ${profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize findings around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
+    : '';
+
   return callClaude(
-    `This is pass ${passNum} of ${totalPasses} in a multi-pass analysis of a ${totalFiles}-file codebase.` +
+    `${profileReminder}This is pass ${passNum} of ${totalPasses} in a multi-pass analysis of a ${totalFiles}-file codebase.` +
     `${skeletonContext}` +
     `Analyze ONLY the files in this pass. Reference prior pass findings if you see related issues.\n\n` +
     `Files for this pass:\n${context}`,
-    buildSystemPOI(getRates())
+    buildSystemPOI(getRates(), profile)
   );
 }
 
 // ── Intermediate merge ────────────────────────────────────────────────────────
 
-async function mergePassResults(results, label) {
+async function mergePassResults(results, label, profile = null) {
   const combined = results.map((r, i) =>
     `=== FINDINGS BATCH ${i + 1} (${r.fileCount} files) ===\n${r.findings}`
   ).join('\n\n');
@@ -333,42 +341,24 @@ async function mergePassResults(results, label) {
     `- Output must stay under 4,000 words\n` +
     `- Use Ghost Architect section format\n\n` +
     `BATCHES:\n${combined}\n\nMerged findings:`,
-    buildSystemPOI(getRates()), 6000
+    buildSystemPOI(getRates(), profile), 6000
   );
 }
 
 // ── Extract findings from merged text for narrator ────────────────────────────
-
-function extractFindingsForNarrator(mergedText) {
-  const findings = [];
-  const lines    = mergedText.split('\n');
-  const findingRe  = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const severityRe = /severity[:\s]+?(CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
-  const filesRe    = /files?[:\s]+(.+)/i;
-  const effortRe   = /effort[:\s]+(\d[\d–\-]*)\s*hours?/i;
-
-  let current = null;
-  for (const line of lines) {
-    const t  = line.trim();
-    const fm = t.match(findingRe);
-    if (fm) {
-      if (current) findings.push(current);
-      current = { title: fm[1].replace(/\*\*/g, '').trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
-      continue;
-    }
-    if (current) {
-      const sm = t.match(severityRe);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
-      const fm2 = t.match(filesRe);
-      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim()).filter(Boolean); continue; }
-      if (t && t.length > 10 && !t.startsWith('---')) {
-        current.detail += (current.detail ? ' ' : '') + t;
-      }
-    }
-  }
-  if (current) findings.push(current);
-  return findings;
-}
+//
+// REMOVED April 24 2026: local extractFindingsForNarrator with regex
+//   /^\d+\.\s+\*?\*?(.+?)\*?\*?$/
+// matched both real findings ('1. **Title**') AND every fix-step bullet
+// inside a finding ('1. Wrap atob in try/catch'). On the Ghost Mobile scan
+// this turned ~10 real findings into 51-70 phantom 'findings' that flowed
+// into the narrator, broke Pass 2's token budget, and forced the
+// MAX_FINDINGS_FOR_PASS_2 cap to fire as a workaround. Now we use the
+// shared parser in src/utils/finding-parser.js which splits on '### '
+// headers (the actual finding marker) and ignores numbered fix steps.
+//
+// extractFindingsFromReport from finding-parser.js is the single source of
+// truth for finding extraction. Imported at the top of this file.
 
 // ── Final synthesis — with narrator ──────────────────────────────────────────
 
@@ -377,13 +367,20 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   const rates     = getRates();
   const anthropic = getClient();
 
+  // Ghost Partner — reinforce consultant lens in synthesis user message too.
+  const profileReminder = options.profile
+    ? `You are synthesizing on behalf of ${options.profile.author || 'the consultant'}. The final report must reflect their methodology as described in the CONSULTANT CONTEXT block of your system prompt — name findings in their vocabulary and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the findings below actually exhibit the pattern.\n\n`
+    : '';
+
   // Step 1: Raw synthesis (same as before — produces structured findings)
+  // Temperature 0.3: variance control — matches pass/merge calls for consistency.
   let rawSynthesis = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, system: buildSystemPOI(rates),
+    model: getModel(), max_tokens: 8096, temperature: 0.3, system: buildSystemPOI(rates, options.profile),
     messages: [{
       role: 'user',
       content:
+        profileReminder +
         `Final synthesis: ${completedPasses} of ${totalPasses} passes complete.\n\n` +
         `Produce the final unified Points of Interest Report:\n` +
         `1. Merge remaining duplicates, rank by severity and business impact\n` +
@@ -405,17 +402,16 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // Step 2: Narrator rewrites as senior architect (streaming to user)
   if (options.onNarratorStart) options.onNarratorStart();
 
-  const findings = extractFindingsForNarrator(rawSynthesis);
-
-  // Real finding count — use the shared report parser, not a raw digit-line regex.
-  // The old approach (rawSynthesis.match(/^\d+\./gm)) counted numbered recommendation
-  // steps and fix-priority items as findings, inflating the count dramatically
-  // (e.g. reporting "65 findings" when only 17 real findings existed).
-  let actualFindingCount = findings.length;
+  // Use the shared finding parser — splits on '### ' headers, ignores
+  // numbered fix-step bullets that the previous local parser was matching
+  // as if they were findings. This is what unblocks the upstream noise
+  // that was forcing the narrator's MAX_FINDINGS_FOR_PASS_2 cap to fire.
+  let findings = [];
   try {
-    const parsed = extractFindingsFromReport(rawSynthesis);
-    if (parsed.length > 0) actualFindingCount = parsed.length;
-  } catch { /* fall back to narrator findings count */ }
+    findings = extractFindingsFromReport(rawSynthesis);
+  } catch { /* fall through to placeholder below */ }
+
+  const actualFindingCount = findings.length;
 
   // Build memory result — use raw synthesis as detail if extraction yields few findings
   const memoryResult = {
@@ -441,6 +437,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     requireRemediationTable: true,
     rawSynthesis: rawSynthesis.slice(0, 8000), // give narrator the raw text directly
     fileMap: options.fileMap,                  // source-ground the narrator against real code
+    profile: options.profile,                  // Ghost Partner — consultant lens for narrator voice
   };
 
   const narratedReport = await narrateReport(
@@ -489,6 +486,14 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     }
   }
 
+  // Final scrub — the verifier removes false-positive findings but does not
+  // touch their parent ## category headers, so a category whose findings all
+  // got dropped will be left as a dangling empty header. Run the scrubber
+  // here, AFTER verification, to clean those up. Defense in depth: this is
+  // the same scrubber that runs inside the narrator's patcher path; we run
+  // it again here because content can disappear between narrator and now.
+  finalOutput = scrubEmptyHeaders(finalOutput);
+
   return finalOutput;
 }
 
@@ -497,7 +502,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
 export async function synthesizeFromSession(session, totalFiles, totalPasses, onChunk, options = {}) {
   const groups = [...session.mergedGroups];
   if (session.pendingPassResults.length > 0) {
-    const merged = await mergePassResults(session.pendingPassResults, session.projectLabel);
+    const merged = await mergePassResults(session.pendingPassResults, session.projectLabel, options.profile);
     groups.push(merged);
   }
   const coverage = Math.round((session.completedPassCount / totalPasses) * 100);
@@ -517,8 +522,13 @@ export async function synthesizeFromSession(session, totalFiles, totalPasses, on
  *   onPassCapPrompt({ remaining, defaultCap }) → Promise<number>
  *   onSessionPrompt({ session, allPassCount }) → Promise<'continue'|'report'|'restart'>
  *   onCompletePrompt({ coverage, remaining }) → Promise<'report'|'save'>
+ *
+ * options:
+ *   profile — Ghost Partner consultant profile object (or null). Injected into
+ *             the system prompt at every API call — pass, merge, and final
+ *             synthesis — so the consultant's lens is applied consistently.
  */
-export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
+export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, options = {}) {
   const {
     onProgress       = () => {},
     onChunk          = () => {},
@@ -526,6 +536,8 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     onSessionPrompt  = async () => 'continue',
     onCompletePrompt = async () => 'report',
   } = callbacks;
+
+  const profile = options.profile || null;
 
   const allPasses  = buildPasses(fileMap);
   const totalFiles = Object.keys(fileMap).length;
@@ -552,6 +564,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
       const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, {
         projectLabel,
         fileMap,
+        profile,
         onVerifierStart:  () => onProgress({ type: 'verifying' }),
         onVerifierReport: (card) => onProgress({ type: 'verifierReport', card }),
       });
@@ -597,7 +610,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     onProgress({ type: 'passStart', passNum, totalPasses: allPasses.length, fileCount, tokens: pass.tokens });
 
     const priorSkeletons = session.passSkeletons || [];
-    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons);
+    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons, profile);
 
     const skeleton = extractSkeleton(result);
     session.passSkeletons = [...priorSkeletons, skeleton].slice(-3);
@@ -611,7 +624,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
     if (session.pendingPassResults.length >= MERGE_BATCH_SIZE) {
       onProgress({ type: 'merging', count: session.pendingPassResults.length });
-      const merged = await mergePassResults(session.pendingPassResults, projectLabel);
+      const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
       session.mergedGroups.push(merged);
       session.pendingPassResults = [];
       onProgress({ type: 'mergeDone' });
@@ -636,7 +649,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
   if (session.pendingPassResults.length > 0) {
     onProgress({ type: 'mergingFinal' });
-    const merged = await mergePassResults(session.pendingPassResults, projectLabel);
+    const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
     session.mergedGroups.push(merged);
     session.pendingPassResults = [];
     saveSession(projectLabel, session);
@@ -650,6 +663,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     {
       projectLabel,
       fileMap,  // pass source map to verifier for grounding checks
+      profile,  // Ghost Partner — consultant lens applied at synthesis too
       onNarratorStart:    () => onProgress({ type: 'narrating' }),
       onVerifierStart:    () => onProgress({ type: 'verifying' }),
       onVerifierReport:   (card) => onProgress({ type: 'verifierReport', card }),
