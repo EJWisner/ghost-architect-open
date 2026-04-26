@@ -468,15 +468,17 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   //   Pass 1: cheap regex check (method existence, line bounds, safe-pattern detection)
   //   Pass 2: LLM check (semantic correctness against the actual source)
   // Both drop false positives entirely; single-flaw findings are annotated UNVERIFIED.
+  let verifierCard = null;
   if (options.fileMap) {
     try {
       if (options.onVerifierStart) options.onVerifierStart();
-      const { annotatedReport, report: verifierCard } = await verifyReport(
+      const verifyResult = await verifyReport(
         finalOutput,
         options.fileMap,
         { llmVerifier: createLLMVerifier() }
       );
-      finalOutput = annotatedReport;
+      finalOutput  = verifyResult.annotatedReport;
+      verifierCard = verifyResult.report;
       if (options.onVerifierReport) options.onVerifierReport(verifierCard);
     } catch (err) {
       // Verifier failure must never block the report — surface a note and continue.
@@ -494,10 +496,306 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // it again here because content can disappear between narrator and now.
   finalOutput = scrubEmptyHeaders(finalOutput);
 
+  // Post-verifier exec summary regeneration. The original exec summary was
+  // written by the planner against the pre-drop finding set, so when the
+  // verifier drops findings, the summary can reference findings that no
+  // longer appear in the body — it lies. Detect drops and regenerate the
+  // summary against the surviving findings only.
+  //
+  // Cost: ~$0.02 per scan (small prompt, ~300 token output). Skipped
+  // entirely when nothing was dropped, so default-mode scans pay nothing.
+  if (verifierCard && verifierCard.falsePositives > 0) {
+    try {
+      finalOutput = await regenerateExecutiveSummary(
+        finalOutput,
+        verifierCard,
+        options.profile,
+        options.projectLabel
+      );
+    } catch (err) {
+      // Regen failure is non-fatal — the original summary still describes
+      // the report's general shape, just imperfectly. Surface a debug note
+      // so we can diagnose if it starts failing in production.
+      try {
+        const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+        fs.mkdirSync(debugDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(
+          path.join(debugDir, `exec-summary-regen-error-${ts}.txt`),
+          `Exec summary regeneration failed: ${err.message}\n\nStack:\n${err.stack || '(no stack)'}\n`
+        );
+      } catch { /* never let debug logging break the scan */ }
+    }
+
+    // Same problem, different section: the Risk if Left Unaddressed
+    // paragraph was also drafted against the pre-verification finding
+    // set, so it commonly references findings the verifier dropped
+    // (e.g. "the migration path that deletes plaintext tokens" when no
+    // such finding survived). Regenerate it against the surviving set
+    // so the closing paragraph stays consistent with the body.
+    try {
+      finalOutput = await regenerateRiskParagraph(
+        finalOutput,
+        options.profile,
+        options.projectLabel
+      );
+    } catch (err) {
+      try {
+        const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+        fs.mkdirSync(debugDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(
+          path.join(debugDir, `risk-paragraph-regen-error-${ts}.txt`),
+          `Risk paragraph regeneration failed: ${err.message}\n\nStack:\n${err.stack || '(no stack)'}\n`
+        );
+      } catch { /* never let debug logging break the scan */ }
+    }
+  }
+
   return finalOutput;
 }
 
+/**
+ * Regenerate the executive summary section of a verified report so it
+ * references only findings that survived verification.
+ *
+ * Why this exists: the original exec summary was drafted by the narrator's
+ * planning pass against the pre-verification finding set. When the verifier
+ * drops findings as not-supported-by-source, the summary can name findings
+ * that no longer exist in the body — exactly the kind of internal
+ * inconsistency a sharp consultant catches on first read.
+ *
+ * Approach: extract surviving findings from the (already-verified, already-
+ * scrubbed) report, ask the LLM to rewrite just the exec summary against
+ * that set, and splice the new summary in place of the old one. Everything
+ * else in the report — categories, prose entries, remediation table, risk
+ * paragraph — stays exactly as the verifier left it.
+ *
+ * If the report doesn't have an `## Executive Summary` section, we return
+ * it untouched. If the LLM call fails, we return the original report
+ * untouched. Both cases are non-fatal.
+ */
+async function regenerateExecutiveSummary(report, verifierCard, profile, projectLabel) {
+  // Locate the existing exec summary section. Pattern: `## Executive Summary`
+  // (optionally with emoji prefix), followed by content, ending at the next
+  // `## ` header.
+  const summaryHeaderRe = /^##\s+(?:[\u{1F300}-\u{1FAFF}]\s*)?Executive\s+Summary\s*$/imu;
+  const headerMatch = summaryHeaderRe.exec(report);
+  if (!headerMatch) return report; // No summary section — nothing to regenerate.
+
+  const headerStart = headerMatch.index;
+  const headerEnd   = headerStart + headerMatch[0].length;
+
+  // Find the next ## header to bound the summary section.
+  const afterHeader = report.slice(headerEnd);
+  const nextHeaderRe = /\n##\s+/;
+  const nextMatch = nextHeaderRe.exec(afterHeader);
+  const summaryEndIdx = nextMatch ? headerEnd + nextMatch.index : report.length;
+
+  // Extract surviving findings from the post-verifier body. We use the
+  // shared parser so we get the same severity inference as everywhere else.
+  const surviving = extractFindingsFromReport(report);
+  if (!surviving || surviving.length === 0) return report;
+
+  // Build a compact, severity-ordered finding list for the prompt.
+  const SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4, BLOCKING: 0 };
+  const ranked = [...surviving].sort((a, b) => {
+    const rA = SEVERITY_RANK[(a.severity || '').toUpperCase()] ?? 99;
+    const rB = SEVERITY_RANK[(b.severity || '').toUpperCase()] ?? 99;
+    return rA - rB;
+  });
+  const findingLines = ranked.map((f, i) =>
+    `${i + 1}. [${f.severity || 'MEDIUM'}] ${f.title}` +
+    (f.files && f.files.length ? ` (files: ${f.files.slice(0, 3).join(', ')})` : '')
+  ).join('\n');
+
+  // Count by severity. We construct the breakdown sentence ourselves in code
+  // rather than trusting the LLM to count and report accurately — multiple
+  // attempts to prompt the model into emitting an accurate breakdown phrase
+  // ("1 critical, 2 high, 4 medium, 1 low") consistently failed because the
+  // model has a strong narrative prior to collapse adjacent severity bands.
+  const sevCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0, BLOCKING: 0 };
+  for (const f of surviving) {
+    const s = (f.severity || 'MEDIUM').toUpperCase();
+    if (sevCounts[s] !== undefined) sevCounts[s]++;
+  }
+  const presentBands = Object.entries(sevCounts).filter(([_, n]) => n > 0);
+
+  // Build the count + breakdown sentence in code. Format:
+  //   "My pre-engagement analysis of the <project> codebase identified <N>
+  //    findings: <X critical-severity, Y high-severity, Z medium-severity>."
+  // The breakdown is comma-separated with an Oxford-and joining the last two
+  // items when there are 3+ bands. With 2 bands we use "and". With 1 band
+  // we just say "all <N> are <band>-severity".
+  const projectClause = projectLabel ? ` of the ${projectLabel} codebase` : '';
+  const subjectClause = profile
+    ? `My pre-engagement analysis${projectClause}`
+    : `This pre-engagement analysis${projectClause}`;
+
+  let breakdownClause;
+  if (presentBands.length === 1) {
+    const [band, n] = presentBands[0];
+    const bandWord = band.toLowerCase();
+    breakdownClause = n === 1
+      ? `: 1 ${bandWord}-severity issue`
+      : `: ${n} ${bandWord}-severity issues`;
+  } else if (presentBands.length === 2) {
+    const parts = presentBands.map(([band, n]) => `${n} ${band.toLowerCase()}-severity`);
+    breakdownClause = `: ${parts[0]} and ${parts[1]}`;
+  } else {
+    const parts = presentBands.map(([band, n]) => `${n} ${band.toLowerCase()}-severity`);
+    const allButLast = parts.slice(0, -1).join(', ');
+    const last = parts[parts.length - 1];
+    breakdownClause = `: ${allButLast}, and ${last}`;
+  }
+
+  const totalNoun = surviving.length === 1 ? 'finding' : 'findings';
+  const openerSentence = `${subjectClause} identified ${surviving.length} ${totalNoun}${breakdownClause}.`;
+
+  // Profile-aware persona — match the narrator's white-label conventions.
+  // When a profile is loaded, we do NOT identify as Ghost Architect.
+  const persona = profile
+    ? `You are writing the body of an executive summary for a pre-engagement codebase analysis report on behalf of ${profile.author || 'the consultant'}${profile.organization ? ` (${profile.organization})` : ''}. Write in the consultant's voice. Do NOT mention "Ghost Architect" or "Ghost" in the output.`
+    : 'You are Ghost Architect, writing the body of an executive summary for a codebase analysis report.';
+
+  // The LLM only writes the prose AFTER the opener. The opener + breakdown
+  // sentence is constructed deterministically in code above. We give the LLM
+  // the opener for context so its prose connects to it grammatically, but
+  // the LLM's output is appended AFTER the opener.
+  const prompt =
+    `${persona}\n\n` +
+    `The first sentence of the executive summary has already been written:\n` +
+    `\n  "${openerSentence}"\n\n` +
+    `Your job is to write 2 to 4 additional sentences that follow this opener, naming the top finding(s) by name and impact. Do NOT rewrite the opener. Do NOT mention severity counts (the opener already covered them). Do NOT mention dropped findings or the verifier.\n\n` +
+    `SURVIVING FINDINGS (ordered by severity, item 1 is the most severe):\n${findingLines}\n\n` +
+    `WHAT TO WRITE:\n` +
+    `- 2 to 4 sentences of plain prose, no markdown, no bullet lists.\n` +
+    `- Name the most severe finding (item 1 above) by name and impact in plain language.\n` +
+    `- If there is more than one CRITICAL or HIGH finding, name the second one too.\n` +
+    `- Use one sentence to gesture at the remaining findings as a group (e.g., "the remaining issues span dependency hygiene and configuration debt") rather than listing them all.\n` +
+    `- Do NOT cite line numbers or method names.\n` +
+    `- Do NOT invent dollar totals; the remediation table elsewhere has those numbers.\n` +
+    `- Do NOT repeat the count or severity breakdown from the opener.\n` +
+    `- Output ONLY the additional sentences. No preamble, no "Here is...". Start your output with the first new sentence.\n\n` +
+    `Additional sentences:`;
+
+  const additional = await callClaude(prompt, '', 500);
+  const cleanedAdditional = (additional || '').trim();
+
+  // Compose the final summary: code-built opener + LLM-built body. If the
+  // LLM call failed or returned empty, fall back to opener alone — better
+  // than a stale or absent summary.
+  const composedSummary = cleanedAdditional
+    ? `${openerSentence} ${cleanedAdditional}`
+    : openerSentence;
+
+  // Splice: keep everything up to and including the `## Executive Summary`
+  // line, then the new body, then everything from the next ## header onward.
+  const before     = report.slice(0, headerEnd);
+  const after      = report.slice(summaryEndIdx);
+  const reassembled = before + '\n\n' + composedSummary + '\n' + after;
+
+  return reassembled;
+}
+
 // ── Session-based synthesis ───────────────────────────────────────────────────
+
+/**
+ * Regenerate the Risk if Left Unaddressed paragraph so it references only
+ * findings that survived verification.
+ *
+ * Why this exists: same root cause as regenerateExecutiveSummary — the
+ * narrator drafted the closing paragraph during initial rendering, before
+ * the verifier dropped any findings. When verification removes findings,
+ * the closing paragraph commonly references issues by name that no longer
+ * appear elsewhere in the report ("the migration path that deletes
+ * plaintext tokens", "the new architecture flag without compatibility
+ * verification", etc.). A sharp consultant reader will notice immediately.
+ *
+ * Approach: locate the `## Risk if Left Unaddressed` section, extract the
+ * surviving findings from the verified report body, and ask the LLM for a
+ * single closing paragraph constrained to that set. Splice the new
+ * paragraph in place of the old one. Everything before the Risk header
+ * stays exactly as the verifier left it.
+ *
+ * Non-fatal failures: missing section header → return original. Empty LLM
+ * response → return original. The exec summary regen sets the precedent.
+ */
+async function regenerateRiskParagraph(report, profile, projectLabel) {
+  // Locate the existing Risk section. Pattern: `## Risk if Left Unaddressed`
+  // (optionally with emoji prefix). Tolerate a few legacy header variants
+  // that older Ghost reports used: "Risk Assessment", "Risks".
+  const riskHeaderRe = /^##\s+(?:[\u{1F300}-\u{1FAFF}]\s*)?Risk(?:\s+if\s+Left\s+Unaddressed|\s+Assessment|s)?\s*$/imu;
+  const headerMatch = riskHeaderRe.exec(report);
+  if (!headerMatch) return report; // No risk section — nothing to regenerate.
+
+  const headerStart = headerMatch.index;
+  const headerEnd   = headerStart + headerMatch[0].length;
+
+  // Find the next ## header to bound the section. The Risk paragraph is
+  // typically the last ## section in the report, so we may hit EOF first.
+  const afterHeader = report.slice(headerEnd);
+  const nextHeaderRe = /\n##\s+/;
+  const nextMatch = nextHeaderRe.exec(afterHeader);
+  const sectionEndIdx = nextMatch ? headerEnd + nextMatch.index : report.length;
+
+  // Extract surviving findings from the post-verifier body. Same parser
+  // the exec summary regen uses, so severity inference is consistent.
+  const surviving = extractFindingsFromReport(report);
+  if (!surviving || surviving.length === 0) return report;
+
+  // Severity-rank the findings so the most important ones lead in the
+  // prompt. The LLM tends to weight earlier list items more heavily, and
+  // the closing paragraph should be anchored on what's most consequential.
+  const SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4, BLOCKING: 0 };
+  const ranked = [...surviving].sort((a, b) => {
+    const rA = SEVERITY_RANK[(a.severity || '').toUpperCase()] ?? 99;
+    const rB = SEVERITY_RANK[(b.severity || '').toUpperCase()] ?? 99;
+    return rA - rB;
+  });
+  const findingLines = ranked.map((f, i) =>
+    `${i + 1}. [${f.severity || 'MEDIUM'}] ${f.title}` +
+    (f.files && f.files.length ? ` (files: ${f.files.slice(0, 3).join(', ')})` : '')
+  ).join('\n');
+
+  // Profile-aware persona — mirror the exec summary regen's white-label
+  // conventions. When a profile is loaded, do NOT identify as Ghost.
+  const persona = profile
+    ? `You are writing the closing paragraph of a pre-engagement codebase analysis report on behalf of ${profile.author || 'the consultant'}${profile.organization ? ` (${profile.organization})` : ''}. Write in the consultant's voice. Do NOT mention "Ghost Architect" or "Ghost" in the output.`
+    : 'You are Ghost Architect, writing the closing paragraph of a codebase analysis report.';
+
+  const projectLine = projectLabel ? `Project: ${projectLabel}\n` : '';
+
+  const prompt =
+    `${persona}\n\n` +
+    `${projectLine}` +
+    `Write a single "Risk if Left Unaddressed" paragraph for this report. The findings below are the COMPLETE set that survived source-code verification. The paragraph must reference ONLY these findings — do not invent or imply additional issues.\n\n` +
+    `SURVIVING FINDINGS (${surviving.length} total — ordered by severity, item 1 is the most severe):\n${findingLines}\n\n` +
+    `WHAT TO WRITE:\n` +
+    `- A single paragraph of 3 to 6 sentences. Plain prose. No markdown headers. No bullet lists.\n` +
+    `- Focus on consequences if the listed findings remain unaddressed: production failure modes, user impact, support burden, security exposure where applicable.\n` +
+    `- Anchor the paragraph on the highest-severity findings (items at the top of the list above).\n` +
+    `- You may reference findings by descriptive paraphrase ("the credential migration issue", "the silent storage failures") rather than verbatim title.\n` +
+    `- Do NOT mention any issue not in the list above. If you are tempted to write "the X path" and X is not in the list, do not write that sentence.\n` +
+    `- Do NOT mention dropped findings, source verification, or the verifier itself.\n` +
+    `- Do NOT cite line numbers, method names, or specific dollar amounts.\n` +
+    `- Do NOT write a section header like "## Risk if Left Unaddressed" — output ONLY the paragraph body.\n` +
+    `- Do NOT write any preamble like "Here is the rewritten paragraph:". Output ONLY the paragraph itself.\n\n` +
+    `Risk paragraph:`;
+
+  const newParagraph = await callClaude(prompt, '', 600);
+  const cleaned = (newParagraph || '').trim();
+  if (!cleaned) return report; // Empty response — leave original alone.
+
+  // Splice: keep everything up to and including the `## Risk if Left
+  // Unaddressed` line, then the new paragraph, then everything from the
+  // next ## header onward (or EOF). Preserves trailing footer content.
+  const before     = report.slice(0, headerEnd);
+  const after      = report.slice(sectionEndIdx);
+  const reassembled = before + '\n\n' + cleaned + '\n' + after;
+
+  return reassembled;
+}
 
 export async function synthesizeFromSession(session, totalFiles, totalPasses, onChunk, options = {}) {
   const groups = [...session.mergedGroups];

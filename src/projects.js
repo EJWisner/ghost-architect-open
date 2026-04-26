@@ -119,13 +119,18 @@ export async function showProjectDashboard() {
   console.log('\n' + chalk.cyan.bold('  📊 PROJECT INTELLIGENCE DASHBOARD\n'));
 
   for (const p of data) {
-    const filled = Math.round(p.progress / 5);
-    const empty  = 20 - filled;
+    // Defensive clamp — even though getProjectDashboardData clamps progress to
+    // [0, 100], we clamp `filled` to [0, 20] here too so a corrupted dashboard
+    // record (or a future caller that bypasses the data layer) can never feed
+    // a negative count into String.repeat() and crash the entire CLI.
+    const safeProgress = Math.max(0, Math.min(100, Number.isFinite(p.progress) ? p.progress : 0));
+    const filled = Math.max(0, Math.min(20, Math.round(safeProgress / 5)));
+    const empty  = Math.max(0, 20 - filled);
     const bar    = chalk.green('█'.repeat(filled)) + chalk.gray('░'.repeat(empty));
 
     console.log(chalk.white.bold(`  ${p.label}`));
     console.log(chalk.gray(`  Baseline: ${p.baselineDate} | Last scan: ${p.lastScan} | ${p.scanCount} scans`));
-    console.log(`  ${bar} ${p.progress}% remediated`);
+    console.log(`  ${bar} ${safeProgress}% remediated`);
     if (p.newIssues > 0) console.log(chalk.yellow(`  ⚠ ${p.newIssues} new issues in last scan`));
     console.log('');
   }

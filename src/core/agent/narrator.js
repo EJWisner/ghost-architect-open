@@ -211,8 +211,9 @@ async function planReportStructure(memoryResult, context = {}) {
     + projectLine + modeLine + '\n'
     + 'YOUR JOB:\n'
     + '1. Choose 3–6 category headers that fit these findings. Use Ghost\'s four canonical categories (🔴 Red Flags, 🏛️ Landmarks, ⚰️ Dead Zones, ⚡ Fault Lines) as the default. If a consultant lens is present, you may replace or rename categories to match their methodology — but only create a category if at least one finding belongs in it.\n'
-    + '2. Assign every finding to exactly one category. Do NOT create a category that has zero findings. Do NOT drop findings — every finding id from the input MUST appear in exactly one category.\n'
-    + '3. For each category, compute the subtotal dollar range by summing the cost_range of every finding assigned to it. If a finding has no cost_range, estimate one based on severity + complexity using the billing rates above.\n'
+    + '2. Assign every ACTIONABLE finding to exactly one category. Do NOT create a category that has zero findings. Every finding id from the input MUST appear in exactly one category UNLESS the finding is non-actionable (see rule 2a below).\n'
+    + '2a. Skip non-actionable findings entirely. A finding is non-actionable when it is purely an architectural observation, a discussion of design tradeoffs, a description of how a system works, or anything that does not name a specific code change with measurable effort. These findings have no place in a remediation report. Do not assign them to a category, do not include them in any finding_ids array. They simply disappear from the plan. Symptoms that a finding is non-actionable: detail text uses words like "observation", "awareness", "document this", "this is by design", or "single point of failure" without a concrete code change; or no specific files, methods, or fixes are cited.\n'
+    + '3. For each category, compute the subtotal dollar range by summing the cost_range of every finding assigned to it. If a finding has no cost_range, estimate one based on severity + complexity using the billing rates above. Estimates must be REAL ranges (e.g. ' + DOLLAR + '400–' + DOLLAR + '600), never ' + DOLLAR + '0 and never N/A.\n'
     + '4. Compute the grand total as the sum of all category subtotals.\n'
     + '5. Draft a 3–6 sentence executive summary that names the top 1–2 findings by impact and quantifies total remediation cost. Use the grand total dollar range verbatim — do NOT compute a separate subtotal in the summary unless you are restating a category subtotal from step 3.\n\n'
     + 'OUTPUT FORMAT:\n'
@@ -290,8 +291,6 @@ function validatePlan(plan, totalFindings) {
     subtotalSumHigh += cat.subtotal_high;
   }
 
-  if (seenIds.size !== totalFindings) return false;
-
   if (typeof plan.grand_total_low !== 'number' || typeof plan.grand_total_high !== 'number') return false;
   // Math slack scales with the total: small reports (4 findings, $500 total)
   // can have rounding errors of $50 that shouldn't fail validation. Large
@@ -300,6 +299,12 @@ function validatePlan(plan, totalFindings) {
   const slack = Math.max(500, subtotalSumHigh * 0.05);
   if (Math.abs(plan.grand_total_low  - subtotalSumLow)  > slack) return false;
   if (Math.abs(plan.grand_total_high - subtotalSumHigh) > slack) return false;
+
+  // The planner can now legitimately drop non-actionable findings (rule 2a),
+  // so seenIds.size may be less than totalFindings. We only require that no
+  // SAME finding id appear twice (already enforced above) and that at least
+  // one finding survives.
+  if (seenIds.size === 0) return false;
 
   return true;
 }
@@ -346,6 +351,9 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
       : 'You are Ghost Architect, rendering a pre-planned codebase analysis report as polished prose.')
     + consultantLens + '\n\n'
     + 'The report structure has ALREADY BEEN DECIDED in the plan below. Your job is to render polished prose for each section. You MUST NOT reorganize the categories, reassign findings, add or remove categories, or change the totals. If the plan says a category contains findings [1, 3, 5], you render those three findings under that category header — no more, no fewer, no substitutions.\n\n'
+    + (profile
+        ? 'METADATA BLOCK — DO NOT WRITE ONE. The host application has already rendered a complete metadata table at the top of the document with the consultant name, methodology, project label, file count, and generation date. Do NOT repeat any of that information after the report H1. After the H1, the next thing must be the "## Executive Summary" header. Do NOT insert lines like "**Consultant:** ...", "**Engagement:** ...", "**Codebase:** ...", "**Files analyzed:** ...", or "**Analysis date:** ..." anywhere in the report. They are duplicates and the dates you would write are guesses.\n\n'
+        : '')
     + 'COMPLETENESS CONTRACT: A post-processor validates that every finding id in the plan has a corresponding ### prose entry in your output. Any finding you skip will be detected and rendered separately, which wastes tokens and degrades report flow. RENDER EVERY FINDING. No editorial pruning, no "top N only", no skipping items you find redundant. The plan is the contract.\n\n'
     + 'REPORT PLAN (non-negotiable structure):\n' + planJson + '\n\n'
     + 'FULL FINDINGS DETAIL (use for prose; the plan tells you which go where):\n' + findingsById + '\n'
@@ -358,8 +366,9 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
     + '   a. Write a level-2 header (##) using the exact text of plan.categories[i].header.\n'
     + '   b. Under that header, render EVERY finding whose id appears in plan.categories[i].finding_ids — look up each one by id in the FULL FINDINGS DETAIL above. If the plan lists 9 ids, produce 9 ### entries.\n'
     + '   c. For each finding, produce a level-3 header (###) with the finding title (or a polished version of it), followed by Files, Severity, Effort, Complexity, Cost, a 2–3 sentence prose explanation, a "Why this matters" sentence, and a "Fix" block with 2–4 specific steps. Include a short before/after code example ONLY if the fix is a concise code change AND the source code is visible in the grounding block; otherwise skip the code block.\n'
-    + '   d. Never write a category header with no findings under it. The plan guarantees every category has at least one finding.\n'
-    + '   e. ANTI-DUPLICATION: Each finding id appears in EXACTLY ONE category in the plan. Render each finding EXACTLY ONCE in prose, under the category whose finding_ids array contains its id. Do NOT render the same finding under multiple category headers. Do NOT write "(Duplicate Entry)" notes. Do NOT invent hybrid categories like "Red Flags / Fault Lines". One finding, one prose entry, one category.\n'
+    + '   d. EVERY ### finding MUST have NUMERIC Effort, Complexity, and Cost values — never "N/A", never "TBD", never blank, NEVER "' + DOLLAR + '0". Effort is a numeric hour range like "2–3 hours" or "4–6 hours" (or "0.5–1 hours" for very small fixes). Complexity is one of LOW, MEDIUM, HIGH, or "Requires architect". Cost is a dollar range computed as effort × hourly rate, with a minimum value of "' + DOLLAR + '40–' + DOLLAR + '85" for the smallest tasks (rounded to nearest ' + DOLLAR + '5 or ' + DOLLAR + '10). Examples: 0.5–1 hours at LOW = "' + DOLLAR + '40–' + DOLLAR + '85". 2–3 hours at LOW = "' + DOLLAR + '170–' + DOLLAR + '255". 4–6 hours at MEDIUM = "' + DOLLAR + '500–' + DOLLAR + '750". A finding with real fix steps that take any time at all has a real cost; "' + DOLLAR + '0" is never the right answer. If a finding feels too abstract for numeric estimates (e.g. an architectural observation about overall design), it does NOT belong as a ### finding — it should be omitted from the rendered report. The plan only lists actionable findings; do not add architectural commentary as a finding.\n'
+    + '   e. Never write a category header with no findings under it. The plan guarantees every category has at least one finding.\n'
+    + '   f. ANTI-DUPLICATION: Each finding id appears in EXACTLY ONE category in the plan. Render each finding EXACTLY ONCE in prose, under the category whose finding_ids array contains its id. Do NOT render the same finding under multiple category headers. Do NOT write "(Duplicate Entry)" notes. Do NOT invent hybrid categories like "Red Flags / Fault Lines". One finding, one prose entry, one category.\n'
     + '4. Close with "## 📊 Remediation Summary":\n'
     + '   - State the billing rates: LOW = ' + rateJuniorLine + ' | MEDIUM = ' + rateMidLine + ' | HIGH / CRITICAL / Requires architect = ' + rateSeniorLine + '.\n'
     + '   - Render the remediation table with columns: Priority | Finding | Category | Effort | Complexity | Cost. Include every finding exactly once, in the order Priority 1..N where the priority reflects severity and business impact. Each row\'s Category column contains the SINGLE category name from the plan (no slashes, no hybrids).\n'

@@ -194,8 +194,21 @@ export function getProjectDashboardData() {
   return projects.map(p => {
     const baseline = (p.baselineFindings || []).length;
     const lastScan = p.scans?.[p.scans.length - 1];
-    const resolved = p.scans?.reduce((s, sc) => s + (sc.resolved || 0), 0) || 0;
-    const progress = baseline > 0 ? Math.round((resolved / baseline) * 100) : 0;
+
+    // Progress reflects the latest scan's resolved-against-baseline count,
+    // not a cumulative sum across scans. Each scan's `resolved` field is
+    // already computed as `baseline.filter(f => !findings.some(...))`, so
+    // the latest scan's value IS the current count. Summing produced
+    // values like 200% or 500% on projects with multiple scans, which
+    // crashed the bar renderer when filled > 20 made empty negative.
+    const resolved = lastScan?.resolved ?? 0;
+
+    // Clamp progress to [0, 100] so a malformed scan record (e.g. resolved
+    // greater than baseline due to a similarity-match flake) can never
+    // produce an out-of-range value that the renderer must defend against.
+    const rawProgress = baseline > 0 ? Math.round((resolved / baseline) * 100) : 0;
+    const progress = Math.max(0, Math.min(100, rawProgress));
+
     return {
       label:       p.label,
       baselineDate: p.baselineDate?.slice(0, 10),
