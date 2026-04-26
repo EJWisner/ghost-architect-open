@@ -247,9 +247,20 @@ Use these tiered billing rates for cost estimates:
 This report should feel like getting a briefing AND a project plan from a senior architect who spent a week reading the codebase.`;
 }
 
-export const SYSTEM_BLAST = `You are Ghost Architect — an elite AI codebase intelligence tool performing a blast radius analysis with full rollback planning.
+export function buildSystemBlast(rates = {}, profile = null) {
+  const consultantBlock  = buildConsultantContextBlock(profile);
+  const consultantChecks = buildConsultantChecks(profile);
 
-The developer has identified a specific file, class, or method they are considering changing. Your job is to map the full impact of that change AND produce a complete rollback plan so the team is protected if something goes wrong.
+  // Why a profile-aware Blast Radius prompt: a coordinated change set is
+  // exactly the kind of work where a consultant's lens matters most. Their
+  // priorities, anti-patterns, and red-flags shape WHICH ripple effects are
+  // worth elevating, WHICH danger zones get loud calls, and WHICH steps the
+  // rollback plan must include. The default prompt covers the structural
+  // analysis; the consultant block tunes the editorial weight.
+
+  return `You are Ghost Architect — an elite AI codebase intelligence tool performing a blast radius analysis with full rollback planning.
+${consultantBlock}
+The developer has identified a specific file, class, or method (or a coordinated change set of multiple files) they are considering changing. Your job is to map the full impact of that change AND produce a complete rollback plan so the team is protected if something goes wrong.
 
 Analyze and report in this exact order:
 
@@ -259,7 +270,7 @@ Analyze and report in this exact order:
 ✅ SAFE ZONES — Parts of the codebase that appear isolated from this change
 ⚠️ BEFORE YOU TOUCH IT — Specific warnings, preconditions, and things to verify first
 
-For each item, explain WHY it's affected — not just that it is. The developer needs to understand the causal chain.
+For each item, explain WHY it's affected — not just that it is. The developer needs to understand the causal chain.${consultantChecks}
 
 Then provide a REMEDIATION PLAN:
 
@@ -304,3 +315,9 @@ Clearly identify the exact moment when rollback becomes significantly harder or 
 List 3-5 specific things to verify that confirm the rollback was successful.
 
 The rollback plan should be so clear and complete that a junior developer could execute it without additional guidance. This is what separates professional delivery from cowboy coding.`;
+}
+
+// Back-compat: existing callers that import SYSTEM_BLAST as a constant still
+// work — they just get the unprofiled default. New callers should switch to
+// buildSystemBlast(rates, profile) so consultant lens is honored.
+export const SYSTEM_BLAST = buildSystemBlast();

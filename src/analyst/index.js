@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
-import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST } from '../../prompts/index.js';
+import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST, buildSystemBlast } from '../../prompts/index.js';
 import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
@@ -157,15 +157,74 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
 }
 
 // ── Blast Radius — with narrator ──────────────────────────────────────────────
+//
+// `target` may be either:
+//   - a string: a single file path, class name, or method name (legacy form)
+//   - an array of strings: multiple file paths to analyze as a coordinated
+//     change set. The prompt frames the analysis as "these files will be
+//     modified together; show the combined blast radius and ONE rollback
+//     plan that accounts for the coordinated change."
+//
+// The single-file form is preserved for the existing free-text workflow
+// (typing a class name or method name). The change-set form is the new
+// path that the picker UX uses when the user selects 2+ files.
 
 export async function runBlastRadius(codebaseContext, target, onChunk, options = {}) {
   const anthropic = getClient();
   const rates     = getRates();
 
+  // Normalize target into a consistent shape. We always work with an array
+  // internally so the prompt branch is the same shape; we just decide the
+  // framing based on length.
+  const targets = Array.isArray(target)
+    ? target.map(t => String(t).trim()).filter(Boolean)
+    : [String(target || '').trim()].filter(Boolean);
+
+  if (targets.length === 0) {
+    throw new Error('Blast radius requires at least one target.');
+  }
+
+  // Ghost Partner — consultant lens for the system prompt and the user
+  // message. Mirrors runPOIScan: the system prompt gets the consultant
+  // context block injected via buildSystemBlast, and the user message gets
+  // a leading reminder so the model treats this as a profile-aware run.
+  // When options.profile is null the builder returns the default prompt and
+  // the reminder is empty — zero behavior change for unprofiled runs.
+  const systemPrompt = buildSystemBlast(rates, options.profile);
+  const profileReminder = options.profile
+    ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the rollback plan around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
+    : '';
+
+  // Build the prompt content. Single-target form keeps the existing
+  // language so existing callers see no behavior change. Multi-target
+  // form explicitly tells the model to treat the set as a coordinated
+  // change and to produce one unified report.
+  let userMessage;
+  if (targets.length === 1) {
+    userMessage = `${profileReminder}Perform a blast radius analysis for: "${targets[0]}"\n\nCodebase:\n\n${codebaseContext.context}`;
+  } else {
+    const targetList = targets.map((t, i) => `  ${i + 1}. ${t}`).join('\n');
+    userMessage =
+      profileReminder +
+      `Perform a blast radius analysis for the following coordinated change set ` +
+      `(${targets.length} files that will be modified together as part of one engagement):\n\n` +
+      targetList + '\n\n' +
+      `IMPORTANT: Treat these files as a single coordinated change. Produce ONE unified ` +
+      `blast radius report, not separate reports per file. The downstream impact map should ` +
+      `show the COMBINED set of files, modules, and behaviors affected when ALL of these ` +
+      `targets change together. Where dependencies overlap, call out the overlap explicitly ` +
+      `("X depends on both A and B — touching either alone is risky; coordinating both ` +
+      `lowers risk"). Produce ONE rollback plan that handles the coordinated change as a ` +
+      `unit, not three separate plans. Where coordinating these changes reduces risk versus ` +
+      `doing them separately, say so. Where coordinating compounds risk (e.g. all three ` +
+      `touch the same shared dependency), call that out as a danger zone.\n\n` +
+      `Codebase:\n\n${codebaseContext.context}`;
+  }
+
   // Step 1: Run blast scan silently
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, system: SYSTEM_BLAST,
-    messages: [{ role: 'user', content: `Perform a blast radius analysis for: "${target}"\n\nCodebase:\n\n${codebaseContext.context}` }]
+    model: getModel(), max_tokens: 8096, system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }]
   });
 
   let rawOutput = '';
@@ -193,9 +252,21 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     auditTrail:    [],
   };
 
+  // Project label for the narrator: single-target uses the target verbatim;
+  // multi-target uses a short summary label so the report header reads
+  // "Blast Radius — change set of 3 files" rather than a giant filename list.
+  const projectLabel = targets.length === 1
+    ? targets[0]
+    : `change set of ${targets.length} files`;
+
   const narratedReport = await narrateReport(
     memoryResult,
-    { projectLabel: target, mode: 'blast', rates },
+    {
+      projectLabel,
+      mode: 'blast',
+      rates,
+      profile: options.profile,  // Ghost Partner — consultant voice for narrator
+    },
     onChunk
   );
 

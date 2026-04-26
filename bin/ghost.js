@@ -306,7 +306,7 @@ async function main() {
     switch (mode) {
       case 'chat':      await runChatMode(codebaseContext);             break;
       case 'poi':       await runPOIMode(codebaseContext, { profile });  break;
-      case 'blast':     await runBlastMode(codebaseContext);            break;
+      case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
       case 'conflict':  await runConflictMode(codebaseContext);         break;
       case 'compare':   await runCompareMode();                         break;
       case 'dashboard': await showProjectDashboard();                   break;
