@@ -377,3 +377,109 @@ function toStringArray(val) {
   const s = toTrimmedString(val);
   return s ? [s] : [];
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Branding extraction — single source of truth for white-label rendering
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract a normalized branding bundle from a loaded profile.
+ *
+ * Returns an object PDF and Markdown layers can consume without traversing
+ * the profile structure themselves. When `profile` is null/undefined, returns
+ * `null` so callers can do `branding ? whiteLabel(branding) : ghostDefault()`
+ * with one check.
+ *
+ * Fields:
+ *   isWhiteLabeled  — true when a profile is present (any profile triggers
+ *                     full white-label mode; v0.1 ships full or nothing)
+ *   companyName     — from branding.company_name, then organization, then
+ *                     author, then 'Pre-Engagement Triage'
+ *   author          — from author, then organization, then '' (renders as
+ *                     'Prepared by <author>' on the cover)
+ *   methodology     — from name (the profile title, e.g. 'SaaS MVP Assessment')
+ *   description     — from description (one-line tagline, optional)
+ *   logoPath        — absolute path to a logo image, resolved against the
+ *                     profile's source directory if relative. Null if not
+ *                     present or file doesn't exist on disk.
+ *   accentColor     — [r,g,b] tuple parsed from branding.accent_color (#RRGGBB
+ *                     or #RGB hex). Falls back to a neutral dark slate so the
+ *                     cover never renders unstyled.
+ *   footerText      — from branding.footer_text, falls back to companyName.
+ *   confidentiality — from branding.confidentiality, falls back to
+ *                     'Confidential — Prepared for [companyName] engagement use'
+ */
+export function getBranding(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+
+  const branding = profile.branding || {};
+
+  const companyName =
+       toTrimmedString(branding.company_name)
+    || toTrimmedString(profile.organization)
+    || toTrimmedString(profile.author)
+    || 'Pre-Engagement Triage';
+
+  const author      = toTrimmedString(profile.author) || toTrimmedString(profile.organization) || '';
+  const methodology = toTrimmedString(profile.name) || '';
+  const description = toTrimmedString(profile.description) || '';
+
+  // Resolve logo path: if relative, resolve against the profile source dir
+  // so a profile at /tmp/gp-test/dustin.yaml referring to ./logo.png picks
+  // up /tmp/gp-test/logo.png. If not present or missing on disk, return null.
+  let logoPath = null;
+  const rawLogo = toTrimmedString(branding.logo_path);
+  if (rawLogo) {
+    const sourceDir = profile.sourcePath ? path.dirname(profile.sourcePath) : process.cwd();
+    const resolved  = path.isAbsolute(rawLogo) ? rawLogo : path.resolve(sourceDir, rawLogo);
+    if (fs.existsSync(resolved)) logoPath = resolved;
+  }
+
+  // Parse accent color hex; fall back to a neutral slate (#1F2937) so the
+  // cover is never rendered with an undefined fill.
+  const accentColor = parseHexColor(branding.accent_color) || [31, 41, 55];
+
+  const footerText = toTrimmedString(branding.footer_text) || companyName;
+
+  const confidentiality =
+       toTrimmedString(branding.confidentiality)
+    || `Confidential \u2014 Prepared for ${companyName} engagement use`;
+
+  return {
+    isWhiteLabeled: true,
+    companyName,
+    author,
+    methodology,
+    description,
+    logoPath,
+    accentColor,
+    footerText,
+    confidentiality,
+  };
+}
+
+/**
+ * Parse a CSS hex color (#RRGGBB, #RGB, or bare RRGGBB / RGB) into an
+ * [r,g,b] tuple. Returns null on any parse failure so callers can fall back
+ * to a default.
+ */
+function parseHexColor(input) {
+  if (typeof input !== 'string') return null;
+  const cleaned = input.trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]+$/.test(cleaned)) return null;
+  if (cleaned.length === 3) {
+    return [
+      parseInt(cleaned[0] + cleaned[0], 16),
+      parseInt(cleaned[1] + cleaned[1], 16),
+      parseInt(cleaned[2] + cleaned[2], 16),
+    ];
+  }
+  if (cleaned.length === 6) {
+    return [
+      parseInt(cleaned.slice(0, 2), 16),
+      parseInt(cleaned.slice(2, 4), 16),
+      parseInt(cleaned.slice(4, 6), 16),
+    ];
+  }
+  return null;
+}

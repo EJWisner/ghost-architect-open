@@ -403,6 +403,9 @@ export async function runPOIMode(codebaseContext, options = {}) {
       resolved:       resolvedCount,
       newFindings:    projectIntelResult?.newIssues      || 0,
       scans:          [],
+      // Ghost Partner — profile drives full white-label rendering in PDF + MD.
+      // When `profile` is null, all renderers fall back to default Ghost branding.
+      profile,
     };
 
     if (doSave) {

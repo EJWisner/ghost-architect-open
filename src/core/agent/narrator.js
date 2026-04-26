@@ -199,7 +199,9 @@ async function planReportStructure(memoryResult, context = {}) {
   const modeLine    = context.mode         ? ('MODE: ' + context.mode + '\n')           : '';
 
   const planningPrompt =
-    'You are planning the structure of a Ghost Architect codebase analysis report. Your job is NOT to write prose — it is to organize findings into categories and compute totals. A second pass will render the prose from your plan.'
+    (profile
+      ? 'You are planning the structure of a pre-engagement codebase analysis report being prepared on behalf of the consultant described in the CONSULTANT LENS below. Your job is NOT to write prose — it is to organize findings into categories and compute totals. A second pass will render the prose from your plan.'
+      : 'You are planning the structure of a Ghost Architect codebase analysis report. Your job is NOT to write prose — it is to organize findings into categories and compute totals. A second pass will render the prose from your plan.')
     + consultantLens + '\n\n'
     + 'FINDINGS TO ORGANIZE:\n' + JSON.stringify(findingsForPlanning, null, 2) + '\n\n'
     + 'BILLING RATES:\n'
@@ -234,8 +236,17 @@ async function planReportStructure(memoryResult, context = {}) {
     + '- No category may have an empty finding_ids array.\n'
     + '- Subtotals must be numeric (no dollar signs, no commas in JSON numbers).\n'
     + '- The grand total must equal the sum of all category subtotals.\n'
-    + '- The executive summary must be a single string with no markdown section headers.\n\n'
-    + 'Respond with ONLY the JSON object.';
+    + '- The executive summary must be a single string with no markdown section headers.\n'
+    + (profile
+        ? '\nREPORT TITLE RULES:\n'
+          + '- The report_title MUST NOT contain "Ghost Architect" or any reference to Ghost.\n'
+          + '- Use "Pre-Engagement Diligence:" or "Codebase Triage:" as the prefix, followed by the project label.\n'
+          + '- Example: "Pre-Engagement Diligence: ' + (context.projectLabel || 'project-name') + '".\n'
+          + '\nEXECUTIVE SUMMARY RULES:\n'
+          + '- The executive_summary MUST NOT mention "Ghost Architect" or "Ghost" by name.\n'
+          + '- Write as the consultant would, in their voice, focused on findings and remediation.\n'
+        : '')
+    + '\nRespond with ONLY the JSON object.';
 
   const anthropic = getClient();
   try {
@@ -330,7 +341,9 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
   let totalFindingsCount = 0;
   for (const cat of plan.categories) totalFindingsCount += cat.finding_ids.length;
 
-  return 'You are Ghost Architect, rendering a pre-planned codebase analysis report as polished prose.'
+  return (profile
+      ? 'You are rendering a pre-planned pre-engagement codebase analysis report as polished prose, on behalf of the consultant described in the CONSULTANT LENS below. Write in their voice. Do NOT identify yourself as Ghost Architect or mention Ghost in the prose; the deliverable is the consultant\'s.'
+      : 'You are Ghost Architect, rendering a pre-planned codebase analysis report as polished prose.')
     + consultantLens + '\n\n'
     + 'The report structure has ALREADY BEEN DECIDED in the plan below. Your job is to render polished prose for each section. You MUST NOT reorganize the categories, reassign findings, add or remove categories, or change the totals. If the plan says a category contains findings [1, 3, 5], you render those three findings under that category header — no more, no fewer, no substitutions.\n\n'
     + 'COMPLETENESS CONTRACT: A post-processor validates that every finding id in the plan has a corresponding ### prose entry in your output. Any finding you skip will be detected and rendered separately, which wastes tokens and degrades report flow. RENDER EVERY FINDING. No editorial pruning, no "top N only", no skipping items you find redundant. The plan is the contract.\n\n'
@@ -438,7 +451,9 @@ async function renderSingleFinding(finding, categoryHeader, rates, profile) {
   const consultantLens = buildConsultantLens(profile);
 
   const prompt =
-    'You are Ghost Architect, writing prose for a single finding in a codebase analysis report. The category this finding belongs to has already been decided.'
+    (profile
+      ? 'You are writing prose for a single finding in a pre-engagement codebase analysis report on behalf of the consultant described in the CONSULTANT LENS below. The category this finding belongs to has already been decided. Do NOT identify yourself as Ghost Architect or mention Ghost in the prose.'
+      : 'You are Ghost Architect, writing prose for a single finding in a codebase analysis report. The category this finding belongs to has already been decided.')
     + consultantLens + '\n\n'
     + 'CATEGORY: ' + categoryHeader + '\n\n'
     + 'FINDING:\n'
@@ -694,7 +709,9 @@ function buildLegacyPrompt(memoryResult, context = {}) {
     + (context.projectLabel ? '- Project: ' + context.projectLabel + '\n' : '')
     + (context.mode ? '- Mode: ' + context.mode + '\n' : '');
 
-  return 'You are Ghost Architect, writing a codebase analysis report as a senior architect.'
+  return (profile
+      ? 'You are writing a pre-engagement codebase analysis report as a senior architect, on behalf of the consultant described in the CONSULTANT LENS below. Write in their voice. Do NOT identify yourself as Ghost Architect or mention Ghost in the prose; the deliverable is the consultant\'s.'
+      : 'You are Ghost Architect, writing a codebase analysis report as a senior architect.')
     + consultantLens + '\n\n'
     + 'ANALYSIS:\n' + analysisLine
     + rawSection
