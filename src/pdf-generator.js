@@ -222,7 +222,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
       doc.text(`Generated: ${ts}`, mx, my, { width: mw }); my += 12;
       if (meta.filesAnalyzed) { doc.text(`Files analyzed: ${meta.filesAnalyzed}`, mx, my, { width: mw }); my += 12; }
-      if (meta.cost)          { doc.text(`Analysis cost: ${meta.cost}`, mx, my, { width: mw }); my += 12; }
+      if (meta.cost)          { doc.text(`Analysis cost: $${meta.cost}`, mx, my, { width: mw }); my += 12; }
 
       // White-label footer line on the metadata card: consultant attribution
       // instead of "Ghost Architect v4.5.5 | ghostarchitect.dev".

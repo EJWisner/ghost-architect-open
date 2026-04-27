@@ -101,7 +101,7 @@ function convertToMarkdown(content, prefix, label, meta, timestamp, branding = n
   md += `| **Generated** | ${date} |\n`;
   if (meta.filesAnalyzed) md += `| **Files Analyzed** | ${meta.filesAnalyzed} |\n`;
   if (meta.totalFiles)    md += `| **Total Files in Project** | ${meta.totalFiles} |\n`;
-  if (meta.cost)          md += `| **Analysis Cost** | ${meta.cost} |\n`;
+  if (meta.cost)          md += `| **Analysis Cost** | $${meta.cost} |\n`;
   if (branding && branding.isWhiteLabeled) {
     if (branding.companyName) md += `| **Prepared by** | ${branding.companyName} |\n`;
     md += `| **Confidentiality** | ${branding.confidentiality} |\n`;
