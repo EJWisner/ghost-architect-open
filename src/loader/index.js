@@ -36,8 +36,39 @@ export function getScanOptions() {
   return { ...SCAN_OPTIONS };
 }
 
-const IGNORED_DIRS = ['node_modules', '.git', 'vendor', 'dist', 'build', '.next', '__pycache__', '.cache'];
-const IGNORED_FILES = ['package-lock.json', 'yarn.lock', 'composer.lock', 'package.json.lock', 'Gemfile.lock', 'poetry.lock'];
+// Default exclusions applied automatically to every scan.
+// Users do not need to pass --exclude flags for these. To disable,
+// pass --no-default-excludes (rarely needed; for cases like auditing
+// a vendor folder directly).
+const IGNORED_DIRS = [
+  // JS/TS ecosystem
+  'node_modules', 'dist', 'build', '.next', '.nuxt', '.svelte-kit', '.parcel-cache', '.turbo',
+  // Version control + IDE
+  '.git', '.svn', '.hg', '.idea', '.vscode',
+  // PHP / Composer
+  'vendor',
+  // Magento / Adobe Commerce specific
+  'pub/static', 'pub/media', 'var', 'generated', 'setup',
+  // Python
+  '__pycache__', '.venv', 'venv', '.tox', '.pytest_cache', '.mypy_cache',
+  // Ruby
+  '.bundle',
+  // Java / Gradle
+  '.gradle', 'target',
+  // Coverage / test artifacts
+  'coverage', '.nyc_output',
+  // Misc cache
+  '.cache',
+];
+const IGNORED_FILES = [
+  // JS/TS lock files
+  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb',
+  // Other ecosystem lock files
+  'composer.lock', 'package.json.lock', 'Gemfile.lock', 'poetry.lock',
+  'Cargo.lock', 'go.sum', 'mix.lock',
+  // Build/CI artifacts
+  '.DS_Store', 'Thumbs.db',
+];
 const MAX_FILE_TOKENS = 50000; // ~200KB — skip files larger than this
 const CODE_EXTENSIONS = [
   '.php', '.js', '.ts', '.jsx', '.tsx', '.py', '.rb', '.java', '.go',
@@ -84,12 +115,35 @@ async function loadFromFiles() {
   }
 
   const spinner = ora('Scanning files...').start();
-  const files = await glob(`${dirPath}/**/*`, {
-    nodir: true,
-    ignore: IGNORED_DIRS.map(d => `**/${d}/**`)
-  });
 
-  let codeFiles = files.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+  // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
+  const allFiles = await glob(`${dirPath}/**/*`, { nodir: true });
+  const allCodeFiles = allFiles.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+
+  // Step 2: apply default IGNORED_DIRS + IGNORED_FILES exclusions.
+  const beforeDefaults = allCodeFiles.length;
+  let codeFiles = allCodeFiles.filter(f => {
+    const rel = path.relative(dirPath, f);
+    const segments = rel.split(path.sep);
+    // Match any IGNORED_DIRS entry as either a path segment OR a slash-joined sub-path.
+    for (const d of IGNORED_DIRS) {
+      if (d.includes('/')) {
+        // Multi-segment match like 'pub/static' — require the segments to appear in order.
+        const parts = d.split('/');
+        for (let i = 0; i + parts.length <= segments.length; i++) {
+          if (parts.every((p, k) => segments[i + k] === p)) return false;
+        }
+      } else if (segments.includes(d)) {
+        return false;
+      }
+    }
+    if (IGNORED_FILES.includes(path.basename(f))) return false;
+    return true;
+  });
+  const defaultExcluded = beforeDefaults - codeFiles.length;
+  if (defaultExcluded > 0) {
+    console.log(chalk.gray(`  ℹ  Default excludes: skipped ${defaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+  }
 
   // Apply --exclude / --exclude-presets if any were set on SCAN_OPTIONS.
   const patterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
@@ -128,7 +182,21 @@ async function loadFromZip() {
     if (entry.isDirectory) continue;
     const ext = path.extname(entry.entryName).toLowerCase();
     if (!CODE_EXTENSIONS.includes(ext)) continue;
-    const ignored = IGNORED_DIRS.some(d => entry.entryName.includes(`/${d}/`) || entry.entryName.startsWith(`${d}/`));
+    // Apply default IGNORED_DIRS (handles both single-segment like 'node_modules'
+    // and multi-segment like 'pub/static').
+    const segments = entry.entryName.split('/');
+    let ignored = false;
+    for (const d of IGNORED_DIRS) {
+      if (d.includes('/')) {
+        const parts = d.split('/');
+        for (let i = 0; i + parts.length <= segments.length; i++) {
+          if (parts.every((p, k) => segments[i + k] === p)) { ignored = true; break; }
+        }
+      } else if (segments.includes(d)) {
+        ignored = true;
+      }
+      if (ignored) break;
+    }
     if (ignored) continue;
     const filename = path.basename(entry.entryName);
     if (IGNORED_FILES.includes(filename)) continue;
@@ -225,7 +293,21 @@ async function loadFromGitHub() {
       if (item.type !== 'blob') return false;
       const ext = path.extname(item.path).toLowerCase();
       if (!CODE_EXTENSIONS.includes(ext)) return false;
-      if (IGNORED_DIRS.some(d => item.path.includes(`${d}/`))) return false;
+      // Apply default IGNORED_DIRS (handles single-segment + multi-segment like 'pub/static').
+      const segments = item.path.split('/');
+      for (const d of IGNORED_DIRS) {
+        if (d.includes('/')) {
+          const parts = d.split('/');
+          for (let i = 0; i + parts.length <= segments.length; i++) {
+            if (parts.every((p, k) => segments[i + k] === p)) return false;
+          }
+        } else if (segments.includes(d)) {
+          return false;
+        }
+      }
+      // Apply default IGNORED_FILES.
+      if (IGNORED_FILES.includes(path.basename(item.path))) return false;
+      // Apply user --exclude / --exclude-presets.
       if (ghExcludePatterns.length > 0 && isExcluded(item.path, ghExcludePatterns)) {
         ghExcludedCount++;
         return false;
