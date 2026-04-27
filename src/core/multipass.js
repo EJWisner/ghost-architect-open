@@ -362,7 +362,49 @@ async function mergePassResults(results, label, profile = null) {
 
 // ── Final synthesis — with narrator ──────────────────────────────────────────
 
+/**
+ * Diagnostic dumper. Writes the report at a named pipeline stage to
+ * ~/Ghost Architect Reports/.debug/ so we can diff stages and find where
+ * content is being lost. Best-effort — never throws, never blocks the scan.
+ *
+ * Filename pattern: synthesis-<timestamp>-<stage>.md
+ * The same `runId` is shared across all four stages of one scan so the
+ * files cluster together in directory listings.
+ *
+ * Stages we write:
+ *   1-after-narrator        — what narrateReport returned
+ *   2-after-verifier        — after verifyReport's annotations
+ *   3-after-scrub           — after scrubEmptyHeaders
+ *   4-after-regen           — after exec-summary + risk-paragraph regeneration
+ *
+ * If a stage produces a report dramatically smaller than the previous
+ * stage, we have the smoking gun for the truncation bug.
+ */
+function writeSynthesisStageDump(runId, stage, report, projectLabel) {
+  try {
+    const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+    if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+    const safeLabel = (projectLabel || 'project').replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+    const filename = `synthesis-${runId}-${stage}-${safeLabel}.md`;
+    const filepath = path.join(debugDir, filename);
+    const header = `<!-- Synthesis stage dump
+  Stage:     ${stage}
+  Project:   ${projectLabel || '(none)'}
+  Run ID:    ${runId}
+  Length:    ${(report || '').length} chars
+  Timestamp: ${new Date().toISOString()}
+-->
+
+`;
+    fs.writeFileSync(filepath, header + (report || ''), 'utf8');
+  } catch { /* never let logging break the scan */ }
+}
+
 async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalPasses, coverage, onChunk, options = {}) {
+  // Diagnostic run id — timestamps all four stage dumps in this scan so they
+  // cluster together in directory listings. Filename-safe (no colons/dots).
+  const runId = new Date().toISOString().replace(/[:.]/g, '-');
+
   const combined  = mergedGroups.map((r, i) => `=== MERGED GROUP ${i + 1} ===\n${r}`).join('\n\n');
   const rates     = getRates();
   const anthropic = getClient();
@@ -464,6 +506,9 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     finalOutput = narratedReport || rawSynthesis;
   }
 
+  // Stage 1 dump — what the narrator returned (before any verifier work).
+  writeSynthesisStageDump(runId, '1-after-narrator', finalOutput, options.projectLabel);
+
   // Verifier — two-pass grounding check against actual source code.
   //   Pass 1: cheap regex check (method existence, line bounds, safe-pattern detection)
   //   Pass 2: LLM check (semantic correctness against the actual source)
@@ -488,6 +533,9 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     }
   }
 
+  // Stage 2 dump — after verifier annotations and false-positive drops.
+  writeSynthesisStageDump(runId, '2-after-verifier', finalOutput, options.projectLabel);
+
   // Final scrub — the verifier removes false-positive findings but does not
   // touch their parent ## category headers, so a category whose findings all
   // got dropped will be left as a dangling empty header. Run the scrubber
@@ -495,6 +543,9 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // the same scrubber that runs inside the narrator's patcher path; we run
   // it again here because content can disappear between narrator and now.
   finalOutput = scrubEmptyHeaders(finalOutput);
+
+  // Stage 3 dump — after scrubEmptyHeaders.
+  writeSynthesisStageDump(runId, '3-after-scrub', finalOutput, options.projectLabel);
 
   // Post-verifier exec summary regeneration. The original exec summary was
   // written by the planner against the pre-drop finding set, so when the
@@ -551,6 +602,12 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
       } catch { /* never let debug logging break the scan */ }
     }
   }
+
+  // Stage 4 dump — after exec-summary + risk-paragraph regeneration. This
+  // is what gets returned to the caller and ultimately written to disk by
+  // saveReport. If this dump matches the saved markdown, the truncation is
+  // upstream of saveReport; if it doesn't, saveReport is the culprit.
+  writeSynthesisStageDump(runId, '4-after-regen', finalOutput, options.projectLabel);
 
   return finalOutput;
 }
