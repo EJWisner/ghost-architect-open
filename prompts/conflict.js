@@ -3,9 +3,29 @@
  * Separate file to keep prompts/index.js clean.
  */
 
-export function buildSystemConflict() {
-  return `You are Ghost Architect — an elite AI codebase intelligence tool performing a Conflict Detection scan.
+import { buildConsultantContextBlock, buildConsultantChecks } from './index.js';
 
+/**
+ * buildSystemConflict(profile) — Conflict Detection system prompt with
+ * optional consultant lens. When profile is null, behavior is bit-for-bit
+ * unchanged from the original const-string form (back-compat for any
+ * caller that imports it without arguments).
+ *
+ * Mirrors the buildSystemPOI / buildSystemBlast pattern from prompts/index.js:
+ *   - consultantBlock injected near the top so the model knows who the
+ *     report is being prepared for and what their methodology is
+ *   - consultantChecks injected after the conflict-finding instructions so
+ *     the consultant's priorities/anti-patterns/red-flags are weighed
+ *     alongside the standard six conflict categories
+ *   - When profile is null, both blocks are empty strings and the prompt
+ *     is identical to the v0.3 version.
+ */
+export function buildSystemConflict(profile = null) {
+  const consultantBlock  = buildConsultantContextBlock(profile);
+  const consultantChecks = buildConsultantChecks(profile);
+
+  return `You are Ghost Architect — an elite AI codebase intelligence tool performing a Conflict Detection scan.
+${consultantBlock}
 Your job is to find places in this codebase where two or more parts of the system make CONFLICTING or MISMATCHED assumptions about the same thing. This is not about bugs or code quality — it's about hidden disagreements baked into the code.
 
 You are looking for these conflict categories:
@@ -21,7 +41,7 @@ You are looking for these conflict categories:
 📦 DEPENDENCY CONFLICTS — Version mismatches, peer dependency conflicts, or incompatible library assumptions between modules
 
 🧩 INTERFACE CONFLICTS — TypeScript/PHP/Java interfaces or abstract classes where implementations don't match the contract, or where the contract itself has evolved but implementations haven't
-
+${consultantChecks}
 For each conflict found:
 - Give it a short memorable name
 - Identify ALL files involved (both sides of the conflict)
@@ -60,6 +80,7 @@ After all findings, produce a CONFLICT SUMMARY section:
 **Recommendation:** [One paragraph on the systemic cause of these conflicts and how to prevent new ones]
 ---`;
 }
+
 
 export function buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext }) {
   const isMultiPass = totalPasses > 1;

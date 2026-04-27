@@ -1295,6 +1295,17 @@ export async function narrateExecutiveSummary(memoryResult, context = {}) {
 }
 
 // ── Conflict-specific narrative ───────────────────────────────────────────────
+//
+// Single-pass narrator (no Pass 1/Pass 2 split) for Conflict Detection. The
+// verifier already produced structured candidates; this function turns them
+// into a polished report.
+//
+// Profile awareness: when context.profile is present, we inject the
+// consultant lens (same buildConsultantLens helper used by POI and Blast)
+// and switch identity language so the report reads as the consultant's
+// deliverable rather than Ghost's. Branding chrome (cover, headers, footer)
+// is handled downstream by saveReport via meta.profile — the narrator just
+// needs to keep the prose consistent with that branding.
 
 export async function narrateConflictReport(verificationResult, context = {}, onChunk = () => {}) {
   const anthropic = getClient();
@@ -1321,10 +1332,16 @@ export async function narrateConflictReport(verificationResult, context = {}, on
   const allInconclusive = stats.confirmed === 0 && stats.possible === 0 && (insufficient || []).length > 0;
 
   const rates = context.rates || { junior: 85, mid: 125, senior: 200 };
+  const profile = context.profile || null;
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
+  const consultantLens = buildConsultantLens(profile);
+
   const prompt =
-    'Write a Ghost Architect Conflict Detection report as a senior architect.\n\n'
+    (profile
+      ? 'Write a Conflict Detection report as a senior architect, on behalf of the consultant described in the CONSULTANT LENS below. Write in their voice. Do NOT identify yourself as Ghost Architect or mention Ghost in the prose; the deliverable is the consultant\'s.'
+      : 'Write a Ghost Architect Conflict Detection report as a senior architect.')
+    + consultantLens + '\n\n'
     + 'Today\'s date is ' + today + '. Use this as the Report Date in the report header.\n\n'
     + 'VERIFICATION STATS:\n'
     + '- Candidates analyzed: ' + stats.total + '\n'
@@ -1338,6 +1355,15 @@ export async function narrateConflictReport(verificationResult, context = {}, on
     + (confirmedList    ? 'CONFIRMED CONFLICTS:\n' + confirmedList + '\n\n'    : 'No confirmed conflicts.\n\n')
     + (possibleList     ? 'POSSIBLE CONFLICTS:\n'  + possibleList  + '\n\n'    : '')
     + (insufficientList ? 'REQUIRES MANUAL REVIEW (top 20 of ' + (insufficient || []).length + '):\n' + insufficientList + '\n\n' : '')
+    + (profile
+      ? 'REPORT TITLE RULES:\n'
+        + '- The report H1 MUST NOT contain "Ghost Architect" or any reference to Ghost.\n'
+        + '- Use "Conflict Detection:" or "Pre-Engagement Conflict Audit:" as the prefix, followed by the project label or codebase name.\n'
+        + '- Example: "Conflict Detection: ' + (context.projectLabel || 'project-name') + '".\n\n'
+        + 'EXECUTIVE SUMMARY RULES:\n'
+        + '- The opening section MUST NOT mention "Ghost Architect" or "Ghost" by name.\n'
+        + '- Write as the consultant would, in their voice, focused on conflicts and resolution.\n\n'
+      : '')
     + 'Write a complete report:\n'
     + '- Open with deployment recommendation (safe/unsafe/conditional/inconclusive)\n'
     + '- If all results are inconclusive, say so clearly — do NOT claim the codebase is conflict-free\n'

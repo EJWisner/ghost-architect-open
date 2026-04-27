@@ -114,10 +114,13 @@ Options:
                            Example: --exclude "seeds/**" --exclude "*.fixture.js"
   --exclude-presets a,b    Apply named exclusion preset(s), comma-separated.
                            Available presets: ${presets}
-  --profile path           Ghost Partner — load consultant profile from a
-                           .yaml/.yml/.md/.txt file. Profile lens is injected
-                           into POI scans so findings reflect the consultant's
-                           methodology. Plain text uses LLM extraction (cached).
+  --profile path           Ghost Partner™ — load a consultant profile from a
+                           .yaml, .yml, .md, or .txt file. The profile lens is
+                           applied to Points of Interest scans, Blast Radius
+                           analyses with rollback plans, and Conflict Detection
+                           so findings reflect the consultant's methodology
+                           and reports render with their branding.
+                           Example: --profile ~/profiles/my-audit.yaml
   --version, -v            Print version and exit.
   --help, -h               Print this help and exit.
 
@@ -307,7 +310,7 @@ async function main() {
       case 'chat':      await runChatMode(codebaseContext);             break;
       case 'poi':       await runPOIMode(codebaseContext, { profile });  break;
       case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
-      case 'conflict':  await runConflictMode(codebaseContext);         break;
+      case 'conflict':  await runConflictMode(codebaseContext, { profile });  break;
       case 'compare':   await runCompareMode();                         break;
       case 'dashboard': await showProjectDashboard();                   break;
     }

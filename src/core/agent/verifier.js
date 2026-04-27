@@ -171,11 +171,34 @@ export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode 
 export async function quickVerify(candidate, fileMap) {
   const anthropic = getClient();
 
-  // Get relevant file content (first 1000 chars each)
-  const fileContents = (candidate.files || [])
+  // First try to look up only the files the candidate cited. This is the
+  // common case and saves tokens.
+  let fileContents = (candidate.files || [])
     .filter(f => fileMap[f])
     .map(f => `=== ${f} ===\n${fileMap[f].slice(0, 1000)}`)
     .join('\n\n');
+
+  // Fallback: when the candidate has no files, an empty file list, or none
+  // of the cited files match the fileMap, give the verifier the full project
+  // map up to a fixed token budget so it can still make a determination.
+  // Without this fallback, the verifier returns INSUFFICIENT for every
+  // candidate whose Files: line was missing or unparseable from the model's
+  // pass output — which is the 0/0/0 verification failure mode we hit in
+  // v0.4 testing.
+  if (!fileContents) {
+    const BUDGET_CHARS = 20000; // ~5K tokens of context. Quick mode stays cheap.
+    const entries = Object.entries(fileMap);
+    let acc = '';
+    let used = 0;
+    for (const [path, content] of entries) {
+      const slice = content.slice(0, 600);
+      const block = '=== ' + path + ' ===\n' + slice + '\n\n';
+      if (used + block.length > BUDGET_CHARS) break;
+      acc += block;
+      used += block.length;
+    }
+    fileContents = acc.trim();
+  }
 
   if (!fileContents) {
     return {
