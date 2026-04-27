@@ -178,6 +178,25 @@ function capFindingsForPass2(sortedFindings, cap, silent) {
   return kept;
 }
 
+/**
+ * Return a one-line disclosure suitable for embedding in the saved report
+ * when the finding cap was applied. Returns null when the cap did NOT
+ * fire (originalCount <= cap), so callers can use it as a presence check.
+ *
+ * Why surface this in the saved report at all: the verbose stderr line
+ * only appears in the terminal during the run. Consultants opening the
+ * PDF later have no way to know that 3 findings were dropped. The
+ * disclosure goes into the prompt and (defensively) into the patcher
+ * so it always lands in the saved markdown when relevant.
+ */
+function getCapDisclosure(originalCount, cap) {
+  if (!Number.isFinite(originalCount) || !Number.isFinite(cap)) return null;
+  if (originalCount <= cap) return null;
+  return '_Note: ' + originalCount + ' findings surfaced during analysis; this report renders the top '
+    + cap + ' by severity and cost. The remaining '
+    + (originalCount - cap) + ' lower-priority findings are available in the raw scan output._';
+}
+
 async function planReportStructure(memoryResult, context = {}) {
   // Mode router: blast reports need different category structure (Direct
   // Dependencies / Ripple Effects / Danger Zones / Safe Zones) and a
@@ -544,6 +563,12 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
   const rates = context.rates || { junior: 85, mid: 125, senior: 200 };
   const profile = context.profile || null;
 
+  // Cap disclosure: when the original finding set was larger than the cap,
+  // we tell the renderer to insert a one-line italic note immediately after
+  // the H1. The post-render patcher injects it defensively if the model
+  // skips the instruction.
+  const capDisclosure = getCapDisclosure(sortedAll.length, MAX_FINDINGS_FOR_PASS_2);
+
   const findingsById = sorted.map((f, i) =>
     'FINDING #' + (i + 1) + ' [' + f.severity + '] — ' + f.title + '\n' +
     'Files: ' + (f.files || []).join(', ') + '\n' +
@@ -585,6 +610,10 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
     + sourceGroundingSection + '\n\n'
     + 'HOW TO RENDER:\n'
     + '1. Start with the report title from plan.report_title as an H1 (# header).\n'
+    + (capDisclosure
+        ? '1a. IMMEDIATELY after the H1 (and before the "## Executive Summary" header), insert exactly this italicized note on its own line, then a blank line:\n\n    '
+          + capDisclosure + '\n\n   This is the SAVED-REPORT VERSION of the cap notice that streamed during analysis. Do not paraphrase it; copy it verbatim.\n'
+        : '')
     + '2. Write an "## Executive Summary" section using the text from plan.executive_summary, lightly polished. Do not add math claims that are not in the summary already.\n'
     + '3. For each category in plan.categories, in the order given:\n'
     + '   a. Write a level-2 header (##) using the exact text of plan.categories[i].header.\n'
@@ -636,6 +665,12 @@ function buildBlastRenderingPrompt(plan, memoryResult, context = {}) {
   const rates = context.rates || { junior: 85, mid: 125, senior: 200 };
   const profile = context.profile || null;
 
+  // Cap disclosure: same logic as POI. When the original finding set
+  // exceeded the cap, the saved report carries a one-line italic note
+  // immediately after the H1 so the consultant opening the PDF later
+  // sees what was rendered vs. what was surfaced.
+  const capDisclosure = getCapDisclosure(sortedAll.length, MAX_FINDINGS_FOR_PASS_2);
+
   const findingsById = sorted.map((f, i) =>
     'FINDING #' + (i + 1) + ' [' + f.severity + '] \u2014 ' + f.title + '\n' +
     'Files: ' + (f.files || []).join(', ') + '\n' +
@@ -677,6 +712,10 @@ function buildBlastRenderingPrompt(plan, memoryResult, context = {}) {
     + sourceGroundingSection + '\n\n'
     + 'HOW TO RENDER:\n'
     + '1. Start with the report title from plan.report_title as an H1 (# header).\n'
+    + (capDisclosure
+        ? '1a. IMMEDIATELY after the H1 (and before the "## Executive Summary" header), insert exactly this italicized note on its own line, then a blank line:\n\n    '
+          + capDisclosure + '\n\n   This is the SAVED-REPORT VERSION of the cap notice that streamed during analysis. Do not paraphrase it; copy it verbatim.\n'
+        : '')
     + '2. Write an "## Executive Summary" section using the text from plan.executive_summary, lightly polished. Frame the change set\u2019s impact (not POI-style debt language). Do not add math claims that are not in the summary already.\n'
     + '3. For each category in plan.categories, in the order given:\n'
     + '   a. Write a level-2 header (##) using the exact text of plan.categories[i].header.\n'
@@ -894,7 +933,36 @@ async function validateAndPatchProse(report, plan, memoryResult, context) {
   const findingById = new Map();
   sorted.forEach((f, i) => findingById.set(i + 1, f));
 
-  const renderedTitles = extractRenderedFindingTitles(report);
+  // Defensive injection: if the cap fired and the rendered report does
+  // not contain the disclosure note, splice it in immediately after the
+  // H1 line. Pass 2 is instructed to render this verbatim, but the model
+  // sometimes skips it under token pressure or when consultant lens
+  // instructions compete for attention. A consultant opening the PDF
+  // must always see how many findings were dropped.
+  let workingReport = report;
+  const capDisclosure = getCapDisclosure(sortedAll.length, MAX_FINDINGS_FOR_PASS_2);
+  if (capDisclosure) {
+    // Detect the disclosure by its lead-in phrase ("N findings surfaced")
+    // rather than exact-matching the whole sentence — the model occasionally
+    // adds bold or rewords slightly. Match the cap-fired count, not the cap.
+    const expectedCount = sortedAll.length;
+    const presenceRegex = new RegExp(expectedCount + '\\s+findings\\s+surfaced', 'i');
+    if (!presenceRegex.test(workingReport)) {
+      // Find the first H1 line and splice the disclosure immediately after it.
+      const h1Match = workingReport.match(/^#\s+.+$/m);
+      if (h1Match) {
+        const h1End = workingReport.indexOf('\n', h1Match.index) + 1;
+        const before = workingReport.slice(0, h1End);
+        const after  = workingReport.slice(h1End);
+        workingReport = before + '\n' + capDisclosure + '\n' + after;
+      } else {
+        // No H1 found (unusual). Prepend the disclosure so it still appears.
+        workingReport = capDisclosure + '\n\n' + workingReport;
+      }
+    }
+  }
+
+  const renderedTitles = extractRenderedFindingTitles(workingReport);
 
   const missingByCategory = new Map();
   for (const cat of plan.categories) {
@@ -909,18 +977,18 @@ async function validateAndPatchProse(report, plan, memoryResult, context) {
 
   // Debug log — written to .debug/ in reports dir so we can diagnose
   // patcher behavior without cluttering user-facing output.
-  writePatcherDebugLog(plan, renderedTitles, missingByCategory, report);
+  writePatcherDebugLog(plan, renderedTitles, missingByCategory, workingReport);
 
   if (missingByCategory.size === 0) {
     // Even when nothing is missing, scrub empty category headers before
     // returning (Pass 2 occasionally writes a ## header with no body).
-    return scrubEmptyHeaders(report);
+    return scrubEmptyHeaders(workingReport);
   }
 
   const rates = context.rates || { junior: 85, mid: 125, senior: 200 };
   const profile = context.profile || null;
 
-  let patched = report;
+  let patched = workingReport;
 
   for (const [categoryHeader, missingFindings] of missingByCategory) {
     const prose = await Promise.all(
