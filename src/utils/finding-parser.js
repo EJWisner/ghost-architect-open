@@ -189,7 +189,26 @@ export function extractFindings(reportText) {
 
       const fim = t.match(FILES_RE);
       if (fim) {
-        current.files = fim[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
+        // Strip markdown artifacts that the narrator's Pass 2 sometimes
+        // emits inside the Files line: backticks, bold (**), emphasis (*),
+        // angle brackets <...>, and any leading/trailing whitespace. After
+        // stripping, drop any entry that is empty OR contains nothing but
+        // punctuation (e.g. "**" by itself, which the verifier would treat
+        // as a literal glob and fail every file-existence check). The bug-
+        // firing osc-cap-test scan on April 27 produced files: ["**"] for
+        // every finding because Pass 2 emitted `**Files:** **` with empty
+        // bold; this strips it to nothing and we drop the entry, leaving
+        // current.files = [] which is a more honest signal to downstream.
+        current.files = fim[1]
+          .split(/[,;]/)
+          .map(f => f
+            .trim()
+            .replace(/`/g, '')
+            .replace(/\*+/g, '')
+            .replace(/^<|>$/g, '')
+            .trim()
+          )
+          .filter(f => f && /[a-zA-Z0-9]/.test(f));
         continue;
       }
 

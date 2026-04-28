@@ -571,7 +571,14 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
 
   const findingsById = sorted.map((f, i) =>
     'FINDING #' + (i + 1) + ' [' + f.severity + '] — ' + f.title + '\n' +
-    'Files: ' + (f.files || []).join(', ') + '\n' +
+    // Only emit a Files line if we actually have file paths. An empty
+    // 'Files: ' line in the prompt empirically causes Pass 2 to fill it
+    // with placeholder bold-markdown (`**Files:** **`), which the post-
+    // render parser then captures as a literal '**' glob and the verifier
+    // drops every finding. Better to give the model nothing than an empty
+    // labeled field; with no Files line in the prompt, the model still
+    // emits one in the rendered output drawn from the finding detail.
+    ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
     'Confidence: ' + (f.confidence || 90) + '%'
   ).join('\n\n');
@@ -672,8 +679,12 @@ function buildBlastRenderingPrompt(plan, memoryResult, context = {}) {
   const capDisclosure = getCapDisclosure(sortedAll.length, MAX_FINDINGS_FOR_PASS_2);
 
   const findingsById = sorted.map((f, i) =>
-    'FINDING #' + (i + 1) + ' [' + f.severity + '] \u2014 ' + f.title + '\n' +
-    'Files: ' + (f.files || []).join(', ') + '\n' +
+    'FINDING #' + (i + 1) + ' [' + f.severity + '] — ' + f.title + '\n' +
+    // Same defensive omission as the POI rendering prompt. An empty
+    // Files line empirically causes Pass 2 to emit `**Files:** **` which
+    // the parser captures as files: ['**'] and the verifier drops as
+    // false-positive.
+    ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
     'Confidence: ' + (f.confidence || 90) + '%'
   ).join('\n\n');
@@ -863,7 +874,9 @@ async function renderSingleFinding(finding, categoryHeader, rates, profile) {
     + 'FINDING:\n'
     + 'Title: ' + finding.title + '\n'
     + 'Severity: ' + finding.severity + '\n'
-    + 'Files: ' + (finding.files || []).join(', ') + '\n'
+    // Same defensive omission as the main rendering prompt: don't emit an
+    // empty 'Files: ' line that the model fills with placeholder bold.
+    + ((finding.files && finding.files.length) ? 'Files: ' + finding.files.join(', ') + '\n' : '')
     + 'Detail: ' + (finding.detail || '') + '\n\n'
     + 'BILLING RATES: LOW = ' + rateJuniorLine + ' | MEDIUM = ' + rateMidLine + ' | HIGH / CRITICAL = ' + rateSeniorLine + '\n\n'
     + 'Write ONLY the prose entry for this single finding. Output format (using the exact markdown shown, including the triple-hash header):\n\n'
@@ -1124,8 +1137,10 @@ function buildBlastLegacyPrompt(memoryResult, context = {}) {
   const profile = context.profile || null;
 
   const findingsList = sorted.map((f, i) =>
-    'Finding ' + (i + 1) + ' [' + f.severity + '] \u2014 ' + f.title + '\n' +
-    'Files: ' + (f.files || []).join(', ') + '\n' +
+    'Finding ' + (i + 1) + ' [' + f.severity + '] — ' + f.title + '\n' +
+    // Defensive omission: empty Files line causes Pass 2 to emit
+    // placeholder bold that breaks downstream finding extraction.
+    ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
     'Confidence: ' + (f.confidence || 90) + '%'
   ).join('\n\n');
@@ -1200,7 +1215,9 @@ function buildLegacyPrompt(memoryResult, context = {}) {
 
   const findingsList = sorted.map((f, i) =>
     'Finding ' + (i + 1) + ' [' + f.severity + '] — ' + f.title + '\n' +
-    'Files: ' + (f.files || []).join(', ') + '\n' +
+    // Defensive omission: empty Files line causes Pass 2 to emit
+    // placeholder bold that breaks downstream finding extraction.
+    ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
     'Confidence: ' + (f.confidence || 90) + '%'
   ).join('\n\n');
