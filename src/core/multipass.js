@@ -963,7 +963,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     const passNum   = p + 1;
     const fileCount = Object.keys(pass.files).length;
 
-    onProgress({ type: 'passStart', passNum, totalPasses: allPasses.length, fileCount, tokens: pass.tokens });
+    onProgress({ type: 'passStart', passNum, totalPasses: startFromPass + cap, fileCount, tokens: pass.tokens });
 
     const priorSkeletons = session.passSkeletons || [];
     const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons, profile);
@@ -992,7 +992,15 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
   const allDone  = session.completedPassCount >= allPasses.length;
   const coverage = Math.round((session.completedPassCount / allPasses.length) * 100);
 
-  if (!allDone) {
+  // The user picked `cap` passes for this session. If they asked for less than
+  // the full remaining count, completing the cap is a complete job — they got
+  // exactly what they asked for. Synthesize and ship without re-asking.
+  // Only prompt when the user asked for everything available AND the run
+  // didn't finish (retries, partial failures), which is the legitimate
+  // 'do you want to keep going or save and resume' case.
+  const userGotWhatTheyAskedFor = cap < remaining;
+
+  if (!allDone && !userGotWhatTheyAskedFor) {
     const next = await onCompletePrompt({
       coverage,
       remaining: allPasses.length - session.completedPassCount,
