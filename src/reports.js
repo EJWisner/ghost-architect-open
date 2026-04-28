@@ -44,6 +44,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
   const reportType = prefix === 'ghost-poi'      ? 'Points of Interest Report'
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis + Rollback Plan'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
+    : prefix === 'ghost-recon'    ? 'Pre-Engagement Recon'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
@@ -78,6 +79,7 @@ function convertToMarkdown(content, prefix, label, meta, timestamp, branding = n
   const typeLabel = prefix === 'ghost-poi'      ? 'Points of Interest Report'
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
+    : prefix === 'ghost-recon'    ? 'Pre-Engagement Recon'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
