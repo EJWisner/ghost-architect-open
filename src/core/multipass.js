@@ -7,6 +7,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -30,9 +31,23 @@ function ensureSessionsDir() {
   if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 }
 
+// Ghost Open v5.0.0: when a project label is absent (Open), session files are
+// keyed by an MD5 hash of the working directory path. This means session
+// resume works correctly even though Open users never name their projects —
+// scanning the same directory twice picks up where the prior run left off,
+// and switching to a different directory gets a fresh session file.
+// Pro/Team/Enterprise still pass an explicit label and get the legacy
+// label-slug filename. Single function, two key strategies.
 function sessionFilePath(label) {
-  const safe = (label || 'default').replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
-  return path.join(SESSIONS_DIR, `ghost-session-${safe}.json`);
+  let key;
+  if (label) {
+    key = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+  } else {
+    // Hash the cwd so each scan-target gets its own session file on Open.
+    const cwd = process.cwd();
+    key = 'cwd-' + crypto.createHash('md5').update(cwd).digest('hex').slice(0, 12);
+  }
+  return path.join(SESSIONS_DIR, `ghost-session-${key}.json`);
 }
 
 export function loadSession(label) {

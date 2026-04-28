@@ -1,6 +1,4 @@
 /**
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
  * Ghost Architect — Conflict Detection Mode (CLI layer)
  * Thin wrapper: handles all prompts and display for core/conflict.js
  */
@@ -15,6 +13,9 @@ import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 
 export async function runConflictMode(codebaseContext) {
   const fileMap    = codebaseContext.fileMap || {};
@@ -89,14 +90,17 @@ export async function runConflictMode(codebaseContext) {
 
   try {
     const callbacks = {
+      // Capture the report to the buffer silently. Streaming raw markdown to
+      // the terminal during narration is messy and — on Ghost Open before
+      // v5.0.0 — leaked the full pre-paywall report into scrollback. The
+      // 'narrating' progress event installs a spinner; that's the only
+      // user-visible signal during report generation. POI mode follows the
+      // same pattern.
       onChunk(text) {
         if (!started) {
-          if (spinner) spinner.stop();
           started = true;
-          console.log('');
         }
         buffer += text;
-        process.stdout.write(colorizeOutput(text));
       },
 
       onProgress({ type, ...data }) {
@@ -108,14 +112,25 @@ export async function runConflictMode(codebaseContext) {
             break;
 
           case 'passStart':
-            console.log(chalk.gray(
-              `\n  Pass ${data.passNum} of ${data.totalPasses} — ` +
-              `${data.fileCount} files (~${data.tokens.toLocaleString()} tokens)...`
-            ));
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({
+              text: chalk.gray(
+                `  Pass ${data.passNum} of ${data.totalPasses} — ` +
+                `${data.fileCount} files (~${data.tokens.toLocaleString()} tokens)...`
+              ),
+              color: 'magenta',
+            }).start();
             break;
 
           case 'passComplete':
-            console.log(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`));
+            if (spinner) {
+              spinner.succeed(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`));
+              spinner = null;
+            }
+            // Holding spinner covers the gap before the next pass starts or
+            // before candidate extraction. Replaced as soon as the next event
+            // fires — that's fine.
+            spinner = ora({ text: chalk.gray('  Preparing next pass...'), color: 'magenta' }).start();
             break;
 
           case 'resuming':
@@ -125,11 +140,12 @@ export async function runConflictMode(codebaseContext) {
             break;
 
           case 'candidates_found':
-            if (spinner) spinner.stop();
+            if (spinner) { spinner.stop(); spinner = null; }
             console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found — running verification...\n`));
             break;
 
           case 'verification_start':
+            if (spinner) { spinner.stop(); spinner = null; }
             console.log(chalk.gray(`  Verifying ${data.count} candidates against codebase...`));
             break;
 
@@ -156,19 +172,24 @@ export async function runConflictMode(codebaseContext) {
               chalk.green(`${data.stats.falsePositives} eliminated`)
             );
             console.log('');
+            // Holding spinner covers the gap between verification finishing
+            // and narration starting. Replaced as soon as 'narrating' fires.
+            spinner = ora({ text: chalk.gray('  Preparing the conflict report...'), color: 'magenta' }).start();
             break;
 
           case 'narrating':
-            console.log(chalk.gray('  Ghost is writing the conflict report...\n'));
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.magenta('  Ghost is writing the conflict report...'), color: 'magenta' }).start();
             break;
 
           case 'merging':
-            console.log(chalk.gray(`\n  🔀 Merging ${data.count} passes into final report...`));
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.gray(`  🔀 Merging ${data.count} passes into final report...`), color: 'magenta' }).start();
             break;
 
           case 'done':
-            if (spinner) spinner.stop();
-            console.log('\n');
+            if (spinner) { spinner.succeed(chalk.green('  Conflict report ready')); spinner = null; }
+            console.log('');
             break;
         }
       },
@@ -239,12 +260,13 @@ export async function runConflictMode(codebaseContext) {
       const meta = {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
-        cost: `$${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
+        cost: `${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
         version: '4.1.1',
         mode: 'conflict-detection',
         verified: result.verified || false,
         verificationStats: result.stats || null,
       };
+      // Ghost Open v5.0.0: no label, overwrites ghost-conflict.{txt,md,pdf}
       const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
       console.log(chalk.green(`\n${SYM.check} Conflict report saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));

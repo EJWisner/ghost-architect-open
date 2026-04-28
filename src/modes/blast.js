@@ -1,6 +1,4 @@
 import { showFriendlyError } from '../utils/errors.js';
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -10,6 +8,9 @@ import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 
 export async function runBlastMode(codebaseContext) {
   console.log('\n' + boxen(
@@ -79,32 +80,35 @@ export async function runBlastMode(codebaseContext) {
 
   console.log('');
 
-  const spinner = ora({
+  let buffer  = '';
+  let started = false;
+  let spinner = ora({
     text: chalk.gray(`Mapping blast radius for: ${target}`),
     color: 'cyan'
   }).start();
-
-  let buffer  = '';
-  let started = false;
 
   try {
     const result = await runBlastRadius(
       codebaseContext,
       target.trim(),
+      // Capture silently to the buffer; streaming the raw report to stdout
+      // produces a messy scroll of unformatted markdown. The spinner above
+      // covers the analysis phase; onNarratorStart swaps it for a narration
+      // spinner. POI mode follows the same pattern.
       (chunk) => {
-        if (!started) { spinner.stop(); started = true; console.log(''); }
+        if (!started) { started = true; }
         buffer += chunk;
-        process.stdout.write(colorizeOutput(chunk));
       },
       {
         onNarratorStart: () => {
-          spinner.stop();
-          console.log(chalk.gray('\n  Ghost is writing the blast radius report...\n'));
+          if (spinner) { spinner.stop(); spinner = null; }
+          spinner = ora({ text: chalk.cyan('  Ghost is writing the blast radius report...'), color: 'cyan' }).start();
         },
       }
     );
 
-    console.log('\n');
+    if (spinner) { spinner.succeed(chalk.green('  Blast radius report ready')); spinner = null; }
+    console.log('');
 
     const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 300;
     const outputTokens = Math.ceil(result.length / 4);
@@ -122,7 +126,8 @@ export async function runBlastMode(codebaseContext) {
     }]);
 
     if (doSave) {
-      const saved = await saveReport(buffer, 'ghost-blast', target.trim());
+      // Ghost Open v5.0.0: no label, overwrites ghost-blast.{txt,md,pdf}
+      const saved = await saveReport(buffer, 'ghost-blast', null);
       console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
@@ -131,6 +136,7 @@ export async function runBlastMode(codebaseContext) {
     }
 
   } catch (err) {
+    if (spinner) { spinner.stop(); spinner = null; }
     showFriendlyError(err);
   }
 }

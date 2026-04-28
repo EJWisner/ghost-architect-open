@@ -54,13 +54,28 @@ function box(doc, x, y, w, h, color) {
 }
 
 function stripAnsi(s)  { return s.replace(/\x1B\[[0-9;]*m/g, ''); }
+
+// stripEmoji removes emoji characters AND the variation-selector + zero-width-joiner
+// codepoints that travel with them. Without removing the variation selectors,
+// PDFKit substitutes them for the closest font glyph — the most visible artefact
+// was the construction-emoji "🏗️" leaving a residual U+FE0F that PDFKit rendered
+// as the "fl" ligature (U+FB02) at the top of every report. The Unicode property
+// escape \p{Extended_Pictographic} catches all emoji including ones outside the
+// BMP ranges we used to enumerate by hand.
 function stripEmoji(s) {
-  return s.replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
-          .replace(/[\u{2600}-\u{27BF}]/gu, '')
-          .replace(/[🚩⚠✅❌🔴🟠🟡🟢👻💬📁🐙⚙🚪🗜■]/gu, '');
+  return s
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
+    .replace(/\u200D/g, '');
 }
+
 function stripMd(s) { return s.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/`(.+?)`/g,'$1'); }
-function clean(s)   { return stripEmoji(stripMd(stripAnsi(s))).replace(/!'/g, '->').trim(); }
+// Strip leading markdown heading markers (#, ##, ###, etc.) when they survive
+// section detection — happens when the narrator emits a top-level H1 in the
+// report body that isn't recognized as a Ghost section header. Without this,
+// the literal '#' character renders in the PDF body next to the title text.
+function stripLeadingHash(s) { return s.replace(/^#+\s*/, ''); }
+function clean(s)   { return stripLeadingHash(stripEmoji(stripMd(stripAnsi(s)))).replace(/!'/g, '->').trim(); }
 
 function sevColor(t) {
   const u = t.toUpperCase();
@@ -152,15 +167,17 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       doc.text(`Generated: ${ts}`, mx, my, { width: mw }); my += 12;
       if (meta.filesAnalyzed) { doc.text(`Files analyzed: ${meta.filesAnalyzed}`, mx, my, { width: mw }); my += 12; }
       if (meta.cost)          { doc.text(`Analysis cost: ${meta.cost}`, mx, my, { width: mw }); my += 12; }
-      doc.text(`Ghost Architect v${meta.version || '4.5.5'}  |  ghostarchitect.dev`, mx, my, { width: mw });
+      doc.text(`Ghost Architect v${meta.version || '5.0.0'}  |  ghostarchitect.dev`, mx, my, { width: mw });
       y += cardH + 14;
 
       // Body
+      // Ghost Open v5.0.0: every finding is rendered. The MAX_FREE_FINDINGS
+      // truncation that used to terminate the PDF after 4 findings (and
+      // append a "Ghost Pro — Full Report Available" upsell box) was removed
+      // in this version. Open users see the full report, same as Pro.
       const lines = reportText.split('\n');
       let i = 0;
       let lastSection = '';
-      let findingCount = 0;
-      const MAX_FREE_FINDINGS = 4;
 
       while (i < lines.length) {
         const line = lines[i].trim();
@@ -168,7 +185,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
 
         // Section header
         const isMdSec    = /^##\s/.test(line);
-        const isGhostSec = /^(🔴|🏛|🏛️|⚰️|⚡|📊)\s/.test(line) ||
+        const isGhostSec = /^\p{Extended_Pictographic}\s/u.test(line) ||
           /^(RED FLAGS|LANDMARKS|DEAD ZONES|FAULT LINES|REMEDIATION SUMMARY|ROLLBACK PLAN|DIRECT DEPENDENCIES|RIPPLE EFFECTS|DANGER ZONES|SAFE ZONES)\b/i.test(line);
         if (isMdSec || isGhostSec) {
           const raw   = stripAnsi(isMdSec ? line.replace(/^#+\s*/,'') : line);
@@ -188,28 +205,6 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
         const isMdFind    = /^###\s/.test(line);
         const isGhostFind = /^\d+\.\s+[A-Z]/.test(line) && line.length > 10;
         if (isMdFind || isGhostFind) {
-          // Ghost Open truncation — stop at MAX_FREE_FINDINGS
-          if (findingCount >= MAX_FREE_FINDINGS) {
-            const remaining = reportText.split('\n').filter(l => /^###\s/.test(l.trim()) || (/^\d+\.\s+[A-Z]/.test(l.trim()) && l.trim().length > 10)).length - MAX_FREE_FINDINGS;
-            need(120);
-            box(doc, ML, y, CW, 100, C.DARK_BG);
-            doc.font('Helvetica-Bold').fontSize(13).fillColor(C.WHITE)
-               .text('Ghost Pro — Full Report Available', ML + 16, y + 14, { width: CW - 32, lineBreak: false });
-            doc.font('Helvetica').fontSize(9).fillColor(C.TEAL)
-               .text(`You are looking at 4 of ${remaining + MAX_FREE_FINDINGS} findings. The rest are in Ghost Pro —`, ML + 16, y + 34, { width: CW - 32 });
-            doc.font('Helvetica').fontSize(9).fillColor(C.LIGHT_GRAY)
-               .text('full PDF, markdown, multipass, project intelligence.', ML + 16, y + 48, { width: CW - 32 });
-            doc.font('Helvetica').fontSize(9).fillColor(C.LIGHT_GRAY)
-               .text('Know what you are inheriting before you commit.', ML + 16, y + 62, { width: CW - 32 });
-            doc.font('Helvetica-Bold').fontSize(10).fillColor(C.TEAL)
-               .text('ghostarchitect.dev', ML + 16, y + 78, { width: CW - 32 });
-            y += 110;
-            doc.end();
-            stream.on('finish', resolve);
-            stream.on('error', reject);
-            return;
-          }
-          findingCount++;
           // Look ahead: estimate height of this entire finding block
           let lookahead = 28; // finding header
           let j = i + 1;
@@ -217,7 +212,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
             const next = lines[j].trim();
             // Stop at next finding, section header, or blank line after content
             if (/^###\s/.test(next) || /^\d+\.\s+[A-Z]/.test(next) && next.length > 10) break;
-            if (isMdSec || /^(🔴|🏛|🏛️|⚰️|⚡|📊)\s/.test(next)) break;
+            if (isMdSec || /^\p{Extended_Pictographic}\s/u.test(next)) break;
             lookahead += next ? 14 : 4;
             if (lookahead > 120) break; // cap estimate at 120px — if it's bigger it'll paginate mid-block which is fine
             j++;

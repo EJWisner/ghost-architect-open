@@ -11,6 +11,7 @@ import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.
 import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
+import { runReconMode } from '../src/modes/recon.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
 
@@ -24,18 +25,12 @@ const inquirerTheme = process.platform === 'win32' ? { icon: { cursor: '>' } } :
 import { runConflictMode } from '../src/modes/conflict.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-function showUpgradePrompt(feature) {
-  console.log('\n' + boxen(
-    chalk.yellow.bold('⬆  Ghost Pro Feature') + '\n\n' +
-    chalk.white(feature + ' is available in Ghost Pro.\n') +
-    chalk.gray('Full PDF, markdown, multipass, project intelligence.\n') +
-    chalk.gray('Know what you are inheriting before you commit.\n\n') +
-    chalk.cyan('ghostarchitect.dev'),
-    { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
-  ));
-}
+// Ghost Open v5.0.0: Compare Reports and Project Dashboard are Pro features
+// and were removed entirely from the Open menu (rather than shown as locked
+// teasers). The showUpgradePrompt function that displayed them was removed
+// in this version. Recon was added as a fifth mode.
 
-const VERSION      = '4.9.0';
+const VERSION      = '5.0.0';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -202,9 +197,6 @@ async function selectInputMethod() {
     { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
     { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
     new inquirer.Separator(),
-    { name: (IS_WINDOWS ? '[PRO] Project Dashboard  ' : '⬆   Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'dashboard_locked' },
-    { name: (IS_WINDOWS ? '[PRO] Compare Reports  ' : '⬆   Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'compare_locked' },
-    new inquirer.Separator(),
   ];
 
   if (!usingEnvKey()) {
@@ -241,8 +233,7 @@ async function selectMode(codebaseContext) {
       { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
       { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
       { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
-      { name: (IS_WINDOWS ? '[PRO] Compare Reports  ' : '⬆   Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'compare_locked' },
-      { name: (IS_WINDOWS ? '[PRO] Project Dashboard  ' : '⬆   Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Ghost Pro feature')), value: 'dashboard_locked' },
+      { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
       new inquirer.Separator(),
       { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
       { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
@@ -317,11 +308,6 @@ async function main() {
         continue;
       }
 
-      if (method === 'dashboard_locked' || method === 'compare_locked') {
-        showUpgradePrompt(method === 'dashboard_locked' ? 'Project Dashboard' : 'Compare Reports');
-        continue;
-      }
-
       console.log('');
       codebaseContext = await loadCodebase(method);
       if (!codebaseContext) { codebaseContext = null; continue; }
@@ -347,8 +333,7 @@ async function main() {
       case 'poi':       await runPOIMode(codebaseContext);      break;
       case 'blast':     await runBlastMode(codebaseContext);    break;
       case 'conflict':  await runConflictMode(codebaseContext); break;
-      case 'compare_locked':   showUpgradePrompt('Compare Reports');   break;
-      case 'dashboard_locked': showUpgradePrompt('Project Dashboard'); break;
+      case 'recon':     await runReconMode(codebaseContext);    break;
     }
   }
 }

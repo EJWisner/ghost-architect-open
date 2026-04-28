@@ -9,6 +9,7 @@ import inquirer from 'inquirer';
 import { getConfig } from '../config.js';
 import { resolveContextCap } from './tierCaps.js';
 import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
+import { redactContent, showRedactionSummary } from '../redactor.js';
 
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
@@ -396,6 +397,50 @@ function buildContext(fileMap) {
   // Tier cap always clamps the final value.
   const userRequested = SCAN_OPTIONS.maxContextOverride ?? configuredMax;
   const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested);
+
+  // ── Redaction (Ghost Open v5.0.0+) ──────────────────────────────────────
+  // Strip API keys, secrets, DB credentials, and private keys before files
+  // are concatenated into the prompt context. Runs per-file so that the
+  // multi-pass scanners (which work directly off fileMap) also see redacted
+  // content. Fail-closed: any rule throwing aborts the scan rather than
+  // silently letting unredacted content through.
+  const redactedFileMap = {};
+  const allFindings     = [];
+  const allFailedRules  = [];
+  let   anyPartial      = false;
+  for (const [filePath, content] of Object.entries(fileMap)) {
+    const { redacted, findings, failedRules, partialRedaction } = redactContent(content);
+    redactedFileMap[filePath] = redacted;
+    if (findings.length)    allFindings.push(...findings);
+    if (failedRules.length) allFailedRules.push(...failedRules);
+    if (partialRedaction)   anyPartial = true;
+  }
+
+  if (anyPartial) {
+    // Fail-closed: if any redaction rule errored, halt before sending anything
+    // to Anthropic. The user's secrets are more important than completing the
+    // scan. They can re-run after investigating which rule blew up.
+    console.log(chalk.red('\n  ⚠  Redaction failed on one or more rules. Scan aborted to protect secrets.'));
+    for (const f of allFailedRules) {
+      console.log(chalk.red(`      • ${f.rule}: ${f.error}`));
+    }
+    console.log(chalk.gray('  Investigate the failing rule(s) before re-running. Your codebase was NOT sent to the API.\n'));
+    return null;
+  }
+
+  if (allFindings.length > 0) {
+    showRedactionSummary({
+      findings:         allFindings,
+      totalRedactions:  allFindings.length,
+      failedRules:      [],
+      partialRedaction: false,
+    });
+  }
+
+  // Use the redacted fileMap going forward — modes that read .fileMap directly
+  // (e.g. multi-pass POI / Conflict) need redacted content too, not just the
+  // assembled .context string.
+  fileMap = redactedFileMap;
 
   let context = '';
   let fileIndex = [];

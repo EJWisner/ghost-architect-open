@@ -127,27 +127,33 @@ export async function runChatMode(codebaseContext) {
   }
 }
 
+// Ghost Open v5.0.0: chat save mirrors the conventions of POI/Blast/Conflict/Recon.
+// No project label prompt (Open doesn't track project history), no timestamped
+// filenames (saves overwrite ghost-chat.{txt,md,pdf}). The transcript separator
+// uses plain ASCII '-' instead of the U+2500 box-drawing character because
+// PDFKit's font has no glyph for U+2500 and substitutes a '%' for every cell,
+// rendering as '%%%%%' in saved PDFs.
 async function saveChatLog(chatLog) {
-  const { label } = await inquirer.prompt([{
-    type: 'input',
-    name: 'label',
-    message: chalk.cyan('Chat label') + chalk.gray(' (project name, press Enter to skip):'),
-  }]);
-
   const timestamp = new Date().toLocaleString();
+  const sep       = '-'.repeat(60);
   let content = `GHOST ARCHITECT — CHAT TRANSCRIPT\n`;
   content += `Saved: ${timestamp}\n`;
   content += `Exchanges: ${chatLog.length}\n`;
-  content += `${'─'.repeat(60)}\n\n`;
+  content += `${sep}\n\n`;
 
   chatLog.forEach((entry, i) => {
     content += `Q${i + 1}: ${entry.q}\n\n`;
     content += `Ghost: ${entry.a}\n\n`;
-    content += `${'─'.repeat(60)}\n\n`;
+    content += `${sep}\n\n`;
   });
 
-  const saved = await saveReport(content, 'ghost-chat', label || 'conversation');
+  // Pass null (not 'conversation' or any default string) so saveReport's Open
+  // path runs — overwriting filename ghost-chat.{txt,md,pdf} with no timestamp
+  // suffix. Passing a non-null string sends saveReport down the Pro-tier path
+  // that produces ghost-chat-{label}-{timestamp}.{ext}.
+  const saved = await saveReport(content, 'ghost-chat', null);
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)\n`));
+  if (saved.pdfFile) console.log(chalk.gray(`  📑 ${saved.pdfFile}  ← client-ready PDF\n`));
 }

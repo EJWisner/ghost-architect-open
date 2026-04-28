@@ -19,7 +19,12 @@ import { verifyConflicts } from './agent/verifier.js';
 import { narrateConflictReport } from './agent/narrator.js';
 import { loadSession, saveSession, deleteSession } from './multipass.js';
 
-const PASS_TOKEN_LIMIT  = 50000;
+// Per-pass token budget. Set below the model's effective per-request ceiling
+// (and below Open's 50K tier cap) to leave headroom for the system prompt,
+// instructions, and prior-pass context. Mirrors POI's 45K headroom strategy.
+// Setting this equal to the tier cap caused 'context length' errors on dense
+// passes where the file content alone consumed the entire budget.
+const PASS_TOKEN_LIMIT  = 40000;
 const MAX_SINGLE_PASS   = 60000;
 const SESSION_PREFIX    = 'conflict-';
 

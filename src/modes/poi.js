@@ -1,6 +1,4 @@
 import { showFriendlyError } from '../utils/errors.js';
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -11,8 +9,10 @@ import { runMultiPassPOI } from '../core/multipass.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
-import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 
 export async function runPOIMode(codebaseContext) {
   const fileMap      = codebaseContext.fileMap || {};
@@ -71,8 +71,9 @@ export async function runPOIMode(codebaseContext) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
   }
 
-  // Smart project label prompt — shows existing projects, fuzzy matches, confirms
-  const label = await promptProjectLabel();
+  // Ghost Open v5.0.0: no project labels. Every scan is a one-shot.
+  // Reports overwrite the prior ghost-poi.{txt,md,pdf} on each run.
+  const label = null;
   console.log('');
 
   const { proceed } = await inquirer.prompt([{
@@ -269,15 +270,10 @@ export async function runPOIMode(codebaseContext) {
     const outputTokens = Math.ceil(buffer.length / 4);
     showActualCost(inputTokens, outputTokens, model);
 
-    // Project Intelligence — auto-compare against baseline
+    // Ghost Open v5.0.0: project intelligence is a Pro feature. Open does not
+    // track baselines, deltas, or project history — there's no project label
+    // to anchor that data to.
     let projectIntelResult = null;
-    if (label) {
-      const piMeta = {
-        filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
-        rates,
-      };
-      projectIntelResult = await handleProjectIntelligence(label, buffer, piMeta);
-    }
 
     // Save prompt
     const { doSave } = await inquirer.prompt([{
@@ -399,31 +395,13 @@ export async function runPOIMode(codebaseContext) {
     };
 
     if (doSave) {
-      // Save locally — saveReport also auto-publishes to Ghost Mobile if configured
+      // Save locally — saveReport writes ghost-poi.{txt,md,pdf}, overwriting prior runs.
       const saved = await saveReport(buffer, 'ghost-poi', label, meta);
       console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
-    } else if (label) {
-      // No local save — but still publish to Ghost Mobile if configured
-      try {
-        const { isPublishConfigured, publishProject } = await import('../core/mobile-publish.js');
-        if (isPublishConfigured()) {
-          const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
-          await publishProject(
-            { label, slug: projectSlug, baselineDate: null, baselineCount: 0, scans: [] },
-            {
-              date: new Date().toISOString(),
-              version: '4.7.0',
-              findingCount: 0,
-              cost: meta.cost,
-            }
-          );
-          console.log(chalk.gray(`\n  📱 Published to Ghost Mobile (local save skipped)\n`));
-        }
-      } catch { /* non-fatal */ }
     }
 
   } catch (err) {

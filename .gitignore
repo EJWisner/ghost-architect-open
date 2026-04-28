@@ -1,3 +1,21 @@
 node_modules/
 web/.next/
 web/node_modules/
+
+# npm pack output — regenerated on every release, never committed
+*.tgz
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local dev artifacts
+.env
+.env.local

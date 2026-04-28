@@ -4,7 +4,7 @@
 
 Ghost Architect scans your codebase, categorizes risk by severity, and gives your team a map of where to start. It does not replace your engineers. It tells them where to look.
 
-**Ghost Open is free.** Reports are limited to Critical and High findings. Full output — Medium, Low, multipass, project intelligence, PDF — is Ghost Pro.
+**Ghost Open is free and full-featured.** Every scan mode is available. Every finding — Critical, High, Medium, Low — is in the report. PDF, Markdown, and TXT outputs are generated for every scan. The only thing Ghost Open does not do is track your scan history across runs — each scan overwrites the prior report. Project tracking, baselines, dashboards, and consultant profiles are part of Ghost Pro and the higher tiers.
 
 ---
 
@@ -12,13 +12,24 @@ Ghost Architect scans your codebase, categorizes risk by severity, and gives you
 
 Ghost triages your codebase — categorizes risk, prioritizes findings, gives your team a map of where to start.
 
-- Scans your codebase for security, performance, and architecture risk
-- Rates every finding by severity: Critical, High, Medium, Low
-- Outputs TXT, Markdown, and PDF reports
-- Runs locally. Your code never leaves your machine.
+Five scan modes are available:
 
-**Ghost Open output:** Critical and High findings only, in TXT and Markdown format.  
-**Ghost Pro output:** All findings, multipass analysis, project intelligence, PDF, and more. [ghostarchitect.dev](https://ghostarchitect.dev)
+- **Chat** — interactive Q&A with the codebase. Ask anything about the architecture, the conventions, the suspicious bits.
+- **Points of Interest** — auto-map red flags, landmarks, dead zones, and fault lines across the whole codebase. Severity-scored, with effort estimates and recommended fixes.
+- **Blast Radius** — pick a file, class, or method. Ghost maps every dependency that would be affected by a change, plus a complete rollback plan.
+- **Conflict Detection** — find contract mismatches, schema conflicts, config key errors, and constant disagreements that no linter catches.
+- **Recon** — sizing-only mode. Single planner call, ~$0.05. Tells you what a full scan would surface before you commit to running one.
+
+Every scan produces three files:
+
+- `ghost-poi.txt` / `ghost-poi.md` / `ghost-poi.pdf` — for Points of Interest
+- `ghost-blast.txt` / `ghost-blast.md` / `ghost-blast.pdf` — for Blast Radius
+- `ghost-conflict.txt` / `ghost-conflict.md` / `ghost-conflict.pdf` — for Conflict Detection
+- `ghost-recon.txt` / `ghost-recon.md` / `ghost-recon.pdf` — for Recon
+
+Reports save to `~/Ghost Architect Reports/` and overwrite the prior run for that mode. Chat is interactive only and does not save a transcript.
+
+Reports run locally. Your code never leaves your machine. Analysis calls go directly from your machine to Anthropic's API using your own key.
 
 ---
 
@@ -82,21 +93,19 @@ source ~/.zshrc
 
 ## Running a Scan
 
-On launch, Ghost presents a menu. Select **Local directory** and point it at your codebase or a module directory.
+On launch, Ghost presents a menu. Pick how to load the codebase (local directory, ZIP file, or GitHub repository), then pick a scan mode.
 
-Ghost will analyze the files, score findings by severity, and save reports to:
+Reports save to:
 
 ```
 ~/Ghost Architect Reports/
 ```
 
-Three files are generated per scan: `.txt`, `.md`, and `.pdf`.
-
-**Ghost Open reports include Critical and High findings only.**
+Each mode produces three files (TXT, MD, PDF). Each run overwrites the prior run's reports for that mode.
 
 ---
 
-## Cost Controls (v4.9.0+)
+## Cost Controls
 
 Ghost ships with three flags for controlling what gets scanned and how much context gets sent to the model. Use them to dial costs down on large codebases.
 
@@ -134,18 +143,22 @@ See all flags: `ghost --help`
 
 ---
 
-## Upgrading to Ghost Pro
+## Ghost Open vs Ghost Pro and Higher Tiers
 
-Ghost Open shows you the surface. Ghost Pro shows you everything.
+Ghost Open is the full scan engine. Pro, Team, Enterprise, and Partner add tracking, comparison, and white-label features on top of the same scans.
 
-| Feature | Ghost Open | Ghost Pro |
-|---|---|---|
-| Critical & High findings | ✅ | ✅ |
-| Medium & Low findings | ❌ | ✅ |
-| Multipass analysis | ❌ | ✅ |
-| Project intelligence | ❌ | ✅ |
-| Full PDF report | ❌ | ✅ |
-| Priority support | ❌ | ✅ |
+| Feature | Ghost Open | Ghost Pro | Team | Enterprise |
+|---|---|---|---|---|
+| Chat / POI / Blast / Conflict / Recon | ✅ all | ✅ all | ✅ all | ✅ all |
+| Reports save as MD/PDF/TXT | ✅ | ✅ | ✅ | ✅ |
+| Project labels + history tracking | ❌ no labels | ✅ | ✅ | ✅ |
+| Project Dashboard | ❌ | ✅ | ✅ | ✅ |
+| Compare Reports (before/after diff) | ❌ | ✅ | ✅ | ✅ |
+| Ghost Partner™ profiles + white-label | ❌ | ✅ | ✅ | ✅ |
+| Per-profile billing rate overrides | ❌ | ✅ | ✅ | ✅ |
+| Team sync features | ❌ | ❌ | ✅ | ✅ |
+| Enterprise gating | ❌ | ❌ | ❌ | ✅ |
+| Context cap | 50K | 100K | 150K | 200K |
 
 [**Get Ghost Pro at ghostarchitect.dev**](https://ghostarchitect.dev)
 

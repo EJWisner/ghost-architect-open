@@ -21,18 +21,39 @@ export function ensureReportsDir() {
   return REPORTS_DIR;
 }
 
+// Ghost Open v5.0.0: filename convention.
+//
+// Ghost Open does not track project history. Each scan overwrites the prior
+// report for that mode. Filenames are simply ${prefix}.{ext} — no project
+// label, no timestamp. The "ghost-" prefix is intentional: when a developer
+// emails ghost-poi.pdf to a stakeholder, the filename itself identifies the
+// tool that generated it.
+//
+// Pro/Team/Enterprise pass a non-null label and get the historical
+// ${prefix}-${label}-${timestamp}.{ext} convention. Open passes null and
+// gets the overwriting filename. Single function, two behaviors based on
+// label presence.
+
 export async function saveReport(content, prefix, label, meta = {}) {
   const dir = ensureReportsDir();
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const safeName = label ? label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30) : '';
-  const baseName = safeName ? `${prefix}-${safeName}-${timestamp}` : `${prefix}-${timestamp}`;
+
+  let baseName;
+  if (label) {
+    // Pro/Team/Enterprise: timestamped, label-suffixed, history preserved.
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeName  = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
+    baseName = `${prefix}-${safeName}-${timestamp}`;
+  } else {
+    // Open: overwrite-on-every-run. Single set of files per mode.
+    baseName = prefix;
+  }
 
   // Save TXT — plain text, terminal-friendly
   const txtPath = path.join(dir, `${baseName}.txt`);
   fs.writeFileSync(txtPath, stripAnsi(content));
 
   // Save MD — formatted Markdown, developer-friendly
-  const mdContent = convertToMarkdown(content, prefix, label, meta, timestamp);
+  const mdContent = convertToMarkdown(content, prefix, label, meta);
   const mdPath = path.join(dir, `${baseName}.md`);
   fs.writeFileSync(mdPath, mdContent);
 
@@ -41,10 +62,11 @@ export async function saveReport(content, prefix, label, meta = {}) {
   const reportType = prefix === 'ghost-poi'      ? 'Points of Interest Report'
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis + Rollback Plan'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
+    : prefix === 'ghost-recon'    ? 'Recon Report — Sizing Only'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
   const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION };
-  
+
   try {
     await generatePDF(stripAnsi(content), pdfPath, metaWithType);
   } catch (err) {
@@ -66,96 +88,53 @@ export async function saveReport(content, prefix, label, meta = {}) {
   };
 }
 
-function convertToMarkdown(content, prefix, label, meta, timestamp) {
+function convertToMarkdown(content, prefix, label, meta) {
   const clean = stripAnsi(content);
-  const date = new Date().toLocaleString();
+  const date  = new Date().toLocaleString();
 
-  // Build report type label
   const typeLabel = prefix === 'ghost-poi'      ? 'Points of Interest Report'
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
+    : prefix === 'ghost-recon'    ? 'Recon Report — Sizing Only'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
-  // Build header
+  // Header
   let md = `# Ghost Architect — ${typeLabel}\n\n`;
   md += `| | |\n|---|---|\n`;
-  md += `| **Project** | ${label || 'Unnamed project'} |\n`;
+  md += `| **Project** | ${label || 'Unnamed scan'} |\n`;
   md += `| **Generated** | ${date} |\n`;
   if (meta.filesAnalyzed) md += `| **Files Analyzed** | ${meta.filesAnalyzed} |\n`;
-  if (meta.totalFiles) md += `| **Total Files in Project** | ${meta.totalFiles} |\n`;
-  if (meta.cost) md += `| **Analysis Cost** | ${meta.cost} |\n`;
+  if (meta.totalFiles)    md += `| **Total Files in Project** | ${meta.totalFiles} |\n`;
+  if (meta.cost)          md += `| **Analysis Cost** | $${meta.cost} |\n`;
   md += `| **Tool** | Ghost Architect v${GHOST_VERSION} |\n`;
   md += `| **Copyright** | © 2026 Ghost Architect. All rights reserved. |\n\n`;
   md += `---\n\n`;
 
-  // Convert content — clean up terminal formatting for Markdown
+  // Body — clean up terminal formatting for Markdown.
+  // Ghost Open v5.0.0: NO truncation. Full report writes to disk.
+  // The previous severity-gated truncation that hid Medium/Low/Dead Zones
+  // findings has been removed. Open users get the same report Pro users get.
   let body = clean
-    // Headers
+    // Headers — preserved as-is
     .replace(/^# (.+)$/gm, '# $1')
     .replace(/^## (.+)$/gm, '## $1')
     .replace(/^### (.+)$/gm, '### $1')
-    // Severity badges — convert to bold colored text
-      .replace(/🔴 \*\*CRITICAL\*\*/g, 'CRITICAL')
-      .replace(/🟠 \*\*HIGH\*\*/g, 'HIGH')
-      .replace(/🟡 \*\*MEDIUM\*\*/g, 'MEDIUM')
-      .replace(/🟢 \*\*LOW\*\*/g, 'LOW')
-      .replace(/\bCRITICAL\b/g, '🔴 **CRITICAL**')
-      .replace(/\bHIGH\b/g, '🟠 **HIGH**')
-      .replace(/\bMEDIUM\b/g, '🟡 **MEDIUM**')
-      .replace(/\bLOW\b/g, '🟢 **LOW**')    // Section dividers
+    // Severity badges — round-trip the emoji + bold formatting cleanly
+    .replace(/🔴 \*\*CRITICAL\*\*/g, 'CRITICAL')
+    .replace(/🟠 \*\*HIGH\*\*/g, 'HIGH')
+    .replace(/🟡 \*\*MEDIUM\*\*/g, 'MEDIUM')
+    .replace(/🟢 \*\*LOW\*\*/g, 'LOW')
+    .replace(/\bCRITICAL\b/g, '🔴 **CRITICAL**')
+    .replace(/\bHIGH\b/g, '🟠 **HIGH**')
+    .replace(/\bMEDIUM\b/g, '🟡 **MEDIUM**')
+    .replace(/\bLOW\b/g, '🟢 **LOW**')
+    // Section dividers
     .replace(/^---+$/gm, '\n---\n')
     // Clean up excessive blank lines
     .replace(/\n{4,}/g, '\n\n\n');
-  const bodyNoSummary = body.replace(/## 📊 .*?SUMMARY[\s\S]*$/i, '')
-                           .replace(/## Remediation Summary[\s\S]*$/i, '')
-                           .replace(/## Recommended Remediation Sequence[\s\S]*$/i, '');
 
-  // Ghost Open: MD truncated to Critical + High severity sections only.
-  // The narrator produces section headers like:
-  //   ## 🔴 Critical: ...
-  //   ## 🔴 High-Severity Issues
-  //   ## ⚠️ Medium-Severity Issues
-  //   ## 🪦 Dead Code ...
-  //   ## 🏛️ Architectural Strengths
-  // Findings are nested under those headers as `### N. Title` blocks.
-  // We keep only Critical + High sections and count findings.
-
-  const isSeverityHeader = (line) =>
-    /^##\s+.*(?:🔴|🟠|🟡|🟢|⚠️|⚠)/.test(line) ||
-    /^##\s+(?:Critical|High|Medium|Low)[-:\s]/i.test(line);
-  const isCritHighHeader = (line) =>
-    /^##\s+🔴/.test(line) ||
-    /^##\s+(?:Critical|High)[-:\s]/i.test(line);
-
-  const lines = bodyNoSummary.split('\n');
-  let totalFindings = 0;
-  let shownFindings = 0;
-  const kept = [];
-  let inSeveritySection = false;
-  let inCritHighSection = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^##\s+/.test(line)) {
-      inSeveritySection = isSeverityHeader(line);
-      inCritHighSection = inSeveritySection && isCritHighHeader(line);
-      if (inCritHighSection) kept.push(line);
-      continue;
-    }
-    if (inSeveritySection && /^###\s+/.test(line)) {
-      totalFindings++;
-      if (inCritHighSection) shownFindings++;
-    }
-    if (inCritHighSection) kept.push(line);
-  }
-
-  const truncatedBody = kept.join('\n').trim();
-  md += truncatedBody || '_No Critical or High severity findings in this scan._';
-
-  md += `\n\n---\n\n`;
-  md += `> You are looking at ${shownFindings} of ${totalFindings} findings. The rest are in Ghost Pro — full PDF, markdown, multipass, project intelligence. Know what you are inheriting before you commit. [ghostarchitect.dev](https://ghostarchitect.dev)\n`;
-  md += `\n`;
+  md += body.trim();
 
   md += `\n\n---\n\n`;
   md += `*Generated by Ghost Architect — AI-powered codebase intelligence*  \n`;
