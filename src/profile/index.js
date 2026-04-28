@@ -336,6 +336,13 @@ function normalize(data, rawSource, absPath) {
     } else if (key === 'branding') {
       const b = normalizeBranding(val);
       if (b) out.branding = b;
+    } else if (key === 'rates') {
+      // Per-profile rate overrides. Each rate (junior/mid/senior) is
+      // optional; whatever the profile declares replaces the global
+      // value at scan time, while undeclared rates fall through to the
+      // global config. See mergeRates() below.
+      const r = normalizeRates(val);
+      if (r) out.rates = r;
     } else if (key === 'prose') {
       const s = toTrimmedString(val);
       if (s) out.prose = s;
@@ -359,6 +366,68 @@ function normalizeBranding(val) {
     if (s) out[k.toLowerCase()] = s;
   }
   return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Coerce a profile's `rates` block into the canonical { junior, mid, senior }
+ * shape. Each field is optional; values that aren't positive finite numbers
+ * are dropped silently so a typo in one rate doesn't suppress the others.
+ * Returns null when nothing usable was found, so the caller can use it as
+ * a presence check.
+ *
+ * Accepts:
+ *   rates: { junior: 95, mid: 150, senior: 250 }       all three
+ *   rates: { mid: 150 }                                  partial
+ *   rates: { senior: '250' }                             string-as-number
+ *   rates: { junior: -10 }                               dropped (invalid)
+ *   rates: 'not an object'                               returns null
+ */
+function normalizeRates(val) {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return null;
+  const out = {};
+  for (const tier of ['junior', 'mid', 'senior']) {
+    const raw = val[tier];
+    if (raw == null) continue;
+    const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    if (Number.isFinite(n) && n > 0) out[tier] = n;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rates merge — single source of truth for resolving the rate set used at
+// scan time. The global rate set (from config) is the baseline; the profile
+// overrides whatever it declares. Tiers the profile leaves undeclared keep
+// the global value. This means a profile with `rates: { mid: 150 }` ends
+// up with junior + senior from config and mid from the profile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Merge global rates with a profile's optional rate overrides.
+ *
+ * @param {{junior:number, mid:number, senior:number}} globalRates
+ *        The fallback rate set, typically from getConfig() in the host.
+ * @param {object|null|undefined} profile
+ *        A loaded profile (or null). When the profile carries a `rates`
+ *        block, those values override the matching tiers; absent tiers
+ *        fall through to globalRates.
+ * @returns {{junior:number, mid:number, senior:number}}
+ *        A new object — inputs are not mutated.
+ *
+ * Behavior contract:
+ *   - profile == null               returns a copy of globalRates
+ *   - profile.rates == null         returns a copy of globalRates
+ *   - profile.rates = { mid: 150 }  returns { junior: global, mid: 150, senior: global }
+ *   - all three declared            returns the profile values verbatim
+ */
+export function mergeRates(globalRates, profile) {
+  const base = {
+    junior: globalRates && Number.isFinite(globalRates.junior) ? globalRates.junior : 85,
+    mid:    globalRates && Number.isFinite(globalRates.mid)    ? globalRates.mid    : 125,
+    senior: globalRates && Number.isFinite(globalRates.senior) ? globalRates.senior : 200,
+  };
+  if (!profile || !profile.rates) return base;
+  return { ...base, ...profile.rates };
 }
 
 function toTrimmedString(val) {

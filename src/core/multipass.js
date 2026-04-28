@@ -18,6 +18,7 @@ import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
+import { mergeRates } from '../profile/index.js';
 
 const PASS_TOKEN_LIMIT = 45000;
 const MERGE_BATCH_SIZE = 6;
@@ -321,7 +322,7 @@ async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons, p
     `${skeletonContext}` +
     `Analyze ONLY the files in this pass. Reference prior pass findings if you see related issues.\n\n` +
     `Files for this pass:\n${context}`,
-    buildSystemPOI(getRates(), profile)
+    buildSystemPOI(mergeRates(getRates(), profile), profile)
   );
 }
 
@@ -341,7 +342,7 @@ async function mergePassResults(results, label, profile = null) {
     `- Output must stay under 4,000 words\n` +
     `- Use Ghost Architect section format\n\n` +
     `BATCHES:\n${combined}\n\nMerged findings:`,
-    buildSystemPOI(getRates(), profile), 6000
+    buildSystemPOI(mergeRates(getRates(), profile), profile), 6000
   );
 }
 
@@ -406,7 +407,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
 
   const combined  = mergedGroups.map((r, i) => `=== MERGED GROUP ${i + 1} ===\n${r}`).join('\n\n');
-  const rates     = getRates();
+  const rates     = mergeRates(getRates(), options.profile);
   const anthropic = getClient();
 
   // Ghost Partner — reinforce consultant lens in synthesis user message too.

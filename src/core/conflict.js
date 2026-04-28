@@ -18,6 +18,7 @@ import { prioritizeFileMap } from '../prioritizer.js';
 import { verifyConflicts } from './agent/verifier.js';
 import { narrateConflictReport } from './agent/narrator.js';
 import { loadSession, saveSession, deleteSession } from './multipass.js';
+import { mergeRates } from '../profile/index.js';
 
 const PASS_TOKEN_LIMIT  = 50000;
 const MAX_SINGLE_PASS   = 60000;
@@ -284,11 +285,11 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   const info       = getConflictPassInfo(fileMap);
   const totalFiles = info.totalFiles;
-  const rates      = {
+  const rates      = mergeRates({
     junior: getConfig().get('rateJunior') || 85,
     mid:    getConfig().get('rateMid')    || 125,
     senior: getConfig().get('rateSenior') || 200,
-  };
+  }, profile);
 
   onProgress({ type: 'start', totalFiles, totalPasses: info.passes.length, singlePass: info.singlePass });
 

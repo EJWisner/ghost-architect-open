@@ -6,6 +6,7 @@ import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../co
 import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
+import { mergeRates } from '../profile/index.js';
 
 let client = null;
 
@@ -76,7 +77,7 @@ export async function streamChat(codebaseContext, conversationHistory, userMessa
 
 export async function runPOIScan(codebaseContext, onChunk, options = {}) {
   const anthropic = getClient();
-  const rates     = getRates();
+  const rates     = mergeRates(getRates(), options.profile);
 
   // Step 1: Run scan silently — collect raw output
   // Temperature 0.3: reduces run-to-run variance so profile signal shows through.
@@ -171,7 +172,7 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
 
 export async function runBlastRadius(codebaseContext, target, onChunk, options = {}) {
   const anthropic = getClient();
-  const rates     = getRates();
+  const rates     = mergeRates(getRates(), options.profile);
 
   // Normalize target into a consistent shape. We always work with an array
   // internally so the prompt branch is the same shape; we just decide the

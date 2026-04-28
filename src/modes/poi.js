@@ -13,20 +13,26 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+import { mergeRates } from '../profile/index.js';
 
 export async function runPOIMode(codebaseContext, options = {}) {
+  // Ghost Partner — consultant profile (null when --profile was not passed).
+  const profile = options.profile || null;
+
   const fileMap      = codebaseContext.fileMap || {};
   const passes       = Object.keys(fileMap).length > 0 ? buildPasses(fileMap) : [];
   const useMultiPass = passes.length > 1;
   const model        = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
-  const rates        = {
+  // Rates shown in the scan banner reflect what the report itself will
+  // use, so per-profile rate overrides apply here too. Without this, an
+  // OSC scan would show $85/$125/$200 in the banner but render the
+  // report with $50/$90/$150 — the user-visible numbers would
+  // disagree with the saved report.
+  const rates = mergeRates({
     junior: getConfig().get('rateJunior') || 85,
     mid:    getConfig().get('rateMid')    || 125,
     senior: getConfig().get('rateSenior') || 200,
-  };
-
-  // Ghost Partner — consultant profile (null when --profile was not passed).
-  const profile = options.profile || null;
+  }, profile);
 
   const ratesLine = 'Rates: $' + rates.junior + '/hr junior \u00b7 $' + rates.mid + '/hr mid \u00b7 $' + rates.senior + '/hr senior';
 
