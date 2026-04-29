@@ -15,6 +15,19 @@ export function resolveGitHubToken() {
   return process.env.GITHUB_TOKEN || config.get('githubToken') || null;
 }
 
+// ── Ghost Partner default profile ─────────────────────────────────────────
+// When a default profile slug is set, ghost.js loads that profile at startup
+// for every scan unless the user passes --no-profile or an explicit --profile
+// flag overrides it. Stored as a slug (filename without extension), not a
+// full path, so moving the profiles directory doesn't break the config.
+export function getDefaultProfileSlug() {
+  return config.get('defaultProfileSlug') || null;
+}
+export function setDefaultProfileSlug(slug) {
+  if (slug) config.set('defaultProfileSlug', slug);
+  else      config.delete('defaultProfileSlug');
+}
+
 export function isConfigured() { return !!resolveApiKey(); }
 
 export function usingEnvKey() { return !!process.env.ANTHROPIC_API_KEY; }

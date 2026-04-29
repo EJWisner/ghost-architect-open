@@ -5,7 +5,7 @@ import gradient from 'gradient-string';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
-import { isConfigured, runSetupWizard, reconfigure, usingEnvKey } from '../src/config.js';
+import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug } from '../src/config.js';
 import { loadCodebase, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
@@ -14,6 +14,11 @@ import { runReconMode } from '../src/modes/recon.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
 import { loadProfile } from '../src/profile/index.js';
+import { runProfileWizard } from '../src/profile/wizard.js';
+import { writeProfile, listProfiles, deleteProfile, profilePathFor, getProfilesDir } from '../src/profile/writer.js';
+import fs from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -51,6 +56,11 @@ function parseArgs(argv) {
     excludes: [],
     presets: [],
     profile: null,
+    noProfile: false,
+    createProfile: false,
+    listProfiles: false,
+    setDefaultProfile: null,
+    clearDefaultProfile: false,
     help: false,
     version: false,
   };
@@ -90,8 +100,14 @@ function parseArgs(argv) {
       out.presets.push(...v.split(',').map(s => s.trim()).filter(Boolean));
       continue;
     }
-    if (a === '--profile') { out.profile = argv[++i] || ''; continue; }
-    if (a.startsWith('--profile=')) { out.profile = a.slice('--profile='.length); continue; }
+    if (a === '--profile')           { out.profile = argv[++i] || ''; continue; }
+    if (a.startsWith('--profile='))  { out.profile = a.slice('--profile='.length); continue; }
+    if (a === '--no-profile')        { out.noProfile = true; continue; }
+    if (a === '--create-profile')    { out.createProfile = true; continue; }
+    if (a === '--list-profiles')     { out.listProfiles = true; continue; }
+    if (a === '--set-default-profile')          { out.setDefaultProfile = argv[++i] || ''; continue; }
+    if (a.startsWith('--set-default-profile=')) { out.setDefaultProfile = a.slice('--set-default-profile='.length); continue; }
+    if (a === '--clear-default-profile')        { out.clearDefaultProfile = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -115,13 +131,23 @@ Options:
                            Example: --exclude "seeds/**" --exclude "*.fixture.js"
   --exclude-presets a,b    Apply named exclusion preset(s), comma-separated.
                            Available presets: ${presets}
-  --profile path           Ghost Partner™ — load a consultant profile from a
-                           .yaml, .yml, .md, or .txt file. The profile lens is
-                           applied to Points of Interest scans, Blast Radius
-                           analyses with rollback plans, and Conflict Detection
-                           so findings reflect the consultant's methodology
-                           and reports render with their branding.
-                           Example: --profile ~/profiles/my-audit.yaml
+
+Ghost Partner™ — white-label consultant profiles:
+  --profile path           Load a profile from .yaml/.yml/.md/.txt and apply
+                           the consultant's lens + branding to all scans.
+  --no-profile             Run without any profile, even if a default is set.
+  --create-profile         Launch the interactive profile wizard and save the
+                           result to ~/.ghost/profiles/. Then exit.
+  --list-profiles          List all profiles in ~/.ghost/profiles/ and show
+                           which one is currently the default. Then exit.
+  --set-default-profile slug
+                           Set the default profile by slug (filename without
+                           extension, e.g. 'osc-performance-audit'). Applied
+                           to every scan unless --profile or --no-profile is
+                           passed. Then exit.
+  --clear-default-profile  Remove the default profile setting. Then exit.
+
+Misc:
   --version, -v            Print version and exit.
   --help, -h               Print this help and exit.
 
@@ -155,14 +181,18 @@ function printBanner() {
 
 // ── Input method selector ───────────────────────────────────────────────────
 
-async function selectInputMethod() {
+async function selectInputMethod(activeProfileLabel) {
+  const profileSuffix = activeProfileLabel
+    ? chalk.gray('  [profile: ') + chalk.cyan(activeProfileLabel) + chalk.gray(' ●]')
+    : '';
   const choices = [
-    { name: IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory', value: 'files' },
-    { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
-    { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
+    { name: (IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory') + profileSuffix, value: 'files' },
+    { name: (IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file') + profileSuffix, value: 'zip' },
+    { name: (IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository') + profileSuffix, value: 'github' },
     new inquirer.Separator(),
     { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
+    { name: (IS_WINDOWS ? '[GP]  Manage Ghost Partner Profiles  ' : '👤  Manage Ghost Partner Profiles  ') + (IS_WINDOWS ? '' : chalk.gray('— Create, edit, set default, delete')), value: 'profiles' },
     new inquirer.Separator(),
   ];
 
@@ -212,6 +242,302 @@ async function selectMode(codebaseContext) {
   return mode;
 }
 
+// ── Ghost Partner profile helpers ──────────────────────────────────
+
+/**
+ * Resolve which profile to load for this run, in priority order:
+ *   1. --no-profile          → always null
+ *   2. --profile <path>      → explicit path wins
+ *   3. config defaultProfileSlug → if a default is set and the file exists
+ *   4. nothing                → null (no profile)
+ *
+ * Returns { profile, label } where label is shown in the menu suffix.
+ * Throws on explicit --profile failures so the user sees the error
+ * immediately rather than silently scanning without their profile.
+ */
+async function resolveStartupProfile(cliOpts) {
+  if (cliOpts.noProfile) return { profile: null, label: null };
+
+  if (cliOpts.profile) {
+    const profile = await loadProfile(cliOpts.profile);
+    return { profile, label: profile?.name || path.basename(cliOpts.profile) };
+  }
+
+  const slug = getDefaultProfileSlug();
+  if (!slug) return { profile: null, label: null };
+
+  const candidate = path.join(getProfilesDir(), `${slug}.yaml`);
+  if (!fs.existsSync(candidate)) {
+    console.log(chalk.yellow(
+      `⚠  Default profile '${slug}' not found at ${candidate}. ` +
+      `Run \`ghost --clear-default-profile\` to clear or \`ghost --list-profiles\` to see available profiles.`
+    ));
+    return { profile: null, label: null };
+  }
+
+  try {
+    const profile = await loadProfile(candidate);
+    return { profile, label: profile?.name || slug };
+  } catch (err) {
+    console.log(chalk.yellow(
+      `⚠  Could not load default profile '${slug}': ${err.message}. Continuing without a profile.`
+    ));
+    return { profile: null, label: null };
+  }
+}
+
+/**
+ * Headless --create-profile flow. Runs the wizard, saves the result, prints
+ * usage hints. Returns the saved path or null if the user cancelled.
+ */
+async function runCreateProfileFlow() {
+  const profile = await runProfileWizard();
+  if (!profile) {
+    console.log(chalk.gray('\nProfile creation cancelled. Nothing saved.\n'));
+    return null;
+  }
+
+  let savedPath;
+  try {
+    savedPath = writeProfile(profile);
+  } catch (err) {
+    if (/already exists/i.test(err.message)) {
+      const { overwrite } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'overwrite',
+        message: chalk.yellow(`A profile named "${profile.name}" already exists. Overwrite?`),
+        default: false,
+      }]);
+      if (!overwrite) {
+        console.log(chalk.gray('\nNot saved. Run again with a different name.\n'));
+        return null;
+      }
+      savedPath = writeProfile(profile, { overwrite: true });
+    } else {
+      throw err;
+    }
+  }
+
+  const slug = path.basename(savedPath, path.extname(savedPath));
+
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} Profile saved`) + '\n\n' +
+    chalk.white('Path: ') + chalk.cyan(savedPath) + '\n\n' +
+    chalk.white('Use it for one scan:') + '\n' +
+    chalk.gray('  ghost --profile ') + chalk.cyan(savedPath) + '\n\n' +
+    chalk.white('Set as your default profile (auto-applied to every scan):') + '\n' +
+    chalk.gray('  ghost --set-default-profile ') + chalk.cyan(slug),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  console.log('');
+  return savedPath;
+}
+
+/**
+ * Interactive submenu for managing profiles. Reachable from the main menu
+ * ("Manage Ghost Partner Profiles") and re-entrant — returns to itself
+ * after each action until the user picks Back.
+ */
+async function runProfilesMenu() {
+  while (true) {
+    const profiles = listProfiles();
+    const defaultSlug = getDefaultProfileSlug();
+
+    console.log('\n' + boxen(
+      chalk.cyan.bold('👤  GHOST PARTNER PROFILES') + '\n' +
+      chalk.gray(`Stored at: ${getProfilesDir()}`) + '\n' +
+      chalk.gray(`Total profiles: ${profiles.length}`) +
+      (defaultSlug ? '\n' + chalk.gray('Default profile: ') + chalk.cyan(defaultSlug) : ''),
+      { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+    ));
+
+    const choices = [
+      { name: '➕  Create new profile', value: 'create' },
+    ];
+    if (profiles.length) {
+      choices.push({ name: '✎  Edit existing profile', value: 'edit' });
+      choices.push({ name: '★  Set default profile', value: 'set-default' });
+      if (defaultSlug) {
+        choices.push({ name: '☆  Clear default profile', value: 'clear-default' });
+      }
+      choices.push({ name: '📄  Open profile in editor', value: 'open' });
+      choices.push({ name: '🗑   Delete profile', value: 'delete' });
+    }
+    choices.push(new inquirer.Separator());
+    choices.push({ name: '←  Back to main menu', value: 'back' });
+
+    const { action } = await inquirer.prompt([{
+      type: 'list',
+      name: 'action',
+      message: chalk.cyan('Profile management:'),
+      theme: inquirerTheme,
+      choices,
+    }]);
+
+    if (action === 'back')          return;
+    if (action === 'create')        { await runCreateProfileFlow(); continue; }
+    if (action === 'edit')          { await runEditProfileFlow(profiles); continue; }
+    if (action === 'set-default')   { await runSetDefaultFlow(profiles); continue; }
+    if (action === 'clear-default') {
+      setDefaultProfileSlug(null);
+      console.log(chalk.green(`\n${SYM.check} Default profile cleared.\n`));
+      continue;
+    }
+    if (action === 'open')   { await runOpenProfileFlow(profiles); continue; }
+    if (action === 'delete') { await runDeleteProfileFlow(profiles); continue; }
+  }
+}
+
+async function runEditProfileFlow(profiles) {
+  const { slug } = await inquirer.prompt([{
+    type: 'list',
+    name: 'slug',
+    message: chalk.cyan('Which profile do you want to edit?'),
+    theme: inquirerTheme,
+    choices: [
+      ...profiles.map(p => ({ name: `${p.name}  ${chalk.gray('(' + p.slug + ')')}`, value: p.slug })),
+      new inquirer.Separator(),
+      { name: '←  Cancel', value: '__cancel__' },
+    ],
+  }]);
+  if (slug === '__cancel__') return;
+
+  const target = profiles.find(p => p.slug === slug);
+  let existing = null;
+  try {
+    existing = await loadProfile(target.path);
+  } catch (err) {
+    console.log(chalk.red(`\n${SYM.cross} Could not load existing profile: ${err.message}\n`));
+    return;
+  }
+
+  const updated = await runProfileWizard({ existing });
+  if (!updated) {
+    console.log(chalk.gray('\nEdit cancelled. Profile unchanged.\n'));
+    return;
+  }
+
+  // If the user changed the name, the slug may have changed too. Save
+  // under the new slug, then offer to delete the old file.
+  const newPath = writeProfile(updated, { overwrite: true });
+  const newSlug = path.basename(newPath, path.extname(newPath));
+  if (newSlug !== slug) {
+    const { removeOld } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'removeOld',
+      message: chalk.yellow(
+        `Profile name changed (${slug} → ${newSlug}). Delete the old file?`
+      ),
+      default: true,
+    }]);
+    if (removeOld) {
+      deleteProfile(slug);
+      if (getDefaultProfileSlug() === slug) setDefaultProfileSlug(newSlug);
+      console.log(chalk.gray(`Removed old profile: ${slug}.yaml`));
+    }
+  }
+  console.log(chalk.green(`\n${SYM.check} Saved: ${newPath}\n`));
+}
+
+async function runSetDefaultFlow(profiles) {
+  const { slug } = await inquirer.prompt([{
+    type: 'list',
+    name: 'slug',
+    message: chalk.cyan('Which profile should be the default?'),
+    theme: inquirerTheme,
+    choices: [
+      ...profiles.map(p => ({ name: `${p.name}  ${chalk.gray('(' + p.slug + ')')}`, value: p.slug })),
+      new inquirer.Separator(),
+      { name: '←  Cancel', value: '__cancel__' },
+    ],
+  }]);
+  if (slug === '__cancel__') return;
+  setDefaultProfileSlug(slug);
+  console.log(chalk.green(`\n${SYM.check} Default profile set: ${slug}\n`));
+  console.log(chalk.gray('   Will be auto-applied to every scan unless --profile or --no-profile is passed.\n'));
+}
+
+async function runOpenProfileFlow(profiles) {
+  const { slug } = await inquirer.prompt([{
+    type: 'list',
+    name: 'slug',
+    message: chalk.cyan('Which profile do you want to open?'),
+    theme: inquirerTheme,
+    choices: [
+      ...profiles.map(p => ({ name: `${p.name}  ${chalk.gray('(' + p.slug + ')')}`, value: p.slug })),
+      new inquirer.Separator(),
+      { name: '←  Cancel', value: '__cancel__' },
+    ],
+  }]);
+  if (slug === '__cancel__') return;
+  const target = profiles.find(p => p.slug === slug);
+  const editor = process.env.VISUAL || process.env.EDITOR || (IS_WINDOWS ? 'notepad' : 'vi');
+  console.log(chalk.gray(`\nOpening ${target.path} in ${editor}...\n`));
+  await new Promise((resolve) => {
+    const proc = spawn(editor, [target.path], { stdio: 'inherit' });
+    proc.on('exit', resolve);
+    proc.on('error', (err) => {
+      console.log(chalk.red(`\nCould not launch editor: ${err.message}`));
+      console.log(chalk.gray(`Open the file manually: ${target.path}\n`));
+      resolve();
+    });
+  });
+}
+
+async function runDeleteProfileFlow(profiles) {
+  const { slug } = await inquirer.prompt([{
+    type: 'list',
+    name: 'slug',
+    message: chalk.cyan('Which profile do you want to delete?'),
+    theme: inquirerTheme,
+    choices: [
+      ...profiles.map(p => ({ name: `${p.name}  ${chalk.gray('(' + p.slug + ')')}`, value: p.slug })),
+      new inquirer.Separator(),
+      { name: '←  Cancel', value: '__cancel__' },
+    ],
+  }]);
+  if (slug === '__cancel__') return;
+
+  const { confirm } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'confirm',
+    message: chalk.yellow(`Permanently delete profile '${slug}'? This cannot be undone.`),
+    default: false,
+  }]);
+  if (!confirm) return;
+
+  deleteProfile(slug);
+  if (getDefaultProfileSlug() === slug) {
+    setDefaultProfileSlug(null);
+    console.log(chalk.gray('   (Was the default profile — default cleared.)'));
+  }
+  console.log(chalk.green(`\n${SYM.check} Deleted profile: ${slug}\n`));
+}
+
+/**
+ * Print all profiles to stdout. Used by --list-profiles.
+ */
+function printProfilesList() {
+  const profiles = listProfiles();
+  const defaultSlug = getDefaultProfileSlug();
+
+  console.log(`\nGhost Partner profiles in ${getProfilesDir()}:\n`);
+  if (!profiles.length) {
+    console.log(chalk.gray('  (none)\n'));
+    console.log(chalk.gray('Create one with: ') + chalk.cyan('ghost --create-profile\n'));
+    return;
+  }
+  for (const p of profiles) {
+    const marker = p.slug === defaultSlug ? chalk.green(' [default ●]') : '';
+    console.log(`  ${chalk.cyan(p.slug)}${marker}`);
+    console.log(`    ${chalk.gray(p.name)}`);
+    console.log(`    ${chalk.gray(p.path)}\n`);
+  }
+  if (defaultSlug) {
+    console.log(chalk.gray('Clear default: ') + chalk.cyan('ghost --clear-default-profile\n'));
+  }
+}
+
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -223,6 +549,49 @@ async function main() {
   if (cliOpts.help)    { printUsage(); process.exit(0); }
   if (cliOpts.version) { console.log(`ghost-architect v${VERSION} (${TIER})`); process.exit(0); }
 
+  // Headless Ghost Partner profile management flags. Each one performs its
+  // action and exits cleanly so users can script them without entering the
+  // interactive menu.
+  if (cliOpts.listProfiles) { printProfilesList(); process.exit(0); }
+
+  if (cliOpts.clearDefaultProfile) {
+    setDefaultProfileSlug(null);
+    console.log(chalk.green(`\n${SYM.check} Default profile cleared.\n`));
+    process.exit(0);
+  }
+
+  if (cliOpts.setDefaultProfile != null) {
+    const slug = String(cliOpts.setDefaultProfile).trim();
+    if (!slug) {
+      console.error(chalk.red(`\n${SYM.cross} --set-default-profile requires a slug. Use --list-profiles to see available slugs.\n`));
+      process.exit(2);
+    }
+    const expected = path.join(getProfilesDir(), `${slug}.yaml`);
+    if (!fs.existsSync(expected)) {
+      console.error(chalk.red(`\n${SYM.cross} No profile found at ${expected}. Use --list-profiles to see available slugs.\n`));
+      process.exit(2);
+    }
+    setDefaultProfileSlug(slug);
+    console.log(chalk.green(`\n${SYM.check} Default profile set: ${slug}\n`));
+    console.log(chalk.gray('   Auto-applied to every scan. Override per-run with --profile or --no-profile.\n'));
+    process.exit(0);
+  }
+
+  if (cliOpts.createProfile) {
+    if (!isConfigured()) {
+      console.log(boxen(
+        chalk.yellow.bold('Set up Ghost Architect first') + '\n' +
+        chalk.gray('--create-profile needs a configured environment so the wizard\n') +
+        chalk.gray('can use your defaults. Run `ghost` once to complete setup,\n') +
+        chalk.gray('then re-run with --create-profile.'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+      process.exit(2);
+    }
+    await runCreateProfileFlow();
+    process.exit(0);
+  }
+
   // Seed the loader with this run's tier + CLI-driven options.
   // Caps get clamped; excludes get merged with presets at scan time.
   setScanOptions({
@@ -232,17 +601,19 @@ async function main() {
     excludePatterns: cliOpts.excludes,
   });
 
-  // Ghost Partner — load profile at startup if --profile was given.
-  // Fail fast: a broken profile path should stop the CLI before any scan
-  // gets set up, so the user sees the error immediately rather than mid-scan.
+  // Resolve which profile to load for this session.
+  // Priority: --no-profile > --profile path > config defaultProfileSlug > none.
+  // Explicit --profile failures are fatal; default-profile failures degrade
+  // gracefully with a warning.
   let profile = null;
-  if (cliOpts.profile) {
-    try {
-      profile = await loadProfile(cliOpts.profile);
-    } catch (err) {
-      console.error(chalk.red(`\n${SYM.cross} Failed to load profile: ${err.message}\n`));
-      process.exit(2);
-    }
+  let activeProfileLabel = null;
+  try {
+    const resolved = await resolveStartupProfile(cliOpts);
+    profile = resolved.profile;
+    activeProfileLabel = resolved.label;
+  } catch (err) {
+    console.error(chalk.red(`\n${SYM.cross} Failed to load profile: ${err.message}\n`));
+    process.exit(2);
   }
 
   printBanner();
@@ -263,7 +634,7 @@ async function main() {
 
   while (true) {
     if (!codebaseContext) {
-      const method = await selectInputMethod();
+      const method = await selectInputMethod(activeProfileLabel);
 
       if (method === 'exit') {
         session.showSummary();
@@ -285,6 +656,21 @@ async function main() {
 
       if (method === 'compare') {
         await runCompareMode();
+        continue;
+      }
+
+      if (method === 'profiles') {
+        await runProfilesMenu();
+        // After the user manages profiles, re-resolve in case they changed
+        // the default or created a new profile they want to use immediately.
+        try {
+          const resolved = await resolveStartupProfile(cliOpts);
+          profile = resolved.profile;
+          activeProfileLabel = resolved.label;
+        } catch (err) {
+          console.log(chalk.yellow(`⚠  Could not refresh profile: ${err.message}`));
+        }
+        printBanner();
         continue;
       }
 
