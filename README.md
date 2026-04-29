@@ -82,12 +82,49 @@ A **Ghost Partner profile** is a YAML file describing the consultant — their p
 - Uses the consultant's billing rates for cost estimates (per-tier overrides supported)
 - Produces a fully white-labeled PDF with the consultant's logo, accent color, and footer
 
+### Creating a profile — the easy way
+
+Don't hand-write YAML. Use the built-in profile wizard:
+
 ```bash
-# Run a POI scan on behalf of a consultant
-ghost --profile ~/profiles/oscprofessionals.yaml
+ghost --create-profile
 ```
 
-Example profile:
+Ghost walks you through a short interactive flow asking for your name, firm, brand color, optional logo path, top priorities, anti-patterns, red flags, and per-profile billing rates. The wizard saves a fully-formed YAML file to `~/.ghost/profiles/{slug}.yaml` and prints the path you'll use to invoke it.
+
+You can also reach the wizard from the main menu:
+
+- Run `ghost`
+- Pick **Manage Ghost Partner Profiles**
+- Pick **Create new profile**
+
+The same menu lets you edit existing profiles, set a default profile (auto-applied to every scan unless overridden), open a profile in your `$EDITOR` for fine-grained YAML edits, or delete profiles you no longer need.
+
+### Using a profile
+
+Three ways, in priority order:
+
+```bash
+# 1. Per-run, explicit path
+ghost --profile ~/.ghost/profiles/my-profile.yaml
+
+# 2. Set a default — auto-applied to every scan
+ghost --set-default-profile my-profile
+ghost                                 # default profile loads automatically
+ghost --no-profile                    # opt out of the default for one run
+ghost --clear-default-profile         # remove the default
+
+# 3. List what you have
+ghost --list-profiles
+```
+
+When a profile is active, the main-menu input options show a `[profile: <name> ●]` annotation so you always know which lens is loaded before you scan.
+
+### Editing a profile by hand
+
+Profiles are plain YAML files in `~/.ghost/profiles/`. You can edit them in any editor. Profiles can also be authored as `.yml`, `.md`, or `.txt` — Markdown and plain-text profiles are extracted via Claude into the canonical schema and cached locally.
+
+Example profile (what the wizard produces, with one human edit):
 
 ```yaml
 name: "Magento & Shopify Performance, Security & Server Cost Audit"
@@ -273,13 +310,12 @@ After setup, your config is saved locally and every future run goes straight to 
 
 ### Command-line flags
 
+For a complete, always-current flag reference, run `ghost --help` in your terminal — `--help` is the source of truth for every supported flag.
+
 ```bash
 ghost [options]
 
 Options:
-  --profile <path>           Load a Ghost Partner™ consultant profile
-                             (paid tiers only). Accepts .yaml/.yml/.md/.txt.
-
   --max-context <N>          Override the context cap in tokens.
                              Clamped to your tier limit.
 
@@ -289,6 +325,21 @@ Options:
   --exclude-presets a,b      Apply named exclusion preset(s).
                              Run `ghost --help` to see available presets.
 
+Ghost Partner™ — white-label consultant profiles:
+  --profile <path>           Load a profile from .yaml/.yml/.md/.txt and apply
+                             the consultant's lens + branding to all scans.
+  --no-profile               Run without any profile, even if a default is set.
+  --create-profile           Launch the interactive profile wizard, save the
+                             result to ~/.ghost/profiles/, then exit.
+  --list-profiles            List profiles in ~/.ghost/profiles/ and show which
+                             one is currently the default. Then exit.
+  --set-default-profile <slug>
+                             Set the default profile by slug (filename without
+                             .yaml). Auto-applied to every scan unless
+                             --profile or --no-profile overrides it.
+  --clear-default-profile    Remove the default profile setting.
+
+Misc:
   --version, -v              Print version.
   --help, -h                 Print help.
 ```
