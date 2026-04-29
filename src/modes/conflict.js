@@ -1,6 +1,4 @@
 /**
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
  * Ghost Architect — Conflict Detection Mode (CLI layer)
  * Thin wrapper: handles all prompts and display for core/conflict.js
  */
@@ -16,7 +14,16 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 
-export async function runConflictMode(codebaseContext) {
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+
+export async function runConflictMode(codebaseContext, options = {}) {
+  // Ghost Partner — consultant profile (null when --profile was not passed).
+  // Threaded through to runConflictScan (consultant lens in system prompt +
+  // narrator) and through saveReport meta (white-label cover + chrome in
+  // the PDF). Mirrors the runPOIMode and runBlastMode pattern.
+  const profile = options.profile || null;
+
   const fileMap    = codebaseContext.fileMap || {};
   const projectLabel = (codebaseContext.fileIndex?.[0] || 'project')
     .split('/').slice(0, 2).join('-')
@@ -33,8 +40,9 @@ export async function runConflictMode(codebaseContext) {
     ) +
     (multiPass
       ? '\n' + chalk.yellow(`⚡ Large codebase — ${info.passes.length} passes required`)
-      : '') + '\n' +
-    chalk.gray(`Est. cost: ~$${info.estCost}  ·  Est. time: ~${info.estMinutes} min`),
+      : '') +
+    (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : '') + '\n' +
+    chalk.gray('Est. cost: ~' + '\u0024' + info.estCost + '  ·  Est. time: ~' + info.estMinutes + ' min'),
     { padding: 1, borderColor: 'magenta', borderStyle: 'round' }
   ));
   console.log('');
@@ -84,19 +92,19 @@ export async function runConflictMode(codebaseContext) {
 
 
   let buffer  = '';
-  let started = false;
   let spinner = null;
 
   try {
     const callbacks = {
       onChunk(text) {
-        if (!started) {
-          if (spinner) spinner.stop();
-          started = true;
-          console.log('');
-        }
+        // Pure buffer-only — do NOT toggle spinner state on first chunk.
+        // Why: when the narrator's API stream starts emitting tokens, we
+        // want the "Ghost is writing the conflict report..." spinner to
+        // KEEP SPINNING for the entire 30-60 second narration. Stopping
+        // it on first chunk creates dead air for the rest of the stream
+        // because we don't write the chunks to stdout (white-label safety).
+        // Only the 'done' progress event stops the spinner.
         buffer += text;
-        process.stdout.write(colorizeOutput(text));
       },
 
       onProgress({ type, ...data }) {
@@ -107,14 +115,22 @@ export async function runConflictMode(codebaseContext) {
             }
             break;
 
-          case 'passStart':
-            console.log(chalk.gray(
-              `\n  Pass ${data.passNum} of ${data.totalPasses} — ` +
-              `${data.fileCount} files (~${data.tokens.toLocaleString()} tokens)...`
-            ));
+          case 'passStart': {
+            // Start a per-pass spinner so the user sees activity while the
+            // model is thinking. Without this, the terminal sits silent on
+            // a static "Pass N of M" line for ~30-60s and looks hung.
+            // Stop any prior spinner first (defensive — passComplete should
+            // already have stopped it).
+            if (spinner) { spinner.stop(); spinner = null; }
+            const passLabel = `  Pass ${data.passNum} of ${data.totalPasses} — ` +
+              `${data.fileCount} files (~${data.tokens.toLocaleString()} tokens)...`;
+            spinner = ora({ text: chalk.gray(passLabel), color: 'magenta' }).start();
             break;
+          }
 
           case 'passComplete':
+            // Stop the per-pass spinner before printing the green checkmark.
+            if (spinner) { spinner.stop(); spinner = null; }
             console.log(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`));
             break;
 
@@ -156,10 +172,21 @@ export async function runConflictMode(codebaseContext) {
               chalk.green(`${data.stats.falsePositives} eliminated`)
             );
             console.log('');
+            // Start the narrator-anticipation spinner IMMEDIATELY after
+            // printing verification stats. Without this, the gap between
+            // "Verification complete" and the 'narrating' event firing
+            // (~1-3 seconds of prompt assembly + first-token latency)
+            // looks like dead air. The spinner is updated (or replaced)
+            // when 'narrating' fires.
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.gray('  Preparing conflict report...'), color: 'magenta' }).start();
             break;
 
           case 'narrating':
-            console.log(chalk.gray('  Ghost is writing the conflict report...\n'));
+            // Update the spinner text now that the narrator is actually
+            // streaming. Replace cleanly to avoid spinner-frame artifacts.
+            if (spinner) { spinner.stop(); spinner = null; }
+            spinner = ora({ text: chalk.gray('  Ghost is writing the conflict report...'), color: 'magenta' }).start();
             break;
 
           case 'merging':
@@ -167,8 +194,8 @@ export async function runConflictMode(codebaseContext) {
             break;
 
           case 'done':
-            if (spinner) spinner.stop();
-            console.log('\n');
+            if (spinner) { spinner.stop(); spinner = null; }
+            console.log('');
             break;
         }
       },
@@ -210,7 +237,7 @@ export async function runConflictMode(codebaseContext) {
       },
     };
 
-    const result = await runConflictScan(fileMap, callbacks, { projectLabel });
+    const result = await runConflictScan(fileMap, callbacks, { projectLabel, profile });
 
     if (!result?.finalReport) return;
     buffer = result.finalReport;
@@ -236,14 +263,19 @@ export async function runConflictMode(codebaseContext) {
     }]);
 
     if (doSave) {
+      // Meta drives PDF chrome and markdown branding. The `profile` field
+      // is what flips PDF rendering into white-label mode — saveReport
+      // calls getBranding(meta.profile) and threads the result into the
+      // PDF generator. When profile is null, default Ghost branding renders.
       const meta = {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
-        cost: `$${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
+        cost: '\u0024' + (inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4),
         version: '4.1.1',
         mode: 'conflict-detection',
         verified: result.verified || false,
         verificationStats: result.stats || null,
+        profile,
       };
       const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
       console.log(chalk.green(`\n${SYM.check} Conflict report saved to ~/Ghost Architect Reports/`));

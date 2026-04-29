@@ -14,10 +14,11 @@ import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
-import { narrateReport } from './agent/narrator.js';
+import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
+import { mergeRates } from '../profile/index.js';
 
 const PASS_TOKEN_LIMIT = 45000;
 const MERGE_BATCH_SIZE = 6;
@@ -187,7 +188,7 @@ async function callClaudeRaw(prompt, system, maxTokens = 8096) {
 
   try {
     activeStream = anthropic.messages.stream({
-      model: getModel(), max_tokens: maxTokens, system,
+      model: getModel(), max_tokens: maxTokens, temperature: 0.3, system,
       messages: [{ role: 'user', content: prompt }]
     });
     for await (const chunk of activeStream) {
@@ -299,7 +300,7 @@ export function clearCheckpoint(projectLabel) {
 
 // ── Single pass ───────────────────────────────────────────────────────────────
 
-async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons) {
+async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons, profile = null) {
   let context = '';
   for (const [fp, content] of Object.entries(pass.files)) {
     context += `\n\n=== FILE: ${fp} ===\n${content}`;
@@ -308,18 +309,26 @@ async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons) {
     ? `\n\nCROSS-PASS CONTEXT (findings from prior passes — use to identify relationships):\n${priorSkeletons.join('\n---\n')}\n\n`
     : '';
 
+  // Ghost Partner — reinforce the consultant lens in the user message too.
+  // System prompt has the CONSULTANT CONTEXT block; this user-turn reminder
+  // gives the model a second, shorter nudge right next to the code, which
+  // empirically pulls stronger adherence to the profile's vocabulary.
+  const profileReminder = profile
+    ? `You are scanning on behalf of ${profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize findings around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
+    : '';
+
   return callClaude(
-    `This is pass ${passNum} of ${totalPasses} in a multi-pass analysis of a ${totalFiles}-file codebase.` +
+    `${profileReminder}This is pass ${passNum} of ${totalPasses} in a multi-pass analysis of a ${totalFiles}-file codebase.` +
     `${skeletonContext}` +
     `Analyze ONLY the files in this pass. Reference prior pass findings if you see related issues.\n\n` +
     `Files for this pass:\n${context}`,
-    buildSystemPOI(getRates())
+    buildSystemPOI(mergeRates(getRates(), profile), profile)
   );
 }
 
 // ── Intermediate merge ────────────────────────────────────────────────────────
 
-async function mergePassResults(results, label) {
+async function mergePassResults(results, label, profile = null) {
   const combined = results.map((r, i) =>
     `=== FINDINGS BATCH ${i + 1} (${r.fileCount} files) ===\n${r.findings}`
   ).join('\n\n');
@@ -333,57 +342,88 @@ async function mergePassResults(results, label) {
     `- Output must stay under 4,000 words\n` +
     `- Use Ghost Architect section format\n\n` +
     `BATCHES:\n${combined}\n\nMerged findings:`,
-    buildSystemPOI(getRates()), 6000
+    buildSystemPOI(mergeRates(getRates(), profile), profile), 6000
   );
 }
 
 // ── Extract findings from merged text for narrator ────────────────────────────
-
-function extractFindingsForNarrator(mergedText) {
-  const findings = [];
-  const lines    = mergedText.split('\n');
-  const findingRe  = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const severityRe = /severity[:\s]+?(CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
-  const filesRe    = /files?[:\s]+(.+)/i;
-  const effortRe   = /effort[:\s]+(\d[\d–\-]*)\s*hours?/i;
-
-  let current = null;
-  for (const line of lines) {
-    const t  = line.trim();
-    const fm = t.match(findingRe);
-    if (fm) {
-      if (current) findings.push(current);
-      current = { title: fm[1].replace(/\*\*/g, '').trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
-      continue;
-    }
-    if (current) {
-      const sm = t.match(severityRe);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
-      const fm2 = t.match(filesRe);
-      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim()).filter(Boolean); continue; }
-      if (t && t.length > 10 && !t.startsWith('---')) {
-        current.detail += (current.detail ? ' ' : '') + t;
-      }
-    }
-  }
-  if (current) findings.push(current);
-  return findings;
-}
+//
+// REMOVED April 24 2026: local extractFindingsForNarrator with regex
+//   /^\d+\.\s+\*?\*?(.+?)\*?\*?$/
+// matched both real findings ('1. **Title**') AND every fix-step bullet
+// inside a finding ('1. Wrap atob in try/catch'). On the Ghost Mobile scan
+// this turned ~10 real findings into 51-70 phantom 'findings' that flowed
+// into the narrator, broke Pass 2's token budget, and forced the
+// MAX_FINDINGS_FOR_PASS_2 cap to fire as a workaround. Now we use the
+// shared parser in src/utils/finding-parser.js which splits on '### '
+// headers (the actual finding marker) and ignores numbered fix steps.
+//
+// extractFindingsFromReport from finding-parser.js is the single source of
+// truth for finding extraction. Imported at the top of this file.
 
 // ── Final synthesis — with narrator ──────────────────────────────────────────
 
+/**
+ * Diagnostic dumper. Writes the report at a named pipeline stage to
+ * ~/Ghost Architect Reports/.debug/ so we can diff stages and find where
+ * content is being lost. Best-effort — never throws, never blocks the scan.
+ *
+ * Filename pattern: synthesis-<timestamp>-<stage>.md
+ * The same `runId` is shared across all four stages of one scan so the
+ * files cluster together in directory listings.
+ *
+ * Stages we write:
+ *   1-after-narrator        — what narrateReport returned
+ *   2-after-verifier        — after verifyReport's annotations
+ *   3-after-scrub           — after scrubEmptyHeaders
+ *   4-after-regen           — after exec-summary + risk-paragraph regeneration
+ *
+ * If a stage produces a report dramatically smaller than the previous
+ * stage, we have the smoking gun for the truncation bug.
+ */
+function writeSynthesisStageDump(runId, stage, report, projectLabel) {
+  try {
+    const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+    if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+    const safeLabel = (projectLabel || 'project').replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+    const filename = `synthesis-${runId}-${stage}-${safeLabel}.md`;
+    const filepath = path.join(debugDir, filename);
+    const header = `<!-- Synthesis stage dump
+  Stage:     ${stage}
+  Project:   ${projectLabel || '(none)'}
+  Run ID:    ${runId}
+  Length:    ${(report || '').length} chars
+  Timestamp: ${new Date().toISOString()}
+-->
+
+`;
+    fs.writeFileSync(filepath, header + (report || ''), 'utf8');
+  } catch { /* never let logging break the scan */ }
+}
+
 async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalPasses, coverage, onChunk, options = {}) {
+  // Diagnostic run id — timestamps all four stage dumps in this scan so they
+  // cluster together in directory listings. Filename-safe (no colons/dots).
+  const runId = new Date().toISOString().replace(/[:.]/g, '-');
+
   const combined  = mergedGroups.map((r, i) => `=== MERGED GROUP ${i + 1} ===\n${r}`).join('\n\n');
-  const rates     = getRates();
+  const rates     = mergeRates(getRates(), options.profile);
   const anthropic = getClient();
 
+  // Ghost Partner — reinforce consultant lens in synthesis user message too.
+  const profileReminder = options.profile
+    ? `You are synthesizing on behalf of ${options.profile.author || 'the consultant'}. The final report must reflect their methodology as described in the CONSULTANT CONTEXT block of your system prompt — name findings in their vocabulary and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the findings below actually exhibit the pattern.\n\n`
+    : '';
+
   // Step 1: Raw synthesis (same as before — produces structured findings)
+  // Temperature 0.3: variance control — matches pass/merge calls for consistency.
   let rawSynthesis = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, system: buildSystemPOI(rates),
+    model: getModel(), max_tokens: 8096, temperature: 0.3, system: buildSystemPOI(rates, options.profile),
     messages: [{
       role: 'user',
       content:
+        profileReminder +
         `Final synthesis: ${completedPasses} of ${totalPasses} passes complete.\n\n` +
         `Produce the final unified Points of Interest Report:\n` +
         `1. Merge remaining duplicates, rank by severity and business impact\n` +
@@ -405,17 +445,16 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // Step 2: Narrator rewrites as senior architect (streaming to user)
   if (options.onNarratorStart) options.onNarratorStart();
 
-  const findings = extractFindingsForNarrator(rawSynthesis);
-
-  // Real finding count — use the shared report parser, not a raw digit-line regex.
-  // The old approach (rawSynthesis.match(/^\d+\./gm)) counted numbered recommendation
-  // steps and fix-priority items as findings, inflating the count dramatically
-  // (e.g. reporting "65 findings" when only 17 real findings existed).
-  let actualFindingCount = findings.length;
+  // Use the shared finding parser — splits on '### ' headers, ignores
+  // numbered fix-step bullets that the previous local parser was matching
+  // as if they were findings. This is what unblocks the upstream noise
+  // that was forcing the narrator's MAX_FINDINGS_FOR_PASS_2 cap to fire.
+  let findings = [];
   try {
-    const parsed = extractFindingsFromReport(rawSynthesis);
-    if (parsed.length > 0) actualFindingCount = parsed.length;
-  } catch { /* fall back to narrator findings count */ }
+    findings = extractFindingsFromReport(rawSynthesis);
+  } catch { /* fall through to placeholder below */ }
+
+  const actualFindingCount = findings.length;
 
   // Build memory result — use raw synthesis as detail if extraction yields few findings
   const memoryResult = {
@@ -441,6 +480,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     requireRemediationTable: true,
     rawSynthesis: rawSynthesis.slice(0, 8000), // give narrator the raw text directly
     fileMap: options.fileMap,                  // source-ground the narrator against real code
+    profile: options.profile,                  // Ghost Partner — consultant lens for narrator voice
   };
 
   const narratedReport = await narrateReport(
@@ -467,19 +507,24 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     finalOutput = narratedReport || rawSynthesis;
   }
 
+  // Stage 1 dump — what the narrator returned (before any verifier work).
+  writeSynthesisStageDump(runId, '1-after-narrator', finalOutput, options.projectLabel);
+
   // Verifier — two-pass grounding check against actual source code.
   //   Pass 1: cheap regex check (method existence, line bounds, safe-pattern detection)
   //   Pass 2: LLM check (semantic correctness against the actual source)
   // Both drop false positives entirely; single-flaw findings are annotated UNVERIFIED.
+  let verifierCard = null;
   if (options.fileMap) {
     try {
       if (options.onVerifierStart) options.onVerifierStart();
-      const { annotatedReport, report: verifierCard } = await verifyReport(
+      const verifyResult = await verifyReport(
         finalOutput,
         options.fileMap,
         { llmVerifier: createLLMVerifier() }
       );
-      finalOutput = annotatedReport;
+      finalOutput  = verifyResult.annotatedReport;
+      verifierCard = verifyResult.report;
       if (options.onVerifierReport) options.onVerifierReport(verifierCard);
     } catch (err) {
       // Verifier failure must never block the report — surface a note and continue.
@@ -489,15 +534,331 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     }
   }
 
+  // Stage 2 dump — after verifier annotations and false-positive drops.
+  writeSynthesisStageDump(runId, '2-after-verifier', finalOutput, options.projectLabel);
+
+  // Final scrub — the verifier removes false-positive findings but does not
+  // touch their parent ## category headers, so a category whose findings all
+  // got dropped will be left as a dangling empty header. Run the scrubber
+  // here, AFTER verification, to clean those up. Defense in depth: this is
+  // the same scrubber that runs inside the narrator's patcher path; we run
+  // it again here because content can disappear between narrator and now.
+  finalOutput = scrubEmptyHeaders(finalOutput);
+
+  // Stage 3 dump — after scrubEmptyHeaders.
+  writeSynthesisStageDump(runId, '3-after-scrub', finalOutput, options.projectLabel);
+
+  // Post-verifier exec summary regeneration. The original exec summary was
+  // written by the planner against the pre-drop finding set, so when the
+  // verifier drops findings, the summary can reference findings that no
+  // longer appear in the body — it lies. Detect drops and regenerate the
+  // summary against the surviving findings only.
+  //
+  // Cost: ~$0.02 per scan (small prompt, ~300 token output). Skipped
+  // entirely when nothing was dropped, so default-mode scans pay nothing.
+  if (verifierCard && verifierCard.falsePositives > 0) {
+    try {
+      finalOutput = await regenerateExecutiveSummary(
+        finalOutput,
+        verifierCard,
+        options.profile,
+        options.projectLabel
+      );
+    } catch (err) {
+      // Regen failure is non-fatal — the original summary still describes
+      // the report's general shape, just imperfectly. Surface a debug note
+      // so we can diagnose if it starts failing in production.
+      try {
+        const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+        fs.mkdirSync(debugDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(
+          path.join(debugDir, `exec-summary-regen-error-${ts}.txt`),
+          `Exec summary regeneration failed: ${err.message}\n\nStack:\n${err.stack || '(no stack)'}\n`
+        );
+      } catch { /* never let debug logging break the scan */ }
+    }
+
+    // Same problem, different section: the Risk if Left Unaddressed
+    // paragraph was also drafted against the pre-verification finding
+    // set, so it commonly references findings the verifier dropped
+    // (e.g. "the migration path that deletes plaintext tokens" when no
+    // such finding survived). Regenerate it against the surviving set
+    // so the closing paragraph stays consistent with the body.
+    try {
+      finalOutput = await regenerateRiskParagraph(
+        finalOutput,
+        options.profile,
+        options.projectLabel
+      );
+    } catch (err) {
+      try {
+        const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+        fs.mkdirSync(debugDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(
+          path.join(debugDir, `risk-paragraph-regen-error-${ts}.txt`),
+          `Risk paragraph regeneration failed: ${err.message}\n\nStack:\n${err.stack || '(no stack)'}\n`
+        );
+      } catch { /* never let debug logging break the scan */ }
+    }
+  }
+
+  // Stage 4 dump — after exec-summary + risk-paragraph regeneration. This
+  // is what gets returned to the caller and ultimately written to disk by
+  // saveReport. If this dump matches the saved markdown, the truncation is
+  // upstream of saveReport; if it doesn't, saveReport is the culprit.
+  writeSynthesisStageDump(runId, '4-after-regen', finalOutput, options.projectLabel);
+
   return finalOutput;
+}
+
+/**
+ * Regenerate the executive summary section of a verified report so it
+ * references only findings that survived verification.
+ *
+ * Why this exists: the original exec summary was drafted by the narrator's
+ * planning pass against the pre-verification finding set. When the verifier
+ * drops findings as not-supported-by-source, the summary can name findings
+ * that no longer exist in the body — exactly the kind of internal
+ * inconsistency a sharp consultant catches on first read.
+ *
+ * Approach: extract surviving findings from the (already-verified, already-
+ * scrubbed) report, ask the LLM to rewrite just the exec summary against
+ * that set, and splice the new summary in place of the old one. Everything
+ * else in the report — categories, prose entries, remediation table, risk
+ * paragraph — stays exactly as the verifier left it.
+ *
+ * If the report doesn't have an `## Executive Summary` section, we return
+ * it untouched. If the LLM call fails, we return the original report
+ * untouched. Both cases are non-fatal.
+ */
+async function regenerateExecutiveSummary(report, verifierCard, profile, projectLabel) {
+  // Locate the existing exec summary section. Pattern: `## Executive Summary`
+  // (optionally with emoji prefix), followed by content, ending at the next
+  // `## ` header.
+  const summaryHeaderRe = /^##\s+(?:[\u{1F300}-\u{1FAFF}]\s*)?Executive\s+Summary\s*$/imu;
+  const headerMatch = summaryHeaderRe.exec(report);
+  if (!headerMatch) return report; // No summary section — nothing to regenerate.
+
+  const headerStart = headerMatch.index;
+  const headerEnd   = headerStart + headerMatch[0].length;
+
+  // Find the next ## header to bound the summary section.
+  const afterHeader = report.slice(headerEnd);
+  const nextHeaderRe = /\n##\s+/;
+  const nextMatch = nextHeaderRe.exec(afterHeader);
+  const summaryEndIdx = nextMatch ? headerEnd + nextMatch.index : report.length;
+
+  // Extract surviving findings from the post-verifier body. We use the
+  // shared parser so we get the same severity inference as everywhere else.
+  const surviving = extractFindingsFromReport(report);
+  if (!surviving || surviving.length === 0) return report;
+
+  // Build a compact, severity-ordered finding list for the prompt.
+  const SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4, BLOCKING: 0 };
+  const ranked = [...surviving].sort((a, b) => {
+    const rA = SEVERITY_RANK[(a.severity || '').toUpperCase()] ?? 99;
+    const rB = SEVERITY_RANK[(b.severity || '').toUpperCase()] ?? 99;
+    return rA - rB;
+  });
+  const findingLines = ranked.map((f, i) =>
+    `${i + 1}. [${f.severity || 'MEDIUM'}] ${f.title}` +
+    (f.files && f.files.length ? ` (files: ${f.files.slice(0, 3).join(', ')})` : '')
+  ).join('\n');
+
+  // Count by severity. We construct the breakdown sentence ourselves in code
+  // rather than trusting the LLM to count and report accurately — multiple
+  // attempts to prompt the model into emitting an accurate breakdown phrase
+  // ("1 critical, 2 high, 4 medium, 1 low") consistently failed because the
+  // model has a strong narrative prior to collapse adjacent severity bands.
+  const sevCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0, BLOCKING: 0 };
+  for (const f of surviving) {
+    const s = (f.severity || 'MEDIUM').toUpperCase();
+    if (sevCounts[s] !== undefined) sevCounts[s]++;
+  }
+  const presentBands = Object.entries(sevCounts).filter(([_, n]) => n > 0);
+
+  // Build the count + breakdown sentence in code. Format:
+  //   "My pre-engagement analysis of the <project> codebase identified <N>
+  //    findings: <X critical-severity, Y high-severity, Z medium-severity>."
+  // The breakdown is comma-separated with an Oxford-and joining the last two
+  // items when there are 3+ bands. With 2 bands we use "and". With 1 band
+  // we just say "all <N> are <band>-severity".
+  const projectClause = projectLabel ? ` of the ${projectLabel} codebase` : '';
+  const subjectClause = profile
+    ? `My pre-engagement analysis${projectClause}`
+    : `This pre-engagement analysis${projectClause}`;
+
+  let breakdownClause;
+  if (presentBands.length === 1) {
+    const [band, n] = presentBands[0];
+    const bandWord = band.toLowerCase();
+    breakdownClause = n === 1
+      ? `: 1 ${bandWord}-severity issue`
+      : `: ${n} ${bandWord}-severity issues`;
+  } else if (presentBands.length === 2) {
+    const parts = presentBands.map(([band, n]) => `${n} ${band.toLowerCase()}-severity`);
+    breakdownClause = `: ${parts[0]} and ${parts[1]}`;
+  } else {
+    const parts = presentBands.map(([band, n]) => `${n} ${band.toLowerCase()}-severity`);
+    const allButLast = parts.slice(0, -1).join(', ');
+    const last = parts[parts.length - 1];
+    breakdownClause = `: ${allButLast}, and ${last}`;
+  }
+
+  const totalNoun = surviving.length === 1 ? 'finding' : 'findings';
+  const openerSentence = `${subjectClause} identified ${surviving.length} ${totalNoun}${breakdownClause}.`;
+
+  // Profile-aware persona — match the narrator's white-label conventions.
+  // When a profile is loaded, we do NOT identify as Ghost Architect.
+  const persona = profile
+    ? `You are writing the body of an executive summary for a pre-engagement codebase analysis report on behalf of ${profile.author || 'the consultant'}${profile.organization ? ` (${profile.organization})` : ''}. Write in the consultant's voice. Do NOT mention "Ghost Architect" or "Ghost" in the output.`
+    : 'You are Ghost Architect, writing the body of an executive summary for a codebase analysis report.';
+
+  // The LLM only writes the prose AFTER the opener. The opener + breakdown
+  // sentence is constructed deterministically in code above. We give the LLM
+  // the opener for context so its prose connects to it grammatically, but
+  // the LLM's output is appended AFTER the opener.
+  const prompt =
+    `${persona}\n\n` +
+    `The first sentence of the executive summary has already been written:\n` +
+    `\n  "${openerSentence}"\n\n` +
+    `Your job is to write 2 to 4 additional sentences that follow this opener, naming the top finding(s) by name and impact. Do NOT rewrite the opener. Do NOT mention severity counts (the opener already covered them). Do NOT mention dropped findings or the verifier.\n\n` +
+    `SURVIVING FINDINGS (ordered by severity, item 1 is the most severe):\n${findingLines}\n\n` +
+    `WHAT TO WRITE:\n` +
+    `- 2 to 4 sentences of plain prose, no markdown, no bullet lists.\n` +
+    `- Name the most severe finding (item 1 above) by name and impact in plain language.\n` +
+    `- If there is more than one CRITICAL or HIGH finding, name the second one too.\n` +
+    `- Use one sentence to gesture at the remaining findings as a group (e.g., "the remaining issues span dependency hygiene and configuration debt") rather than listing them all.\n` +
+    `- Do NOT cite line numbers or method names.\n` +
+    `- Do NOT invent dollar totals; the remediation table elsewhere has those numbers.\n` +
+    `- Do NOT repeat the count or severity breakdown from the opener.\n` +
+    `- Output ONLY the additional sentences. No preamble, no "Here is...". Start your output with the first new sentence.\n\n` +
+    `Additional sentences:`;
+
+  const additional = await callClaude(prompt, '', 500);
+  const cleanedAdditional = (additional || '').trim();
+
+  // Compose the final summary: code-built opener + LLM-built body. If the
+  // LLM call failed or returned empty, fall back to opener alone — better
+  // than a stale or absent summary.
+  const composedSummary = cleanedAdditional
+    ? `${openerSentence} ${cleanedAdditional}`
+    : openerSentence;
+
+  // Splice: keep everything up to and including the `## Executive Summary`
+  // line, then the new body, then everything from the next ## header onward.
+  const before     = report.slice(0, headerEnd);
+  const after      = report.slice(summaryEndIdx);
+  const reassembled = before + '\n\n' + composedSummary + '\n' + after;
+
+  return reassembled;
 }
 
 // ── Session-based synthesis ───────────────────────────────────────────────────
 
+/**
+ * Regenerate the Risk if Left Unaddressed paragraph so it references only
+ * findings that survived verification.
+ *
+ * Why this exists: same root cause as regenerateExecutiveSummary — the
+ * narrator drafted the closing paragraph during initial rendering, before
+ * the verifier dropped any findings. When verification removes findings,
+ * the closing paragraph commonly references issues by name that no longer
+ * appear elsewhere in the report ("the migration path that deletes
+ * plaintext tokens", "the new architecture flag without compatibility
+ * verification", etc.). A sharp consultant reader will notice immediately.
+ *
+ * Approach: locate the `## Risk if Left Unaddressed` section, extract the
+ * surviving findings from the verified report body, and ask the LLM for a
+ * single closing paragraph constrained to that set. Splice the new
+ * paragraph in place of the old one. Everything before the Risk header
+ * stays exactly as the verifier left it.
+ *
+ * Non-fatal failures: missing section header → return original. Empty LLM
+ * response → return original. The exec summary regen sets the precedent.
+ */
+async function regenerateRiskParagraph(report, profile, projectLabel) {
+  // Locate the existing Risk section. Pattern: `## Risk if Left Unaddressed`
+  // (optionally with emoji prefix). Tolerate a few legacy header variants
+  // that older Ghost reports used: "Risk Assessment", "Risks".
+  const riskHeaderRe = /^##\s+(?:[\u{1F300}-\u{1FAFF}]\s*)?Risk(?:\s+if\s+Left\s+Unaddressed|\s+Assessment|s)?\s*$/imu;
+  const headerMatch = riskHeaderRe.exec(report);
+  if (!headerMatch) return report; // No risk section — nothing to regenerate.
+
+  const headerStart = headerMatch.index;
+  const headerEnd   = headerStart + headerMatch[0].length;
+
+  // Find the next ## header to bound the section. The Risk paragraph is
+  // typically the last ## section in the report, so we may hit EOF first.
+  const afterHeader = report.slice(headerEnd);
+  const nextHeaderRe = /\n##\s+/;
+  const nextMatch = nextHeaderRe.exec(afterHeader);
+  const sectionEndIdx = nextMatch ? headerEnd + nextMatch.index : report.length;
+
+  // Extract surviving findings from the post-verifier body. Same parser
+  // the exec summary regen uses, so severity inference is consistent.
+  const surviving = extractFindingsFromReport(report);
+  if (!surviving || surviving.length === 0) return report;
+
+  // Severity-rank the findings so the most important ones lead in the
+  // prompt. The LLM tends to weight earlier list items more heavily, and
+  // the closing paragraph should be anchored on what's most consequential.
+  const SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4, BLOCKING: 0 };
+  const ranked = [...surviving].sort((a, b) => {
+    const rA = SEVERITY_RANK[(a.severity || '').toUpperCase()] ?? 99;
+    const rB = SEVERITY_RANK[(b.severity || '').toUpperCase()] ?? 99;
+    return rA - rB;
+  });
+  const findingLines = ranked.map((f, i) =>
+    `${i + 1}. [${f.severity || 'MEDIUM'}] ${f.title}` +
+    (f.files && f.files.length ? ` (files: ${f.files.slice(0, 3).join(', ')})` : '')
+  ).join('\n');
+
+  // Profile-aware persona — mirror the exec summary regen's white-label
+  // conventions. When a profile is loaded, do NOT identify as Ghost.
+  const persona = profile
+    ? `You are writing the closing paragraph of a pre-engagement codebase analysis report on behalf of ${profile.author || 'the consultant'}${profile.organization ? ` (${profile.organization})` : ''}. Write in the consultant's voice. Do NOT mention "Ghost Architect" or "Ghost" in the output.`
+    : 'You are Ghost Architect, writing the closing paragraph of a codebase analysis report.';
+
+  const projectLine = projectLabel ? `Project: ${projectLabel}\n` : '';
+
+  const prompt =
+    `${persona}\n\n` +
+    `${projectLine}` +
+    `Write a single "Risk if Left Unaddressed" paragraph for this report. The findings below are the COMPLETE set that survived source-code verification. The paragraph must reference ONLY these findings — do not invent or imply additional issues.\n\n` +
+    `SURVIVING FINDINGS (${surviving.length} total — ordered by severity, item 1 is the most severe):\n${findingLines}\n\n` +
+    `WHAT TO WRITE:\n` +
+    `- A single paragraph of 3 to 6 sentences. Plain prose. No markdown headers. No bullet lists.\n` +
+    `- Focus on consequences if the listed findings remain unaddressed: production failure modes, user impact, support burden, security exposure where applicable.\n` +
+    `- Anchor the paragraph on the highest-severity findings (items at the top of the list above).\n` +
+    `- You may reference findings by descriptive paraphrase ("the credential migration issue", "the silent storage failures") rather than verbatim title.\n` +
+    `- Do NOT mention any issue not in the list above. If you are tempted to write "the X path" and X is not in the list, do not write that sentence.\n` +
+    `- Do NOT mention dropped findings, source verification, or the verifier itself.\n` +
+    `- Do NOT cite line numbers, method names, or specific dollar amounts.\n` +
+    `- Do NOT write a section header like "## Risk if Left Unaddressed" — output ONLY the paragraph body.\n` +
+    `- Do NOT write any preamble like "Here is the rewritten paragraph:". Output ONLY the paragraph itself.\n\n` +
+    `Risk paragraph:`;
+
+  const newParagraph = await callClaude(prompt, '', 600);
+  const cleaned = (newParagraph || '').trim();
+  if (!cleaned) return report; // Empty response — leave original alone.
+
+  // Splice: keep everything up to and including the `## Risk if Left
+  // Unaddressed` line, then the new paragraph, then everything from the
+  // next ## header onward (or EOF). Preserves trailing footer content.
+  const before     = report.slice(0, headerEnd);
+  const after      = report.slice(sectionEndIdx);
+  const reassembled = before + '\n\n' + cleaned + '\n' + after;
+
+  return reassembled;
+}
+
 export async function synthesizeFromSession(session, totalFiles, totalPasses, onChunk, options = {}) {
   const groups = [...session.mergedGroups];
   if (session.pendingPassResults.length > 0) {
-    const merged = await mergePassResults(session.pendingPassResults, session.projectLabel);
+    const merged = await mergePassResults(session.pendingPassResults, session.projectLabel, options.profile);
     groups.push(merged);
   }
   const coverage = Math.round((session.completedPassCount / totalPasses) * 100);
@@ -517,8 +878,13 @@ export async function synthesizeFromSession(session, totalFiles, totalPasses, on
  *   onPassCapPrompt({ remaining, defaultCap }) → Promise<number>
  *   onSessionPrompt({ session, allPassCount }) → Promise<'continue'|'report'|'restart'>
  *   onCompletePrompt({ coverage, remaining }) → Promise<'report'|'save'>
+ *
+ * options:
+ *   profile — Ghost Partner consultant profile object (or null). Injected into
+ *             the system prompt at every API call — pass, merge, and final
+ *             synthesis — so the consultant's lens is applied consistently.
  */
-export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
+export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, options = {}) {
   const {
     onProgress       = () => {},
     onChunk          = () => {},
@@ -526,6 +892,8 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     onSessionPrompt  = async () => 'continue',
     onCompletePrompt = async () => 'report',
   } = callbacks;
+
+  const profile = options.profile || null;
 
   const allPasses  = buildPasses(fileMap);
   const totalFiles = Object.keys(fileMap).length;
@@ -552,6 +920,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
       const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, {
         projectLabel,
         fileMap,
+        profile,
         onVerifierStart:  () => onProgress({ type: 'verifying' }),
         onVerifierReport: (card) => onProgress({ type: 'verifierReport', card }),
       });
@@ -594,10 +963,10 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     const passNum   = p + 1;
     const fileCount = Object.keys(pass.files).length;
 
-    onProgress({ type: 'passStart', passNum, totalPasses: allPasses.length, fileCount, tokens: pass.tokens });
+    onProgress({ type: 'passStart', passNum, totalPasses: startFromPass + cap, fileCount, tokens: pass.tokens });
 
     const priorSkeletons = session.passSkeletons || [];
-    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons);
+    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons, profile);
 
     const skeleton = extractSkeleton(result);
     session.passSkeletons = [...priorSkeletons, skeleton].slice(-3);
@@ -611,7 +980,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
     if (session.pendingPassResults.length >= MERGE_BATCH_SIZE) {
       onProgress({ type: 'merging', count: session.pendingPassResults.length });
-      const merged = await mergePassResults(session.pendingPassResults, projectLabel);
+      const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
       session.mergedGroups.push(merged);
       session.pendingPassResults = [];
       onProgress({ type: 'mergeDone' });
@@ -623,7 +992,15 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
   const allDone  = session.completedPassCount >= allPasses.length;
   const coverage = Math.round((session.completedPassCount / allPasses.length) * 100);
 
-  if (!allDone) {
+  // The user picked `cap` passes for this session. If they asked for less than
+  // the full remaining count, completing the cap is a complete job — they got
+  // exactly what they asked for. Synthesize and ship without re-asking.
+  // Only prompt when the user asked for everything available AND the run
+  // didn't finish (retries, partial failures), which is the legitimate
+  // 'do you want to keep going or save and resume' case.
+  const userGotWhatTheyAskedFor = cap < remaining;
+
+  if (!allDone && !userGotWhatTheyAskedFor) {
     const next = await onCompletePrompt({
       coverage,
       remaining: allPasses.length - session.completedPassCount,
@@ -636,7 +1013,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
 
   if (session.pendingPassResults.length > 0) {
     onProgress({ type: 'mergingFinal' });
-    const merged = await mergePassResults(session.pendingPassResults, projectLabel);
+    const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
     session.mergedGroups.push(merged);
     session.pendingPassResults = [];
     saveSession(projectLabel, session);
@@ -650,6 +1027,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}) {
     {
       projectLabel,
       fileMap,  // pass source map to verifier for grounding checks
+      profile,  // Ghost Partner — consultant lens applied at synthesis too
       onNarratorStart:    () => onProgress({ type: 'narrating' }),
       onVerifierStart:    () => onProgress({ type: 'verifying' }),
       onVerifierReport:   (card) => onProgress({ type: 'verifierReport', card }),

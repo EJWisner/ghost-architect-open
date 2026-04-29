@@ -417,15 +417,35 @@ export async function verifyReport(reportText, fileMap, options = {}) {
             sourceChars:   source.length,
           };
           if (!verdict) return r;
-          if (verdict.verdict === 'contradicts' || verdict.verdict === 'not_supported') {
+          if (verdict.verdict === 'contradicts') {
+            // LLM read the source and saw it contradict the finding.
+            // High-confidence drop — the finding is wrong.
             return {
               ...r,
               status: 'false_positive',
               reasons: [
-                `LLM verifier: finding is ${verdict.verdict === 'contradicts' ? 'contradicted by' : 'not supported by'} the source code. ${verdict.reason || ''}`.trim(),
+                'LLM verifier: finding is contradicted by the source code. ' + (verdict.reason || ''),
                 ...r.reasons,
               ],
               warnings: [],
+            };
+          }
+          if (verdict.verdict === 'not_supported') {
+            // LLM couldn't find evidence FOR the finding in the source, but
+            // absence of evidence is not evidence of absence — the finding
+            // might be about a pattern the LLM missed in the truncated context.
+            // Annotate, don't drop. Lets a thoughtful reviewer judge.
+            return {
+              ...r,
+              status: 'unverified',
+              warnings: [
+                ...(r.warnings || []),
+                '⚠ LLM verifier could not confirm this finding from the source code provided. ' + (verdict.reason || 'Treat as a starting point for investigation rather than a confirmed issue.'),
+              ],
+              reasons: [
+                ...(r.reasons || []),
+                'LLM verifier marked as not_supported: ' + (verdict.reason || ''),
+              ],
             };
           }
           if (verdict.verdict === 'partial') {
@@ -496,18 +516,32 @@ export async function verifyReport(reportText, fileMap, options = {}) {
 
 /**
  * Rewrite the report to:
- *   - Drop false-positive findings entirely
+ *   - Drop false-positive findings entirely (prose AND remediation table row)
  *   - Prefix unverified findings with a [⚠ UNVERIFIED] marker and inline warning
  *   - Leave verified findings untouched
+ *   - Renumber the table's Priority column after drops
  * Also strips invented line numbers (narrator sometimes smuggles them through).
  */
 function applyAnnotations(reportText, results) {
   let out = reportText;
 
+  // Collect dropped titles up front so we can also strip table rows
+  const droppedTitles = results
+    .filter(r => r.status === 'false_positive')
+    .map(r => r.finding.title);
+
   // Drop false positives: replace the whole ### section with nothing
   for (const r of results) {
     if (r.status !== 'false_positive') continue;
     out = removeFindingSection(out, r.finding.title);
+  }
+
+  // Strip remediation table rows for any dropped finding, then renumber
+  // the Priority column so it remains 1..N. This keeps the table and the
+  // prose in sync — a row in the table without a finding above it is the
+  // most embarrassing kind of consultant-deliverable defect.
+  if (droppedTitles.length > 0) {
+    out = stripDroppedRowsFromTable(out, droppedTitles, droppedTitles.length);
   }
 
   // Annotate unverified findings
@@ -524,6 +558,237 @@ function applyAnnotations(reportText, results) {
   out = out.replace(/\.ts:\d+(?:[\u2013\-]\d+)?/g, '.ts');
 
   return out;
+}
+
+/**
+ * Find the remediation table in the report and remove rows whose Finding
+ * column matches any of the dropped titles. After removal, re-sort the
+ * surviving rows by severity (CRITICAL > HIGH > MEDIUM > LOW > INFO) and
+ * renumber the Priority column 1..N. This keeps the highest-severity items
+ * at the top regardless of where the LLM originally placed them, which
+ * matters because the verifier can drop any finding regardless of severity
+ * and leave Dead Zones at Priority 1 by accident.
+ *
+ * Matching is fuzzy: we normalize whitespace and punctuation, then check
+ * whether the dropped title appears as a substring in the row's Finding
+ * cell (or vice versa). This handles cases where the narrator slightly
+ * polished the title between the prose and the table.
+ *
+ * Severity for each row is looked up from the prose section that matches
+ * the row's Finding cell. If a row's severity can't be resolved, it gets
+ * sorted to the bottom (treated as INFO).
+ *
+ * The disclaimer count uses `totalDroppedCount` (the number of prose
+ * sections the verifier removed), not the count of rows actually removed
+ * from the table. This matters because the narrator sometimes renders
+ * findings as prose without a corresponding table row (e.g. architectural
+ * observations with Effort: N/A) — those still get verified and dropped
+ * but show up only in prose. The user-facing disclaimer should reflect
+ * the verifier's actual decision, not the table's bookkeeping.
+ */
+function stripDroppedRowsFromTable(report, droppedTitles, totalDroppedCount) {
+  const lines = report.split('\n');
+  const dropped = droppedTitles.map(t => normalizeForFuzzy(t)).filter(Boolean);
+
+  // Locate the remediation table. Heuristics:
+  //   - A header line containing "Priority" and "Finding" and "|" delimiters
+  //   - Followed by a separator line of dashes
+  //   - Followed by zero or more data rows starting with "|"
+  let headerIdx = -1;
+  let separatorIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!/^\s*\|/.test(l)) continue;
+    if (!/Priority/i.test(l) || !/Finding/i.test(l)) continue;
+    // Next non-blank line should be the separator
+    let j = i + 1;
+    while (j < lines.length && lines[j].trim() === '') j++;
+    if (j < lines.length && /^\s*\|[\s\-:|]+\|\s*$/.test(lines[j])) {
+      headerIdx = i;
+      separatorIdx = j;
+      break;
+    }
+  }
+  if (headerIdx < 0 || separatorIdx < 0) return report;
+
+  // Collect data rows: from separatorIdx+1 until first non-pipe line
+  const dataStart = separatorIdx + 1;
+  let dataEnd = dataStart;
+  while (dataEnd < lines.length && /^\s*\|/.test(lines[dataEnd])) dataEnd++;
+
+  // Build a lookup: normalized finding title -> severity, parsed from the
+  // prose above the table. We'll use this to sort surviving rows by severity
+  // before renumbering. If a finding's severity can't be resolved we fall
+  // back to INFO so it sorts to the bottom.
+  const proseAboveTable = lines.slice(0, headerIdx).join('\n');
+  const severityByTitle = buildSeverityLookup(proseAboveTable);
+
+  const kept = [];
+  let removedCount = 0;
+  for (let i = dataStart; i < dataEnd; i++) {
+    const row = lines[i];
+    const cells = row.split('|').map(c => c.trim());
+    // Expected shape: ["", priority, finding, category, effort, complexity, cost, ""]
+    // The Finding column is index 2 (after the leading empty from leading "|").
+    const findingCell = cells[2] || '';
+    const findingNorm = normalizeForFuzzy(findingCell);
+    if (!findingNorm) {
+      kept.push(row);
+      continue;
+    }
+    const isDropped = dropped.some(d =>
+         findingNorm === d
+      || (findingNorm.includes(d) && d.length > 10)
+      || (d.includes(findingNorm) && findingNorm.length > 10)
+    );
+    if (isDropped) {
+      removedCount++;
+      continue;
+    }
+    kept.push(row);
+  }
+
+  if (removedCount === 0) return report;
+
+  // Re-sort surviving rows by severity (CRITICAL first, INFO last). This
+  // correction matters because the LLM-built table is ordered by priority
+  // assigned at synthesis time, and the verifier can drop any finding —
+  // so a Dead Zone (LOW) can end up at Priority 1 if all the Criticals
+  // above it were dropped. After sorting, Priority is renumbered 1..N
+  // matching the new order.
+  const SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4, BLOCKING: 0 };
+  const sortedSurvivors = [...kept].sort((a, b) => {
+    const cellsA = a.split('|').map(c => c.trim());
+    const cellsB = b.split('|').map(c => c.trim());
+    const titleA = normalizeForFuzzy(cellsA[2] || '');
+    const titleB = normalizeForFuzzy(cellsB[2] || '');
+    const sevA = severityByTitle.get(titleA) || 'INFO';
+    const sevB = severityByTitle.get(titleB) || 'INFO';
+    const rankA = SEVERITY_RANK[sevA] ?? 99;
+    const rankB = SEVERITY_RANK[sevB] ?? 99;
+    return rankA - rankB;
+  });
+
+  // Renumber the Priority column on surviving rows so it remains 1..N.
+  const renumbered = sortedSurvivors.map((row, idx) => {
+    const cells = row.split('|');
+    if (cells.length < 3) return row;
+    // cells[0] is leading empty, cells[1] is priority
+    cells[1] = ' ' + (idx + 1) + ' ';
+    return cells.join('|');
+  });
+
+  // Splice the new data rows back in
+  const before = lines.slice(0, dataStart);
+  const after  = lines.slice(dataEnd);
+  let result = [...before, ...renumbered, ...after].join('\n');
+
+  // The totals lines below the table are now stale. Strip them — they say
+  // "Total findings = N" with the pre-drop N — and replace with a small
+  // disclaimer. We don't try to recompute the dollar total because the
+  // remaining rows are still valid line items; an inaccurate total is
+  // worse than no total.
+  result = result.replace(
+    /^\*\*Total findings:\*\*\s*\d+/m,
+    '**Total findings:** ' + renumbered.length
+  );
+  result = result.replace(
+    /^Total findings\s*=\s*\d+/m,
+    'Total findings = ' + renumbered.length
+  );
+  // Append a verifier note so the user knows the totals reflect post-verification counts.
+  // Use totalDroppedCount (verifier's actual drop count) instead of removedCount
+  // (table rows actually removed) because some findings are rendered in prose without
+  // table rows (e.g. architectural observations with N/A cost). The disclaimer should
+  // reflect what the verifier actually did, not bookkeeping artifacts.
+  const disclaimerCount = (typeof totalDroppedCount === 'number' && totalDroppedCount > 0)
+    ? totalDroppedCount
+    : removedCount;
+  if (!/_Verifier dropped/.test(result)) {
+    const noteAnchor = result.indexOf('## Risk');
+    const note = '\n\n_Verifier dropped ' + disclaimerCount + ' finding' + (disclaimerCount === 1 ? '' : 's') + ' as not supported by the source code. The remediation table above reflects the verified set, sorted by severity._\n';
+    if (noteAnchor > 0) {
+      result = result.slice(0, noteAnchor) + note + '\n' + result.slice(noteAnchor);
+    } else {
+      result = result + note;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Walk the prose above the remediation table and build a Map of
+ * normalized finding title → severity. Used by stripDroppedRowsFromTable
+ * to sort surviving rows by severity after the verifier has dropped some.
+ *
+ * The prose format is consistent: each finding has a `### Title` header
+ * followed (within a few lines) by `**Severity:** CRITICAL` (or HIGH/MEDIUM/LOW).
+ * We pair them by walking forward from each ### header until we find the
+ * Severity line or hit the next ### header.
+ *
+ * Severity-line parsing strategy: many narrator outputs include a colored
+ * emoji and nested asterisks (e.g. `**Severity:** 🟠 **HIGH**`). Rather than
+ * write one regex that handles every formatting permutation, we strip
+ * markdown emphasis and emoji from the line first, then look for the
+ * keyword. This is more permissive and easier to reason about than the
+ * earlier inline regex, which was failing silently on common variants and
+ * letting all findings fall back to INFO.
+ */
+function buildSeverityLookup(prose) {
+  const map = new Map();
+  if (!prose) return map;
+
+  const SEVERITY_KEYWORDS = ['CRITICAL', 'BLOCKING', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+
+  const lines = prose.split('\n');
+  let currentTitle = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+
+    // New finding header — capture the normalized title, reset
+    const headingMatch = line.match(/^###\s+(?:\d+\.\s+)?\*?\*?(.+?)\*?\*?$/);
+    if (headingMatch) {
+      // Strip leading [⚠ UNVERIFIED] etc. that the verifier may have added
+      const cleaned = headingMatch[1].replace(/^\[[^\]]*\]\s*/, '').trim();
+      currentTitle = normalizeForFuzzy(cleaned);
+      continue;
+    }
+
+    // Severity line — only first one wins per finding. Detect by checking
+    // whether the line starts with "Severity" (after stripping markdown
+    // emphasis), then look for a known severity keyword anywhere in the
+    // remainder. Stripping asterisks and emoji up front means we don't have
+    // to enumerate every formatting permutation in a single regex.
+    if (currentTitle && !map.has(currentTitle)) {
+      const stripped = line
+        .replace(/\*+/g, '')                        // remove all asterisks
+        .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')     // remove emoji
+        .replace(/\s+/g, ' ')                       // collapse whitespace
+        .trim();
+      // Match "Severity: <word>" or "Severity <word>" (loose).
+      const sevHeader = stripped.match(/^[Ss]everity\s*:?\s*(.+)$/);
+      if (sevHeader) {
+        const remainder = sevHeader[1].toUpperCase();
+        for (const kw of SEVERITY_KEYWORDS) {
+          if (remainder.includes(kw)) {
+            map.set(currentTitle, kw);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return map;
+}
+
+function normalizeForFuzzy(s) {
+  return (s || '')
+    .toLowerCase()
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function removeFindingSection(report, title) {

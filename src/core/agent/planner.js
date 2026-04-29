@@ -110,12 +110,50 @@ function estimateCosts(fileMap, mode = 'poi') {
   };
 }
 
+// ── Consultant context block (lightweight) ───────────────────────────────────
+//
+// The narrator's buildConsultantLens is heavier — it includes vocabulary
+// instructions and grounding rules tuned for finding-by-finding rendering.
+// For recon we just need a short paragraph that tells the planner what the
+// consultant cares about, so the resulting plan reflects their lens.
+// Returns '' when no profile is provided so the prompt is unchanged.
+
+function buildReconConsultantContext(profile) {
+  if (!profile) return '';
+  const lines = [];
+  if (profile.author)      lines.push('- Consultant: ' + profile.author + (profile.organization ? ' (' + profile.organization + ')' : ''));
+  if (profile.name)        lines.push('- Methodology: ' + profile.name);
+  if (profile.description) lines.push('- Purpose: ' + profile.description);
+  if (Array.isArray(profile.priorities) && profile.priorities.length) {
+    lines.push('- Priorities: ' + profile.priorities.slice(0, 6).join('; '));
+  }
+  if (Array.isArray(profile.anti_patterns) && profile.anti_patterns.length) {
+    lines.push('- Anti-patterns watched for: ' + profile.anti_patterns.slice(0, 6).join('; '));
+  }
+  if (Array.isArray(profile.red_flags) && profile.red_flags.length) {
+    lines.push('- Red flags: ' + profile.red_flags.slice(0, 6).join('; '));
+  }
+  if (!lines.length) return '';
+  return '\n\nCONSULTANT LENS (this report is being prepared on behalf of the consultant below; weight findings and language toward their methodology):\n' + lines.join('\n');
+}
+
 // ── Ask Claude for a plan ─────────────────────────────────────────────────────
 
 async function generatePlan(structure, costs, mode, options = {}) {
   const anthropic = getClient();
+  const profile   = options.profile || null;
+  const isRecon   = mode === 'recon';
 
-  const prompt = `You are Ghost Architect's planning agent. Analyze this codebase structure and produce a focused analysis plan.
+  const consultantContext = buildReconConsultantContext(profile);
+
+  // Recon mode produces an extra prose section (engagement_perspective) suited
+  // for a saved client-facing markdown report. POI/Blast/Conflict modes use
+  // the plan internally as a CLI banner, so they don't need that prose.
+  const reconExtraSchema = isRecon
+    ? ',\n  "engagement_perspective": "3\u20135 sentence paragraph framing what a full scan would surface from this codebase, written in the voice of the consultant when one is present. Plain prose, no bullets, no markdown headers.",\n  "sizing_summary": "2\u20133 sentence paragraph describing the codebase shape (size, dominant file types, structural posture). Plain prose.",\n  "methodology_note": "2\u20134 sentence paragraph explaining how the consultant\u2019s methodology applies to this codebase\u2019s actual structure. Empty string when no consultant profile is loaded."'
+    : '';
+
+  const prompt = `You are Ghost Architect's planning agent. Analyze this codebase structure and produce a focused analysis plan.${consultantContext}
 
 CODEBASE STRUCTURE:
 - Total files: ${structure.totalFiles}
@@ -144,7 +182,7 @@ Produce a JSON analysis plan:
   "proposedStartingPoint": "path/to/entry",
   "recommendedMode": "${mode}",
   "planSummary": "2-3 sentence plain English description of what Ghost will analyze and why",
-  "confidenceNote": "any caveats about the estimate accuracy"
+  "confidenceNote": "any caveats about the estimate accuracy"${reconExtraSchema}
 }
 
 Respond with JSON only. No preamble.`;
@@ -169,6 +207,18 @@ Respond with JSON only. No preamble.`;
       recommendedMode:      mode,
       planSummary:          `Analyze ${structure.totalFiles} files across ${costs.estimatedPasses} passes. ${structure.riskCount} high-risk files detected.`,
       confidenceNote:       'Estimate based on file count and size.',
+      // Recon mode falls back to lightly-templated prose. The full LLM
+      // version is much better, but if the API fails we still produce
+      // something coherent rather than blank fields.
+      engagement_perspective: isRecon
+        ? `A full Pre-Engagement Diligence scan of this ${structure.totalFiles}-file codebase would surface specific findings across architecture, security, performance, and maintainability. ${structure.riskCount} high-risk files have been pre-identified through filename pattern matching; a full scan would inspect their contents and produce concrete remediation steps with cost estimates.`
+        : '',
+      sizing_summary: isRecon
+        ? `${structure.totalFiles} files across ${structure.topDirs.length || 0} top-level directories. Dominant file types: ${structure.topExts.slice(0, 3).map(e => `${e.ext} (${e.count})`).join(', ')}.`
+        : '',
+      methodology_note: (isRecon && profile)
+        ? `${profile.author || 'The consultant'} would weight findings through their methodology lens (${profile.name || 'pre-engagement diligence'}), focusing on the priorities and red flags described in their profile.`
+        : '',
     };
   }
 }
@@ -178,9 +228,13 @@ Respond with JSON only. No preamble.`;
  * Run pre-analysis recon and generate a plan.
  *
  * @param {object} fileMap    — loaded file map { path: content }
- * @param {string} mode       — 'poi' | 'blast' | 'conflict'
- * @param {object} options    — { focusAreas, maxPasses }
- * @returns {object}          — plan object for user approval
+ * @param {string} mode       — 'poi' | 'blast' | 'conflict' | 'recon'
+ * @param {object} options    — { focusAreas, maxPasses, profile }
+ * @returns {object}          — plan object for user approval. When mode is
+ *                              'recon', the result also contains the prose
+ *                              fields engagement_perspective, sizing_summary,
+ *                              and methodology_note (suitable for direct
+ *                              rendering into a saved markdown report).
  */
 export async function runRecon(fileMap, mode = 'poi', options = {}) {
   const structure = buildStructureScan(fileMap);
@@ -195,6 +249,11 @@ export async function runRecon(fileMap, mode = 'poi', options = {}) {
     proposedStartingPoint: plan.proposedStartingPoint || '',
     planSummary:          plan.planSummary          || '',
     confidenceNote:       plan.confidenceNote       || '',
+
+    // Recon-only prose fields (empty strings when mode != 'recon').
+    engagementPerspective: plan.engagement_perspective || '',
+    sizingSummary:         plan.sizing_summary         || '',
+    methodologyNote:       plan.methodology_note       || '',
 
     // Cost info
     totalFiles:           costs.totalFiles,

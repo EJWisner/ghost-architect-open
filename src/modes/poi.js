@@ -13,23 +13,35 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+import { mergeRates } from '../profile/index.js';
 
-export async function runPOIMode(codebaseContext) {
+export async function runPOIMode(codebaseContext, options = {}) {
+  // Ghost Partner — consultant profile (null when --profile was not passed).
+  const profile = options.profile || null;
+
   const fileMap      = codebaseContext.fileMap || {};
   const passes       = Object.keys(fileMap).length > 0 ? buildPasses(fileMap) : [];
   const useMultiPass = passes.length > 1;
   const model        = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
-  const rates        = {
+  // Rates shown in the scan banner reflect what the report itself will
+  // use, so per-profile rate overrides apply here too. Without this, an
+  // OSC scan would show $85/$125/$200 in the banner but render the
+  // report with $50/$90/$150 — the user-visible numbers would
+  // disagree with the saved report.
+  const rates = mergeRates({
     junior: getConfig().get('rateJunior') || 85,
     mid:    getConfig().get('rateMid')    || 125,
     senior: getConfig().get('rateSenior') || 200,
-  };
+  }, profile);
+
+  const ratesLine = 'Rates: $' + rates.junior + '/hr junior \u00b7 $' + rates.mid + '/hr mid \u00b7 $' + rates.senior + '/hr senior';
 
   console.log('\n' + boxen(
     chalk.cyan.bold('🗺  POINTS OF INTEREST SCAN') + '\n' +
     chalk.gray(`Analyzing ${codebaseContext.loadedFiles} files for red flags, landmarks,\ndead zones, fault lines, effort estimates, and remediation steps...`) +
     (useMultiPass ? '\n' + chalk.yellow(`⚡ Large codebase — multi-pass mode (${passes.length} passes required)`) : '') + '\n' +
-    chalk.gray(`Rates: $${rates.junior}/hr junior · $${rates.mid}/hr mid · $${rates.senior}/hr senior`),
+    chalk.gray(ratesLine) +
+    (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
   console.log('');
@@ -210,7 +222,7 @@ export async function runPOIMode(codebaseContext) {
           if (next === 'save') console.log(chalk.green(`\n  ${SYM.check} Session saved — continue from pass ${passCount + 1} next time\n`));
           return next;
         },
-      });
+      }, { profile });
 
       if (!multiResult) {
         // fall through
@@ -255,6 +267,7 @@ export async function runPOIMode(codebaseContext) {
             }
           },
           projectLabel: label || 'project',
+          profile,  // Ghost Partner — consultant lens injected into scan + narrator
         }
       );
       if (narratorSpinner) { narratorSpinner.succeed(chalk.green('  Report ready')); narratorSpinner = null; }
@@ -396,6 +409,9 @@ export async function runPOIMode(codebaseContext) {
       resolved:       resolvedCount,
       newFindings:    projectIntelResult?.newIssues      || 0,
       scans:          [],
+      // Ghost Partner — profile drives full white-label rendering in PDF + MD.
+      // When `profile` is null, all renderers fall back to default Ghost branding.
+      profile,
     };
 
     if (doSave) {

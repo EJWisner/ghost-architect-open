@@ -9,7 +9,15 @@
 // ── Shared regex patterns ─────────────────────────────────────────────────────
 
 export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?\*?\*?(.+?)\*?\*?$/;
-export const SEVERITY_RE = /^\*?\*?[Ss]everity\*?\*?:\s*\*?\*?(CRITICAL|HIGH|MEDIUM|LOW)\*?\*?/;
+// SEVERITY_RE matches lines like `**Severity:** **HIGH**` and the newer
+// emoji-prefixed form `**Severity:** 🟠 **HIGH**`. The narrator started
+// emitting the emoji form for white-label / consultant-voice reports; the
+// regex must tolerate any number of emoji and whitespace between the colon
+// and the severity word, otherwise the parser silently falls back to the
+// surrounding section header's inferred severity (e.g. tagging every
+// finding under `## 🔴 Red Flags ...` as CRITICAL regardless of its actual
+// per-finding rating).
+export const SEVERITY_RE = /^\*?\*?[Ss]everity\*?\*?:\s*[^A-Za-z]*\*?\*?(CRITICAL|HIGH|MEDIUM|LOW)\*?\*?/;
 export const FILES_RE    = /\*?\*?[Ff]iles?\*?\*?[:\s]+(.+)/i;
 export const EFFORT_RE   = /\*?\*?[Ee]ffort\*?\*?[:\s]+([\d.]+[\u2013\-][\d.]+)\s*hrs?/i;
 
@@ -67,6 +75,55 @@ function inferSeverityFromSection(sectionHeader) {
   return 'MEDIUM';
 }
 
+/**
+ * True when the given `## ...` header line is a non-finding section that
+ * should be skipped by the finding extractor. Strips the `##`, leading
+ * emoji, and any markdown emphasis so we can match section names against
+ * a clean text body.
+ *
+ * The closed set of non-finding sections Ghost emits today:
+ *   - Executive Summary
+ *   - Remediation Summary (sometimes prefixed with 📊 or other emoji)
+ *   - Risk if Left Unaddressed
+ *   - Risk Assessment (legacy)
+ *   - Cost Breakdown (legacy)
+ *   - Recommended Next Steps (legacy)
+ *
+ * Anything else — including Ghost's canonical finding categories (Red
+ * Flags, Landmarks, Dead Zones, Fault Lines) and Partner-defined custom
+ * categories (Architecture, State Management, etc.) — is treated as a
+ * finding category and its ### entries are extracted.
+ */
+function isNonFindingSectionHeader(line) {
+  // Strip leading '## ', any emoji prefix, markdown emphasis, and trailing
+  // descriptive text (anything after a dash or em-dash). What remains is
+  // the bare section name.
+  const cleaned = line
+    .replace(/^##\s+/, '')
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')   // strip emoji
+    .replace(/\*+/g, '')                       // strip markdown emphasis
+    .split(/[\u2014\u2013\-\u00b7]/)[0]        // take part before any dash/bullet
+    .trim()
+    .toLowerCase();
+
+  // Exact-name matches (closed set of known non-finding sections)
+  const NON_FINDING_NAMES = [
+    'executive summary',
+    'remediation summary',
+    'risk if left unaddressed',
+    'risk assessment',
+    'cost breakdown',
+    'recommended next steps',
+  ];
+  if (NON_FINDING_NAMES.includes(cleaned)) return true;
+
+  // Catch a couple of permissive variants we've seen in the wild
+  if (/^remediation\b/.test(cleaned) && /summary$/.test(cleaned)) return true;
+  if (/^risk\b/.test(cleaned) && /unaddressed$/.test(cleaned))    return true;
+
+  return false;
+}
+
 export function extractFindings(reportText) {
   if (!reportText) return [];
 
@@ -91,7 +148,17 @@ export function extractFindings(reportText) {
 
     if (/^##\s+/.test(t)) {
       if (current) { findings.push(finalize(current)); current = null; }
-      if (/landmark|architecture|summary|recommended|cost breakdown|remediation summary/i.test(t)) {
+      // Detect non-finding sections precisely. Earlier regex matched
+      // substrings like 'landmark' and 'architecture', which collide with
+      // legitimate finding categories ('🏛️ Landmarks', Partner
+      // 'Architecture & Separation of Concerns'). We instead match exact
+      // section names anchored after the leading ##, allowing emoji and
+      // whitespace before them. The section list is the closed set of
+      // non-finding sections Ghost emits: Executive Summary, Remediation
+      // Summary (with or without emoji), Risk if Left Unaddressed, Cost
+      // Breakdown, Recommended Next Steps. Custom Partner categories with
+      // any other name are treated as finding categories by default.
+      if (isNonFindingSectionHeader(t)) {
         inNonFindingSection = true;
         continue;
       }
@@ -122,7 +189,26 @@ export function extractFindings(reportText) {
 
       const fim = t.match(FILES_RE);
       if (fim) {
-        current.files = fim[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
+        // Strip markdown artifacts that the narrator's Pass 2 sometimes
+        // emits inside the Files line: backticks, bold (**), emphasis (*),
+        // angle brackets <...>, and any leading/trailing whitespace. After
+        // stripping, drop any entry that is empty OR contains nothing but
+        // punctuation (e.g. "**" by itself, which the verifier would treat
+        // as a literal glob and fail every file-existence check). The bug-
+        // firing osc-cap-test scan on April 27 produced files: ["**"] for
+        // every finding because Pass 2 emitted `**Files:** **` with empty
+        // bold; this strips it to nothing and we drop the entry, leaving
+        // current.files = [] which is a more honest signal to downstream.
+        current.files = fim[1]
+          .split(/[,;]/)
+          .map(f => f
+            .trim()
+            .replace(/`/g, '')
+            .replace(/\*+/g, '')
+            .replace(/^<|>$/g, '')
+            .trim()
+          )
+          .filter(f => f && /[a-zA-Z0-9]/.test(f));
         continue;
       }
 

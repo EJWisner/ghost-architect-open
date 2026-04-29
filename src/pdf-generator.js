@@ -77,20 +77,56 @@ function secColor(t) {
   return C.NAVY;
 }
 
-function drawChrome(doc, pageNum, logoPath) {
+function drawChrome(doc, pageNum, logoPath, branding = null) {
   const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
+
+  // White-label mode: use the consultant's accent color and company name
+  // in the header/footer. No Ghost Architect branding rendered.
+  // Default mode: dark navy bar, teal accent, Ghost Architect branding.
+  const isWL          = !!(branding && branding.isWhiteLabeled);
+  const headerBg      = isWL ? branding.accentColor : C.DARK_BG;
+  const accentText    = isWL ? C.WHITE              : C.TEAL;
+  const headerLogoSrc = isWL ? branding.logoPath    : logoPath;
+
   // Header
-  box(doc, 0, 0, PW, HEADER_H, C.DARK_BG);
-  if (logoPath && fs.existsSync(logoPath)) {
-    try { doc.image(logoPath, 10, 6, { width: 28, height: 28 }); } catch(e) {}
+  box(doc, 0, 0, PW, HEADER_H, headerBg);
+  if (headerLogoSrc && fs.existsSync(headerLogoSrc)) {
+    try { doc.image(headerLogoSrc, 10, 6, { fit: [28, 28] }); } catch(e) {}
   }
-  doc.font('Helvetica-Bold').fontSize(11).fillColor(C.WHITE).text('Ghost Architect', 46, 11, { lineBreak: false });
-  doc.font('Helvetica').fontSize(8).fillColor(C.TEAL).text('AI-powered codebase intelligence  |  ghostarchitect.dev', 46, 25, { lineBreak: false });
-  doc.font('Helvetica').fontSize(8).fillColor(C.MED_GRAY).text(`Page ${pageNum}`, PW - 80, 17, { width: 60, align: 'right', lineBreak: false });
+
+  if (isWL) {
+    // Consultant header: company name on the left, no tagline (keeps it
+    // looking like a corporate deliverable, not a tool).
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(C.WHITE)
+       .text(branding.companyName, 46, 14, { lineBreak: false });
+    if (branding.methodology) {
+      doc.font('Helvetica').fontSize(8).fillColor(C.WHITE)
+         .text(branding.methodology, 46, 27, { lineBreak: false });
+    }
+  } else {
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(C.WHITE)
+       .text('Ghost Architect', 46, 11, { lineBreak: false });
+    doc.font('Helvetica').fontSize(8).fillColor(C.TEAL)
+       .text('AI-powered codebase intelligence  |  ghostarchitect.dev', 46, 25, { lineBreak: false });
+  }
+
+  doc.font('Helvetica').fontSize(8).fillColor(isWL ? C.WHITE : C.MED_GRAY)
+     .text(`Page ${pageNum}`, PW - 80, 17, { width: 60, align: 'right', lineBreak: false });
+
   // Footer
-  box(doc, 0, PH - FOOTER_H, PW, FOOTER_H, C.DARK_BG);
-  doc.font('Helvetica').fontSize(7).fillColor(C.MED_GRAY).text(`Generated ${ts}  |  ghostarchitect.dev`, 20, PH - 18, { lineBreak: false });
-  doc.font('Helvetica-Bold').fontSize(7).fillColor(C.TEAL).text('© 2026 Ghost Architect. All rights reserved. Confidential.', 0, PH - 18, { width: PW - 20, align: 'right', lineBreak: false });
+  box(doc, 0, PH - FOOTER_H, PW, FOOTER_H, headerBg);
+  if (isWL) {
+    doc.font('Helvetica').fontSize(7).fillColor(C.WHITE)
+       .text(`Generated ${ts}`, 20, PH - 18, { lineBreak: false });
+    doc.font('Helvetica-Bold').fontSize(7).fillColor(C.WHITE)
+       .text(branding.confidentiality, 0, PH - 18, { width: PW - 20, align: 'right', lineBreak: false });
+  } else {
+    doc.font('Helvetica').fontSize(7).fillColor(C.MED_GRAY)
+       .text(`Generated ${ts}  |  ghostarchitect.dev`, 20, PH - 18, { lineBreak: false });
+    doc.font('Helvetica-Bold').fontSize(7).fillColor(C.TEAL)
+       .text('© 2026 Ghost Architect. All rights reserved. Confidential.', 0, PH - 18, { width: PW - 20, align: 'right', lineBreak: false });
+  }
+
   // Reset cursor to content area so pdfkit internals don't drift
   doc.x = ML;
   doc.y = TOP;
@@ -100,8 +136,16 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
   return new Promise((resolve, reject) => {
     try {
       const logoPath = path.join(__dirname, '..', 'assets', 'logo.jpeg');
+      const branding = meta.branding || null;
+      const isWL     = !!(branding && branding.isWhiteLabeled);
+
+      // PDF metadata: title and author reflect the consultant in white-label
+      // mode so a downloaded file's properties don't leak "Ghost Architect".
+      const pdfTitle  = isWL ? `${branding.companyName} — ${meta.reportType || 'Analysis'}` : 'Ghost Architect Report';
+      const pdfAuthor = isWL ? (branding.author || branding.companyName)                    : 'Ghost Architect';
+
       const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: true,
-        info: { Title: 'Ghost Architect Report', Author: 'Ghost Architect' } });
+        info: { Title: pdfTitle, Author: pdfAuthor } });
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
@@ -109,13 +153,13 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       let pageNum = 1;
 
       // Draw chrome on first page immediately
-      drawChrome(doc, pageNum, logoPath);
+      drawChrome(doc, pageNum, logoPath, branding);
 
       function newPage() {
         doc.addPage();
         pageNum++;
         y = TOP;
-        drawChrome(doc, pageNum, logoPath);
+        drawChrome(doc, pageNum, logoPath, branding);
       }
 
       function need(h) { if (y + h > BOTTOM) newPage(); }
@@ -130,29 +174,66 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       }
 
       // Cover banner
-      need(58);
-      box(doc, ML, y, CW, 52, C.DARK_BG);
-      doc.font('Helvetica-Bold').fontSize(22).fillColor(C.WHITE)
-         .text(meta.reportType || 'Points of Interest Report', ML + 16, y + 14, { width: CW - 32, lineBreak: false });
-      y += 58;
+      // White-label: accent-colored banner with company name + report type +
+      // "Prepared by" + methodology byline. Reads as a consultant deliverable.
+      // Default: dark banner with the report type only.
+      const bannerH = isWL ? 80 : 52;
+      need(bannerH + 6);
+      const bannerBg = isWL ? branding.accentColor : C.DARK_BG;
+      box(doc, ML, y, CW, bannerH, bannerBg);
+      if (isWL) {
+        // Stack: company name (large), report type (medium), methodology + author (small)
+        doc.font('Helvetica-Bold').fontSize(20).fillColor(C.WHITE)
+           .text(branding.companyName, ML + 16, y + 12, { width: CW - 32, lineBreak: false });
+        doc.font('Helvetica').fontSize(13).fillColor(C.WHITE)
+           .text(meta.reportType || 'Pre-Engagement Triage', ML + 16, y + 36, { width: CW - 32, lineBreak: false });
+        const subline = [
+          branding.methodology,
+          branding.author ? `Prepared by ${branding.author}` : null,
+        ].filter(Boolean).join('  ·  ');
+        if (subline) {
+          doc.font('Helvetica').fontSize(9).fillColor(C.WHITE)
+             .text(subline, ML + 16, y + 58, { width: CW - 32, lineBreak: false });
+        }
+      } else {
+        doc.font('Helvetica-Bold').fontSize(22).fillColor(C.WHITE)
+           .text(meta.reportType || 'Points of Interest Report', ML + 16, y + 14, { width: CW - 32, lineBreak: false });
+      }
+      y += bannerH + 6;
 
       // Metadata card
       need(96);
       const cardH = 82;
       box(doc, ML, y, CW, cardH, C.CARD_BG);
       doc.save().rect(ML, y, CW, cardH).lineWidth(0.5).stroke(C.LIGHT_GRAY).restore();
-      if (logoPath && fs.existsSync(logoPath)) {
-        try { doc.image(logoPath, ML + 12, y + 12, { width: 56, height: 56 }); } catch(e) {}
+
+      // Logo: consultant logo in white-label mode (already validated as
+      // existing on disk by getBranding); Ghost logo otherwise.
+      const cardLogoSrc = isWL ? branding.logoPath : logoPath;
+      if (cardLogoSrc && fs.existsSync(cardLogoSrc)) {
+        try { doc.image(cardLogoSrc, ML + 12, y + 12, { fit: [56, 56] }); } catch(e) {}
       }
+
       let my = y + 12;
       const mx = ML + 80, mw = CW - 90;
-      doc.font('Helvetica-Bold').fontSize(14).fillColor(C.TEXT_DARK).text(meta.project || 'Project Analysis', mx, my, { width: mw }); my += 18;
+      doc.font('Helvetica-Bold').fontSize(14).fillColor(C.TEXT_DARK)
+         .text(meta.project || 'Project Analysis', mx, my, { width: mw }); my += 18;
       doc.font('Helvetica').fontSize(9).fillColor(C.MED_GRAY);
       const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
       doc.text(`Generated: ${ts}`, mx, my, { width: mw }); my += 12;
       if (meta.filesAnalyzed) { doc.text(`Files analyzed: ${meta.filesAnalyzed}`, mx, my, { width: mw }); my += 12; }
-      if (meta.cost)          { doc.text(`Analysis cost: ${meta.cost}`, mx, my, { width: mw }); my += 12; }
-      doc.text(`Ghost Architect v${meta.version || '4.5.5'}  |  ghostarchitect.dev`, mx, my, { width: mw });
+      if (meta.cost)          { doc.text(`Analysis cost: $${meta.cost}`, mx, my, { width: mw }); my += 12; }
+
+      // White-label footer line on the metadata card: consultant attribution
+      // instead of "Ghost Architect v4.5.5 | ghostarchitect.dev".
+      if (isWL) {
+        const finalLine = branding.author && branding.author !== branding.companyName
+          ? `${branding.companyName}  ·  Prepared by ${branding.author}`
+          : branding.companyName;
+        doc.text(finalLine, mx, my, { width: mw });
+      } else {
+        doc.text(`Ghost Architect v${meta.version || '4.5.5'}  |  ghostarchitect.dev`, mx, my, { width: mw });
+      }
       y += cardH + 14;
 
       // Body
@@ -201,7 +282,10 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
           need(Math.min(lookahead, 80)); // ensure at least 80px free before starting a finding
           const label = clean(isMdFind ? line.replace(/^#+\s*/,'') : line);
           box(doc, ML, y, CW, 24, C.CARD_BG);
-          box(doc, ML, y,  3, 24, C.TEAL);
+          // Accent stripe on the left edge of each finding card.
+          // White-label mode uses the consultant's accent color so the
+          // visual rhythm of the report matches their brand.
+          box(doc, ML, y,  3, 24, isWL ? branding.accentColor : C.TEAL);
           doc.save().rect(ML, y, CW, 24).lineWidth(0.3).stroke(C.LIGHT_GRAY).restore();
           doc.font('Helvetica-Bold').fontSize(10).fillColor(C.TEXT_DARK)
              .text(label, ML + 10, y + 7, { width: CW - 20, lineBreak: false });

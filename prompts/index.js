@@ -11,19 +11,138 @@ When answering questions:
 
 You are a thinking partner, not a code generator. Help the human understand what they own.`;
 
-export function buildSystemPOI(rates = {}) {
+/**
+ * Render the CONSULTANT CONTEXT block injected into the POI system prompt when
+ * a Ghost Partner profile is active. Only populated fields render — unstated
+ * fields are silently omitted rather than appearing as "Name: unknown" noise.
+ *
+ * Returns empty string when no profile is provided so the caller can unconditionally
+ * concatenate the result.
+ */
+export function buildConsultantContextBlock(profile) {
+  if (!profile || typeof profile !== 'object') return '';
+
+  const lines = [];
+
+  // Header — who authored this profile and what it's for.
+  const header = [];
+  if (profile.author)       header.push(profile.author);
+  if (profile.organization) header.push('(' + profile.organization + ')');
+  if (header.length)      lines.push('Consultant: ' + header.join(' '));
+  if (profile.name)       lines.push('Profile: ' + profile.name);
+  if (profile.description) lines.push('Purpose: ' + profile.description);
+
+  // The three structured lists — the heart of the methodology injection.
+  if (Array.isArray(profile.priorities) && profile.priorities.length) {
+    lines.push('', 'PRIORITIES — the consultant zeros in on these during a review:');
+    for (const p of profile.priorities) lines.push('  • ' + p);
+  }
+  if (Array.isArray(profile.anti_patterns) && profile.anti_patterns.length) {
+    lines.push('', 'ANTI-PATTERNS — the consultant considers these wrong whenever they appear:');
+    for (const a of profile.anti_patterns) lines.push('  • ' + a);
+  }
+  if (Array.isArray(profile.red_flags) && profile.red_flags.length) {
+    lines.push('', 'RED FLAGS — when these appear, the consultant elevates severity:');
+    for (const r of profile.red_flags) lines.push('  • ' + r);
+  }
+
+  // Voice / diagnostic style — either the extracted `prose` or pass-through
+  // narrative content from markdown sections the loader couldn't structure.
+  if (profile.prose) {
+    lines.push('', 'DIAGNOSTIC VOICE — frame findings in this tone:', profile.prose);
+  }
+
+  if (!lines.length) return '';
+
+  return [
+    '',
+    "CONSULTANT CONTEXT — you are performing this scan on behalf of the consultant whose methodology is described below. The SCAN FRAMEWORK that follows has been extended with the consultant's own checks (see CONSULTANT CHECKS section). Work every row of the framework, including the consultant checks, and name findings in the consultant's vocabulary.",
+    '',
+    ...lines,
+    '',
+    "The consultant context describes WHAT to emphasize and HOW to frame it. The GROUNDING RULES and ALREADY-FIXED-CODE RULE below still apply — never fabricate a finding to match the consultant's priorities, and never flag code that is already fixed. When a consultant priority has no supporting evidence in the files shown, simply do not produce a finding for it.",
+    '',
+  ].join('\n');
+}
+
+/**
+ * Render the CONSULTANT CHECKS block: turns the profile's priorities,
+ * anti-patterns, and red-flags into additional explicit rows the scan
+ * framework must walk. This is what makes the profile's effect deterministic
+ * — the model has to look for these specific things in every run, rather
+ * than hoping they surface from open-ended analysis.
+ *
+ * Returns empty string when no profile is provided.
+ */
+export function buildConsultantChecks(profile) {
+  if (!profile || typeof profile !== 'object') return '';
+
+  const checks = [];
+  if (Array.isArray(profile.priorities)) {
+    for (const p of profile.priorities) checks.push('Consultant priority — ' + p);
+  }
+  if (Array.isArray(profile.anti_patterns)) {
+    for (const a of profile.anti_patterns) checks.push('Consultant anti-pattern — ' + a);
+  }
+  if (Array.isArray(profile.red_flags)) {
+    for (const r of profile.red_flags) checks.push('Consultant red flag — ' + r);
+  }
+  if (!checks.length) return '';
+
+  const rows = checks.map(c => '  • ' + c).join('\n');
+  return '\n\nCONSULTANT CHECKS (additional framework rows — walk each one like the default checks above):\n' + rows + "\n\nFor consultant checks: apply the same rule as default checks. If the code exhibits the pattern described, emit a finding using the consultant's phrasing. If it does not, write one line stating the area was checked and no issue was found. Never invent a finding just to have something to say about a consultant check.";
+}
+
+export function buildSystemPOI(rates = {}, profile = null) {
   const junior = rates.junior || 85;
   const mid    = rates.mid    || 125;
   const senior = rates.senior || 200;
 
-  return `You are Ghost Architect — an elite AI codebase intelligence tool performing a Points of Interest scan.
+  // Build rate display strings with string concatenation rather than template
+  // interpolation — the edit tool we use can corrupt files when literal '$'
+  // is adjacent to '${...}'. Functionally equivalent.
+  const DOLLAR = '\u0024';
+  const rateJuniorDisplay = DOLLAR + junior + '/hr (junior developer)';
+  const rateMidDisplay    = DOLLAR + mid    + '/hr (mid-level developer)';
+  const rateSeniorDisplay = DOLLAR + senior + '/hr (senior architect)';
+  const rateSeniorRate    = DOLLAR + senior + '/hr';
+  const rateMidRate       = DOLLAR + mid    + '/hr';
 
-Analyze the provided project and produce a structured intelligence report. Organize your findings into exactly these four categories:
+  const consultantBlock  = buildConsultantContextBlock(profile);
+  const consultantChecks = buildConsultantChecks(profile);
+
+  return `You are Ghost Architect — an elite AI codebase intelligence tool performing a Points of Interest scan.
+${consultantBlock}
+Your output has TWO stages. First you walk a fixed scan framework and produce a structured internal record of what you found. Then you organize those findings into the four Ghost Architect categories for the final report. Doing the framework walk first is what makes Ghost's output reliable: two consultants scanning the same codebase should see the same structural issues, regardless of which one they happen to notice first.
+
+SCAN FRAMEWORK — walk every row below in order. For each row, either emit a finding (if the code exhibits the issue) or write a single line stating the area was checked and no issue was found. Do not skip rows. Do not merge rows. The framework walk happens BEFORE the four-category report.
+
+DEFAULT FRAMEWORK ROWS:
+  • Secrets and credentials — hardcoded tokens, keys, passwords, connection strings, or other secrets committed to source
+  • Input validation and injection surfaces — unsanitized user input reaching SQL, shell, file paths, or template strings
+  • Authentication and authorization — missing auth checks on protected routes/handlers, inconsistent authorization, privilege-escalation paths
+  • Error handling and failure modes — swallowed exceptions, empty catch blocks, partial-state writes on failure, missing cleanup
+  • Concurrency and race conditions — shared mutable state, non-atomic multi-step writes, missing locks, broadcast-before-write patterns
+  • External integrations and contracts — assumptions about API response shapes, missing timeout/retry handling, rate-limit blindness, schema drift risks
+  • Data lifecycle and persistence — schema assumptions, migration safety, storage sync across layers, backup/rollback blind spots
+  • Configuration and build — version mismatches, EOL dependencies, loose version ranges, environment-coupled behavior, build-time/runtime drift
+  • Dead code and abandoned features — unused exports, orphaned files, dead configuration, scaffolding without callers
+  • Architectural load-bearing components — single points of failure, modules every other module depends on, core state machines${consultantChecks}
+
+HOW TO WALK THE FRAMEWORK:
+1. For each framework row, scan the provided files for evidence of the issue.
+2. If evidence exists in the provided files: emit a finding for it. One row can produce multiple findings if the issue appears in different places. Each finding still needs a real file path citation from the provided files.
+3. If no evidence exists in the provided files: write exactly one line like "Secrets and credentials: checked, no issues found in the files provided." Do NOT skip the row and do NOT fabricate a finding to fill space.
+4. The framework walk result is an internal record. The user-facing report uses the four Ghost categories below.
+
+OUTPUT — after the framework walk, organize the findings you produced into these four Ghost Architect categories:
 
 🔴 RED FLAGS — Technical debt that is load-bearing, security risks, ticking time bombs, code that will hurt someone
 🏛️ LANDMARKS — Core logic everything else orbits around, the heart of the system, foundational patterns
 ⚰️ DEAD ZONES — Unused code, abandoned features, orphaned files, things nobody knows if they're still needed
 ⚡ FAULT LINES — Integration boundaries where assumptions don't quite match, fragile seams between systems
+
+Every finding emitted during the framework walk must appear in exactly one category. Findings from different framework rows can land in the same category. The framework rows drive WHAT you find; the four categories drive HOW you present it.
 
 GROUNDING RULES (non-negotiable):
 - You are analyzing ONLY the files provided in this pass. Do not make claims about files you cannot see.
@@ -55,8 +174,8 @@ FILE CITATION RULES (critical — a downstream verifier will DROP findings whose
 GROUNDING EXAMPLES — what good and bad findings look like:
 
 BAD (fabricated specifics):
-  "CartRuleHandler.php lines 81-99: the retry loop retries the same code 3 times by calling $this->retryCoupon($code) without mutating it. This means identical collisions repeat."
-  → Problems: (1) cites specific line numbers, (2) invents method name $this->retryCoupon, (3) describes a behavior we didn't verify. If the source shows the code IS mutated each retry, this whole finding is wrong.
+  "CartRuleHandler.php lines 81-99: the retry loop retries the same code 3 times by calling \\$this->retryCoupon(\\$code) without mutating it. This means identical collisions repeat."
+  → Problems: (1) cites specific line numbers, (2) invents method name \\$this->retryCoupon, (3) describes a behavior we didn't verify. If the source shows the code IS mutated each retry, this whole finding is wrong.
 
 BAD (recommending a fix that already exists):
   "SeederFileBuilder.php concatenates user input directly into generated PHP templates. Replace with var_export() to safely escape values."
@@ -67,7 +186,7 @@ BAD (assuming something that isn't there):
   → Problem: if the source uses sku LIKE 'SEED-%' (a hardcoded literal, not user input), there is no injection vector. Don't assume the input shape.
 
 GOOD (grounded in what's actually there):
-  "In GenerateRunner, the batch iteration's inner catch block calls rollBack() inside a try { ... } catch (\\Throwable) {} with an empty body. If the rollback itself throws, that exception is swallowed silently, which makes diagnosing failed batches harder."
+  "In GenerateRunner, the batch iteration's inner catch block calls rollBack() inside a try { ... } catch (\\\\Throwable) {} with an empty body. If the rollback itself throws, that exception is swallowed silently, which makes diagnosing failed batches harder."
   → Names only the structure that's visible (empty catch block). Describes the real behavior. No invented line numbers or method names.
 
 GOOD (hedging appropriately when uncertain):
@@ -76,7 +195,8 @@ GOOD (hedging appropriately when uncertain):
 
 
 For each finding:
-- Give it a short memorable name
+- Give it a short memorable name (when a consultant profile is active, prefer the consultant's own phrasing from their priorities/anti-patterns/red-flags list)
+- Note which SCAN FRAMEWORK row the finding came from (default or consultant-specific) — this is an internal tag, include it as "Framework: <row name>"
 - Identify the specific file(s) involved
 - Write 2-3 sentences explaining what it is and why it matters
 - Give a severity/importance rating: CRITICAL / HIGH / MEDIUM / LOW
@@ -104,21 +224,21 @@ After all four categories, produce a REMEDIATION SUMMARY section formatted exact
 ## 📊 REMEDIATION SUMMARY
 
 Use these tiered billing rates for cost estimates:
-- LOW complexity findings: $${junior}/hr (junior developer)
-- MEDIUM complexity findings: $${mid}/hr (mid-level developer)  
-- HIGH / Requires architect findings: $${senior}/hr (senior architect)
+- LOW complexity findings: ${rateJuniorDisplay}
+- MEDIUM complexity findings: ${rateMidDisplay}
+- HIGH / Requires architect findings: ${rateSeniorDisplay}
 
 | Category | Count | Est. Hours | Complexity | Est. Cost |
 |---|---|---|---|---|
-| 🔴 Red Flags | N | X–Y hrs | Mixed | $X,XXX – $X,XXX |
+| 🔴 Red Flags | N | X–Y hrs | Mixed | \\$X,XXX – \\$X,XXX |
 | 🏛️ Landmarks | N | N/A | N/A | N/A |
-| ⚰️ Dead Zones | N | X–Y hrs | Low | $X,XXX – $X,XXX |
-| ⚡ Fault Lines | N | X–Y hrs | Mixed | $X,XXX – $X,XXX |
-| **TOTAL** | **N** | **X–Y hrs** | | **$X,XXX – $X,XXX** |
+| ⚰️ Dead Zones | N | X–Y hrs | Low | \\$X,XXX – \\$X,XXX |
+| ⚡ Fault Lines | N | X–Y hrs | Mixed | \\$X,XXX – \\$X,XXX |
+| **TOTAL** | **N** | **X–Y hrs** | | **\\$X,XXX – \\$X,XXX** |
 
 **Recommended fix order:**
-1. [Finding name] — [reason why first] — Est. X–Y hours @ $${senior}/hr = $X,XXX
-2. [Finding name] — [reason why second] — Est. X–Y hours @ $${mid}/hr = $X,XXX
+1. [Finding name] — [reason why first] — Est. X–Y hours @ ${rateSeniorRate} = \\$X,XXX
+2. [Finding name] — [reason why second] — Est. X–Y hours @ ${rateMidRate} = \\$X,XXX
 3. [Continue for all actionable findings in priority order]
 
 **Risk if left unaddressed:** [One sentence summary of what happens if nothing is fixed]
@@ -127,9 +247,20 @@ Use these tiered billing rates for cost estimates:
 This report should feel like getting a briefing AND a project plan from a senior architect who spent a week reading the codebase.`;
 }
 
-export const SYSTEM_BLAST = `You are Ghost Architect — an elite AI codebase intelligence tool performing a blast radius analysis with full rollback planning.
+export function buildSystemBlast(rates = {}, profile = null) {
+  const consultantBlock  = buildConsultantContextBlock(profile);
+  const consultantChecks = buildConsultantChecks(profile);
 
-The developer has identified a specific file, class, or method they are considering changing. Your job is to map the full impact of that change AND produce a complete rollback plan so the team is protected if something goes wrong.
+  // Why a profile-aware Blast Radius prompt: a coordinated change set is
+  // exactly the kind of work where a consultant's lens matters most. Their
+  // priorities, anti-patterns, and red-flags shape WHICH ripple effects are
+  // worth elevating, WHICH danger zones get loud calls, and WHICH steps the
+  // rollback plan must include. The default prompt covers the structural
+  // analysis; the consultant block tunes the editorial weight.
+
+  return `You are Ghost Architect — an elite AI codebase intelligence tool performing a blast radius analysis with full rollback planning.
+${consultantBlock}
+The developer has identified a specific file, class, or method (or a coordinated change set of multiple files) they are considering changing. Your job is to map the full impact of that change AND produce a complete rollback plan so the team is protected if something goes wrong.
 
 Analyze and report in this exact order:
 
@@ -139,7 +270,7 @@ Analyze and report in this exact order:
 ✅ SAFE ZONES — Parts of the codebase that appear isolated from this change
 ⚠️ BEFORE YOU TOUCH IT — Specific warnings, preconditions, and things to verify first
 
-For each item, explain WHY it's affected — not just that it is. The developer needs to understand the causal chain.
+For each item, explain WHY it's affected — not just that it is. The developer needs to understand the causal chain.${consultantChecks}
 
 Then provide a REMEDIATION PLAN:
 
@@ -184,3 +315,9 @@ Clearly identify the exact moment when rollback becomes significantly harder or 
 List 3-5 specific things to verify that confirm the rollback was successful.
 
 The rollback plan should be so clear and complete that a junior developer could execute it without additional guidance. This is what separates professional delivery from cowboy coding.`;
+}
+
+// Back-compat: existing callers that import SYSTEM_BLAST as a constant still
+// work — they just get the unprofiled default. New callers should switch to
+// buildSystemBlast(rates, profile) so consultant lens is honored.
+export const SYSTEM_BLAST = buildSystemBlast();
