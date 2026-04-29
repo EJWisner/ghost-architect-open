@@ -122,9 +122,34 @@ When a profile is active, the main-menu input options show a `[profile: <name> �
 
 ### Editing a profile by hand
 
-Profiles are plain YAML files in `~/.ghost/profiles/`. You can edit them in any editor. Profiles can also be authored as `.yml`, `.md`, or `.txt` — Markdown and plain-text profiles are extracted via Claude into the canonical schema and cached locally.
+Profiles are plain YAML files in `~/.ghost/profiles/`. You can edit them in any editor. Save your changes and the next scan picks them up — no rebuild step.
 
-Example profile (what the wizard produces, with one human edit):
+### Bring your own methodology document
+
+If you already have a written methodology — a Google Doc, a one-pager, a Notion page, a markdown audit guide — you don't need to use the wizard. Save the document as a `.md` or `.txt` file anywhere on your machine and point Ghost at it directly:
+
+```bash
+# Markdown methodology — Ghost looks for ## Priorities, ## Anti-patterns,
+# ## Red flags, and ## Branding sections, plus optional YAML frontmatter
+ghost --profile ~/Documents/my-audit-methodology.md
+
+# Plain text — Ghost extracts the structure via Claude and caches the result
+ghost --profile ~/Documents/my-audit-methodology.txt
+```
+
+Ghost auto-detects the format from the file extension:
+
+- **`.yaml` / `.yml`** — parsed directly. Free, instant. (This is what the wizard produces.)
+- **`.md` / `.markdown`** — Ghost looks for YAML frontmatter (between `---` markers at the top) and recognized section headings (`## Priorities`, `## Anti-patterns`, `## Red flags`, `## Branding`). Bullets under those headings become list entries; key/value lines under `## Branding` become the branding object. Anything else is preserved as prose context for the scan. Free, instant.
+- **`.txt` / anything else** — full prose extraction via Claude. Ghost reads the document, extracts the canonical schema, and caches the result at `~/.ghost/profiles/.cache/{hash}.json`. The extraction LLM call costs a few cents the first time; subsequent scans with the same file are free (the cache is keyed on content hash, so editing the file invalidates the cache automatically).
+
+**Recommended location:** save imported methodology files in `~/.ghost/profiles/` alongside wizard-generated profiles. They'll show up in `ghost --list-profiles` and in the menu's profile picker, and you can manage them all from the same place.
+
+**Recommended workflow:** start with whatever doc you already have. Run a scan with `--profile` pointing at it. Review the report. If you want to tighten the methodology, run `ghost` → **Manage Ghost Partner Profiles** → **Edit existing profile** to refine the structured fields, or open the cached YAML in your editor for direct edits.
+
+### Profile schema
+
+Example of the canonical YAML schema (what the wizard produces, what `.md` and `.txt` files get extracted into):
 
 ```yaml
 name: "Magento & Shopify Performance, Security & Server Cost Audit"
