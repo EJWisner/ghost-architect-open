@@ -32,6 +32,7 @@ const inquirerTheme = process.platform === 'win32' ? {
 
 import { runCompareMode } from '../src/modes/compare.js';
 import { runConflictMode } from '../src/modes/conflict.js';
+import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
@@ -189,6 +190,7 @@ async function selectInputMethod(activeProfileLabel) {
     { name: (IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory') + profileSuffix, value: 'files' },
     { name: (IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file') + profileSuffix, value: 'zip' },
     { name: (IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository') + profileSuffix, value: 'github' },
+    { name: (IS_WINDOWS ? '[PRT] Audit prompts (folder)' : '🧪  Audit prompts (folder)') + chalk.gray('  — Prompt Triage scan'), value: 'prompt-triage' },
     new inquirer.Separator(),
     { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
@@ -671,6 +673,35 @@ async function main() {
           console.log(chalk.yellow(`⚠  Could not refresh profile: ${err.message}`));
         }
         printBanner();
+        continue;
+      }
+
+      if (method === 'prompt-triage') {
+        const { folderPath } = await inquirer.prompt([{
+          type: 'input',
+          name: 'folderPath',
+          message: chalk.cyan('Folder containing prompt files:'),
+          default: process.cwd(),
+          theme: inquirerTheme,
+          validate: (input) => {
+            if (!input || !input.trim()) return 'Folder path is required.';
+            const abs = path.resolve(input.trim());
+            if (!fs.existsSync(abs)) return 'Folder does not exist: ' + abs;
+            try {
+              if (!fs.statSync(abs).isDirectory()) return 'Path is not a directory: ' + abs;
+            } catch (err) {
+              return 'Could not access path: ' + err.message;
+            }
+            return true;
+          },
+        }]);
+        try {
+          await runPromptTriageMode({
+            source: { kind: 'localFolder', path: folderPath.trim() },
+          });
+        } catch (err) {
+          console.log(chalk.red('\n' + SYM.cross + ' Prompt Triage failed: ' + err.message + '\n'));
+        }
         continue;
       }
 
