@@ -35,7 +35,7 @@ import { runConflictMode } from '../src/modes/conflict.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-const VERSION   = '4.9.0';
+const VERSION   = '5.0.0';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER      = 'pro';

@@ -18,6 +18,9 @@ export function ensureProjectsDir() {
 function projectDir(label) {
   const safe = slugify(label);
   const dir  = path.join(PROJECTS_DIR, safe);
+  if (!dir.startsWith(PROJECTS_DIR)) {
+    throw new Error('Invalid project label - path traversal detected: ' + label);
+  }
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
