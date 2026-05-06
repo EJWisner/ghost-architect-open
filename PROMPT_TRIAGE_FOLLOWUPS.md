@@ -240,12 +240,12 @@ consecutive runs with the same code. MEDIUM-severity counts are stable
 and can be treated as load-bearing test signal.
 
 ### F-19 — Cross-fire pattern recurs on every new Tier 2 detector ship
-**Status:** OPEN — batch-fix during F-12 tuning pass
+**Status:** PARTIALLY MITIGATED — design-time prevention works for the new detector; existing detectors still need batch standardization
 **Source:** sessions 6, 7 (every Tier 2 detector ship to date)
 **Priority:** MEDIUM (predictable, not blocking)
-**Why:** Every new Tier 2 detector cross-fires with at least one
-existing sibling on the synthetic worst-case fixture (the one
-constructed with maximum thematic overlap). Pattern observed:
+**Why:** Every new Tier 2 detector through #11 cross-fired with at
+least one existing sibling on the synthetic worst-case fixture (the
+one constructed with maximum thematic overlap). Pattern observed:
   - Session 6 underspecifiedConstraints ship: ambiguousInstruction
     cross-fired on fixtures 25/26. Fixed by adding "missing rubrics"
     carve-out paragraph to ambiguousInstruction.
@@ -256,6 +256,12 @@ constructed with maximum thematic overlap). Pattern observed:
   - Session 7 undefinedOutputFormat ship: undefinedOutputFormat
     cross-fired on fixture 29; ambiguousInstruction also re-leaked
     on fixture 29. Fixed both with imperative trip-wire vocabulary.
+  - Session 7 overloadedPrompt ship: NO cross-fire on the synthetic
+    overload fixtures (34, 35, 36). The detector was designed from
+    the start with the SCOPE OF THIS DETECTOR header, the imperative
+    DROP trip-wire form, and the full vocabulary list covering all
+    four sibling territories. First Tier 2 detector to ship without
+    a cross-fire incident.
 
 The cross-fire never appeared on dogfood prompts — only on synthetic
 fixtures by construction. Real-world prompt structures don't produce
@@ -270,20 +276,35 @@ until the carve-out is in load-bearing position (early in the
 envelope, imperative voice, with the literal vocabulary the model
 tends to use).
 
-**Action plan, deferred to F-12:**
-  - Standardize trip-wire vocabulary across all Tier 2 detectors
-    (see F-20).
-  - Promote SCOPE OF THIS DETECTOR header to a templated structure
-    in llmAuditClient.js so each detector defines its scope statement
-    in a structured way rather than free-form prose.
-  - Add a short proactive negative-space framing at the top of the
-    envelope listing the OTHER live detectors and their territories,
-    so the model sees the boundaries before reading the positive
-    examples.
+**Evidence the design-time pattern works:** Detector #12 shipped
+with zero cross-fire incidents because it baked in (a) the SCOPE
+OF THIS DETECTOR header naming all four sibling territories, (b)
+the imperative DROP trip-wire form ("DROP that finding and continue.
+Do not emit it."), and (c) the full vocabulary list covering ambig,
+underspec, conflict, and undef-format trip words — all from the
+first write. The pattern is now well-enough understood to prevent
+at design time rather than fix incrementally.
 
-Not blocking detector ship cadence. Predictable, single-edit fix per
-incident; the pattern will continue through detector #15 ship at
-current pace.
+**Action plan, partially deferred to F-12:**
+  - DONE for new detectors: every new Tier 2 detector ships with
+    full SCOPE header + imperative DROP trip-wire + complete
+    sibling vocabulary list from the first write. Detector #12
+    confirmed this approach prevents cross-fire entirely.
+  - DEFERRED to F-12: standardize trip-wire vocabulary across the
+    EXISTING detectors (see F-20). Detectors #8 and #10
+    (ambiguousInstruction, conflictingInstructions) had their
+    trip-wires retrofitted incrementally and use ad-hoc lists.
+  - DEFERRED to F-12: promote SCOPE OF THIS DETECTOR header to a
+    templated structure in llmAuditClient.js so each detector
+    defines its scope statement in a structured way rather than
+    free-form prose.
+  - DEFERRED to F-12: add a short proactive negative-space framing
+    at the top of the envelope listing the OTHER live detectors
+    and their territories, so the model sees the boundaries
+    before reading the positive examples.
+
+Not blocking detector ship cadence. The new-detector path is now
+clean. Retrofit of existing detectors is housekeeping for F-12.
 
 ### F-20 — Standardize trip-wire vocabulary across Tier 2 detectors
 **Status:** OPEN — batch with F-12
@@ -297,6 +318,12 @@ in its envelope, drifted from the others by accident:
     "conflicting", "contradictory", "in tension", "mutually
     exclusive", "cannot both be satisfied", "no length cap",
     "rubric", "criteria"
+  - overloadedPrompt: "ambiguous", "multiple readings",
+    "conflicting", "contradictory", "in tension", "mutually
+    exclusive", "cannot both be satisfied", "cannot coexist",
+    "no length cap", "no word count", "rubric", "criteria",
+    "no schema", "no fields specified", "no sections specified"
+    (most complete list of the live detectors)
   - underspecifiedConstraints, conflictingInstructions: no trip-wire
     yet (only the older Do NOT flag bullets)
 
@@ -304,12 +331,52 @@ During F-12, build a canonical vocabulary table mapping each detector
 to: (a) its own positive-scope marker words, (b) the marker words
 that indicate territory belongs to a sibling detector. Enforce
 through a shared template in llmAuditClient.js so adding detector
-#N+1 doesn't require N edits to existing detectors.
+#N+1 doesn't require N edits to existing detectors. Use
+overloadedPrompt's vocabulary list as the most-complete starting
+point.
 
 Falsification: track cross-fire incidents per detector ship after
-the shared template lands. If incidents drop to <1 per ship, the
-template works. If they continue at current rate, the issue is
-structural to the envelope approach, not vocabulary management.
+the shared template lands. If incidents stay at zero (matching the
+result on detector #12 ship), the template works. If they return,
+the issue is structural to the envelope approach, not vocabulary
+management.
+
+### F-21 — Legitimate detector co-firing is intentional, not a defect
+**Status:** DOCUMENTED — design principle, no action required
+**Source:** session 7 (overloadedPrompt ship verified on fixture 32)
+**Priority:** LOW (clarifying note)
+**Why:** Distinguish two patterns that look superficially similar but
+are different:
+
+  - **Cross-fire (defect):** two detectors fire on the SAME defect
+    from different angles. Example: ambiguousInstruction firing on
+    fixture 29 with finding titled "Conflicting requirements" —
+    that's the conflictingInstructions territory and the ambig
+    detector should not have emitted. Fix with envelope carve-out
+    and trip-wire vocabulary (see F-19).
+
+  - **Co-fire (correct):** two detectors fire on DIFFERENT defects
+    that happen to coexist in one prompt. Example: fixture 32 has
+    both an undefinedOutputFormat defect (three named output
+    containers each missing schemas: answer-and-reasoning, report,
+    CSV) AND a separate overloadedPrompt defect (those same three
+    are also independent deliverables stacked without precedence).
+    Both findings are correct because the defects are real and
+    distinct, even though they're co-located. Two detectors finding
+    two real problems on one prompt is the system working as
+    designed, not duplication.
+
+This distinction matters because cross-fire is a tuning bug that
+needs fixing, while co-fire is correct behavior that should be
+preserved. F-12's report-layer dedup work should NOT collapse
+genuine co-fires into single findings; it should target only the
+structural duplication where two detectors describe the same
+underlying authorial mistake.
+
+No action required — this is documentation of a design principle
+that became visible when overloadedPrompt was added to the
+detector pack. Cite this entry if F-12 work tempts toward overly
+aggressive consolidation.
 
 ---
 
@@ -352,3 +419,26 @@ structural to the envelope approach, not vocabulary management.
   MEDIUM findings are stable. No positive-scope shrinkage from the
   trip-wire edit. Treat single-LOW deltas as variance unless they
   reproduce across 2+ runs.
+- overloadedPrompt detector #12 (session 7, commit a68a56a): shipped.
+  3 fixtures (34-36) covering stacked task types positive, personas
+  + governance positive (also exercises legitimate conflictingInstructions
+  co-firing on items 7+8 tone and 10+11 word count), and long-but-
+  focused negative control. Symmetric F-15 carve-outs added to all
+  four live Tier 2 siblings (one short bullet each naming
+  overloadedPrompt and its task-count-sprawl territory). Trip-wire
+  vocabulary on overloadedPrompt itself uses the imperative DROP
+  form covering all four sibling detectors from the first write —
+  first Tier 2 detector to ship without a cross-fire incident on
+  the synthetic worst-case fixture (see F-19 update). Fixture 24
+  cleaned again: "Format your response as a numbered list" replaced
+  with explicit per-item mapping ("exactly four items in this order:
+  (1) summary, (2) issues, (3) translated terms, (4) resolution
+  steps") to keep fixture clean across all five Tier 2 detectors.
+  Header comment updated to reflect all-Tier-2 negative-control
+  status. Final fixture verification across the full Tier 2 corpus:
+  22:1, 23:3, 24:0, 25:4, 26:5, 27:0, 28:3, 29:2, 30:0, 31:1, 32:5
+  (4 undef-format + 1 overloadedPrompt co-fire), 33:0, 34:1, 35:5
+  (3 overloadedPrompt + 2 conflict), 36:0. All MEDIUM findings
+  retained. All five negative controls (24, 27, 30, 33, 36) hold
+  at 0. Fixture 32 co-firing pattern formalized as design principle
+  — see F-21.
