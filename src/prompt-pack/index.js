@@ -52,6 +52,7 @@ import * as ambiguousInstruction from './ambiguousInstruction.js';
 import * as underspecifiedConstraints from './underspecifiedConstraints.js';
 import * as conflictingInstructions from './conflictingInstructions.js';
 import * as undefinedOutputFormat from './undefinedOutputFormat.js';
+import * as overloadedPrompt from './overloadedPrompt.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
@@ -84,7 +85,8 @@ const REGISTRY = [
   { id: 'underspecifiedConstraints',  tier: 2, module: underspecifiedConstraints,  requiresTargetModel: true },
   { id: 'conflictingInstructions',    tier: 2, module: conflictingInstructions,    requiresTargetModel: true },
   { id: 'undefinedOutputFormat',      tier: 2, module: undefinedOutputFormat,      requiresTargetModel: true },
-  // [pending] poorOrganization, overloadedPrompt,
+  { id: 'overloadedPrompt',           tier: 2, module: overloadedPrompt,           requiresTargetModel: true },
+  // [pending] poorOrganization,
   // [pending] inefficientFewShot, poorDocumentation
 
   // Tier 3: hybrid

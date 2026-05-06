@@ -139,7 +139,15 @@ const DEFECT_DESCRIPTION =
   + 'is undefined output format (different detector), NOT a conflict. '
   + 'Flag here only when TWO formats are stated and they cannot '
   + 'coexist in one output (e.g. "output as JSON" plus "use markdown '
-  + 'headers"); not when one format is named without a complete spec.';
+  + 'headers"); not when one format is named without a complete spec.\n'
+  + '  - Prompts that ask for too many distinct tasks at once where '
+  + 'each individual task is clear and the tasks do not contradict '
+  + 'each other. "Analyze X, then write a marketing email, then '
+  + 'generate a unit test" is too much for one call but the rules '
+  + 'do not conflict — they multiply. That is overloadedPrompt '
+  + '(different detector), NOT conflict. Flag here only when satisfying '
+  + 'one rule actively prevents satisfying another, not when the '
+  + 'rules merely accumulate.';
 
 const POSITIVE_EXAMPLES =
   '  - Prompt says: "Be concise. Keep your response brief." '

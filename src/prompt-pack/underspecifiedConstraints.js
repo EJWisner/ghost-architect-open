@@ -123,7 +123,13 @@ const DEFECT_DESCRIPTION =
   + 'output format), NOT an underspecified constraint. Skip them. '
   + 'Flag here only when the prompt asks for a measurement on a '
   + 'dimension whose scale is undefined, not when an output '
-  + 'container lacks an internal schema.';
+  + 'container lacks an internal schema.\n'
+  + '  - Prompts that ask for too many distinct tasks at once '
+  + '(e.g. "analyze X, then write a marketing email, then generate '
+  + 'a unit test"). That is overloadedPrompt (different detector), '
+  + 'NOT an underspecified constraint. Each individual measurement '
+  + 'request may have a clear scale; the defect is task-count '
+  + 'sprawl. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Complexity: Low / Medium / High / Requires architect" '

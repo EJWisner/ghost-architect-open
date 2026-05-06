@@ -115,7 +115,12 @@ const DEFECT_DESCRIPTION =
   + '  - Output STRUCTURE specification gaps (e.g. "output as JSON" '
   + 'without listing fields, "provide a report" without naming '
   + 'sections). Those belong to a different detector (undefined '
-  + 'output format), NOT ambiguity. Skip them.';
+  + 'output format), NOT ambiguity. Skip them.\n'
+  + '  - Prompts that ask for too many distinct tasks at once '
+  + '(e.g. "analyze X, then write a marketing email, then generate a '
+  + 'unit test"). That is overloadedPrompt (different detector), '
+  + 'NOT ambiguity. Each individual instruction may be clear; the '
+  + 'defect is task-count sprawl. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "When the customer mentions an issue, summarize it." '

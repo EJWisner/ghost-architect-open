@@ -175,7 +175,13 @@ const DEFECT_DESCRIPTION =
   + 'parser from extracting the right boundaries (e.g. a JSON '
   + 'object with no field names is not parseable into known slots; '
   + 'a numbered list is). If the format gives the consumer enough '
-  + 'to find item boundaries, do NOT flag for missing item internals.';
+  + 'to find item boundaries, do NOT flag for missing item internals.\n'
+  + '  - Prompts that ask for too many distinct tasks at once '
+  + '(e.g. "analyze X, then write a marketing email, then generate '
+  + 'a unit test"). That is overloadedPrompt (different detector), '
+  + 'NOT undefined output format. Each individual deliverable may '
+  + 'have a clear (or unclear) format spec; the defect there is '
+  + 'task-count sprawl, not missing structure. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Output your response as a JSON object." '
