@@ -37,8 +37,16 @@ const __dirname  = path.dirname(__filename);
 const REPO_ROOT  = path.dirname(__dirname);
 
 const FOLDERS = [
-  { label: 'DOGFOOD CORPUS (real prompts, behavior depends on tuning)', dir: path.join(REPO_ROOT, 'prompts-extracted') },
-  { label: 'BROKEN FIXTURES (expected: findings)',                       dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus') },
+  {
+    label: 'DOGFOOD CORPUS (real prompts, behavior depends on tuning)',
+    dir: path.join(REPO_ROOT, 'prompts-extracted'),
+    targetModel: 'claude-opus-4-7',
+  },
+  {
+    label: 'BROKEN FIXTURES (expected: findings)',
+    dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus'),
+    targetModel: 'gpt-4o',
+  },
 ];
 
 function severitySymbol(s) {
@@ -51,11 +59,14 @@ function severitySymbol(s) {
   }
 }
 
-async function scanFolder(label, dir) {
+async function scanFolder(label, dir, targetModel) {
   console.log('');
   console.log('═'.repeat(72));
   console.log(label);
   console.log('Folder: ' + dir);
+  if (targetModel) {
+    console.log('Target model: ' + targetModel);
+  }
   console.log('═'.repeat(72));
 
   if (!fs.existsSync(dir)) {
@@ -72,7 +83,7 @@ async function scanFolder(label, dir) {
   for (const file of files) {
     const filePath = path.join(dir, file);
     const promptText = fs.readFileSync(filePath, 'utf8');
-    const findings = await runAll(promptText, filePath);
+    const findings = await runAll(promptText, filePath, { targetModel });
     totalFindings += findings.length;
 
     console.log('');
@@ -102,7 +113,7 @@ async function main() {
 
   let grandTotal = 0;
   for (const folder of FOLDERS) {
-    grandTotal += await scanFolder(folder.label, folder.dir);
+    grandTotal += await scanFolder(folder.label, folder.dir, folder.targetModel);
   }
 
   console.log('');

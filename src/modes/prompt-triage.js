@@ -17,6 +17,9 @@
  *   - source:        { kind: 'localFolder', path: string }  (required)
  *   - reportsDir:    where to save the report markdown (defaults to
  *                    ~/Ghost Architect Reports/prompt-triage/)
+ *   - targetModel:   model registry ID (see src/prompt-pack/models.js).
+ *                    When provided, length-aware detectors use the
+ *                    correct tokenizer; otherwise the heuristic is used.
  *   - onProgress:    optional callback (file, idx, total) => void
  */
 
@@ -28,6 +31,7 @@ import chalk from 'chalk';
 import { loadPromptSource } from '../prompt-pack/loader.js';
 import { runAll, listDetectors } from '../prompt-pack/index.js';
 import { renderReport } from '../prompt-pack/report.js';
+import { getModel } from '../prompt-pack/models.js';
 
 function defaultReportsDir() {
   return path.join(os.homedir(), 'Ghost Architect Reports', 'prompt-triage');
@@ -70,11 +74,21 @@ export async function runPromptTriageMode(options = {}) {
   }
 
   const reportsDir = options.reportsDir || defaultReportsDir();
+  const targetModel = options.targetModel || null;
+  const targetModelEntry = targetModel ? getModel(targetModel) : null;
 
   // ── Banner ──────────────────────────────────────────────────────────────
   console.log('');
   console.log(chalk.bold('Prompt Triage'));
   console.log(chalk.gray('Auditing prompts for defects (Tian et al. 2025 taxonomy).'));
+  if (targetModelEntry) {
+    console.log(chalk.gray('Target model: ' + targetModelEntry.displayName
+      + ' (' + targetModelEntry.contextWindow.toLocaleString() + ' token window)'));
+  } else if (targetModel) {
+    console.log(chalk.yellow('⚠  Unknown target model "' + targetModel + '"; using heuristic token counts.'));
+  } else {
+    console.log(chalk.gray('Target model: (none specified, using heuristic token counts)'));
+  }
   console.log('');
 
   // ── Load ────────────────────────────────────────────────────────────────
@@ -115,7 +129,7 @@ export async function runPromptTriageMode(options = {}) {
       options.onProgress(file, i + 1, loaded.files.length);
     }
 
-    const findings = await runAll(file.content, file.path);
+    const findings = await runAll(file.content, file.path, { targetModel });
     for (const f of findings) allFindings.push(f);
     scannedFilePaths.push(file.path);
 

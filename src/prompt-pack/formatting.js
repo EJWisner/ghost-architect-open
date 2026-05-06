@@ -345,9 +345,12 @@ function detectUnclosedInlineCode(promptText, filePath) {
  *
  * @param {string} promptText  The prompt to audit.
  * @param {string} filePath    Path to the prompt file (for finding.file).
+ * @param {object} [opts]      Reserved for future use; ignored here.
+ *                              Formatting detection is purely structural
+ *                              and does not depend on the target model.
  * @returns {Promise<Array>}   Findings from all sub-detectors.
  */
-export async function detect(promptText, filePath) {
+export async function detect(promptText, filePath, opts = {}) {
   const findings = [];
 
   findings.push(...detectUnclosedCodeBlock(promptText, filePath));

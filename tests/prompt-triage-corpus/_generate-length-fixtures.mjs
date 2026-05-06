@@ -10,11 +10,26 @@
  * this script regenerates it alongside 07 and 08 from the same
  * paragraph source, so retuning is a one-edit affair.
  *
- * Sizing math (CHARS_PER_TOKEN = 4 in length.js):
+ * Sizing math:
+ *   The prompt-pack tokenizer returns either an exact tiktoken count
+ *   (for OpenAI target models) or a 4-chars-per-token heuristic (for
+ *   anything else). The smoke test passes GPT-4o for the broken fixtures
+ *   folder, so these counts must clear thresholds under tiktoken's
+ *   actual measurement, not the heuristic estimate.
+ *
+ *   Empirically, our padding paragraph tokenizes to roughly 5.79
+ *   chars/token under GPT-4o (o200k_base). With ~25% safety margin:
+ *
  *   PARAGRAPH = 200 chars (199 + \n)
- *   06: header + 65 paragraphs  ~13,080 chars  ~3,270 tokens  -> LOW
- *   07: header + 130 paragraphs ~26,080 chars  ~6,520 tokens  -> MEDIUM
- *   08: header + 260 paragraphs ~52,080 chars  ~13,020 tokens -> HIGH
+ *   06: header + 108 paragraphs ~21,640 chars  ~3,737 tokens (GPT-4o) -> LOW
+ *   07: header + 215 paragraphs ~43,040 chars  ~7,433 tokens (GPT-4o) -> MEDIUM
+ *   08: header + 431 paragraphs ~86,240 chars ~14,895 tokens (GPT-4o) -> HIGH
+ *
+ *   These same fixtures will over-fire under the heuristic strategy
+ *   (about 31% higher counts), so a smoke run that targets a Claude
+ *   or Gemini model will land each fixture squarely in or above its
+ *   tier. That's fine: we want fixtures that fire, not fixtures that
+ *   thread the needle for every strategy.
  *
  * If thresholds change in src/prompt-pack/length.js, update the
  * paragraph counts below to keep each fixture comfortably above its
@@ -33,9 +48,9 @@ const PARAGRAPH =
   + 'the input or burying the operative instruction.\n';
 
 const FIXTURES = [
-  { file: '06-length-low.md',    severity: 'LOW',    paragraphs: 65  },
-  { file: '07-length-medium.md', severity: 'MEDIUM', paragraphs: 130 },
-  { file: '08-length-high.md',   severity: 'HIGH',   paragraphs: 260 },
+  { file: '06-length-low.md',    severity: 'LOW',    paragraphs: 108 },
+  { file: '07-length-medium.md', severity: 'MEDIUM', paragraphs: 215 },
+  { file: '08-length-high.md',   severity: 'HIGH',   paragraphs: 431 },
 ];
 
 for (const f of FIXTURES) {

@@ -66,14 +66,19 @@ const REGISTRY = [
  *
  * @param {string} promptText  The full text of the prompt to audit.
  * @param {string} filePath    Path to the prompt file (for the file field).
+ * @param {object} [opts]      Optional context for detectors. Currently:
+ *                              opts.targetModel - model registry ID, used
+ *                              by length-aware detectors for accurate
+ *                              token counts. Detectors that don't care
+ *                              about the target model ignore opts.
  * @returns {Promise<Array>}   Findings from all detectors.
  */
-export async function runAll(promptText, filePath) {
+export async function runAll(promptText, filePath, opts = {}) {
   const allFindings = [];
 
   for (const entry of REGISTRY) {
     try {
-      const findings = await entry.module.detect(promptText, filePath);
+      const findings = await entry.module.detect(promptText, filePath, opts);
       if (Array.isArray(findings)) {
         for (const f of findings) allFindings.push(f);
       }
