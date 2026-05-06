@@ -49,6 +49,7 @@ import * as unboundedOutput from './unboundedOutput.js';
 import * as injectionStaticPattern from './injectionStaticPattern.js';
 import * as roleSeparation from './roleSeparation.js';
 import * as ambiguousInstruction from './ambiguousInstruction.js';
+import * as underspecifiedConstraints from './underspecifiedConstraints.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
@@ -78,7 +79,8 @@ const REGISTRY = [
   // detectors emit nothing without a target model and a one-line skip
   // note should be shown.
   { id: 'ambiguousInstruction',      tier: 2, module: ambiguousInstruction,      requiresTargetModel: true },
-  // [pending] underspecifiedConstraints, conflictingInstructions,
+  { id: 'underspecifiedConstraints', tier: 2, module: underspecifiedConstraints, requiresTargetModel: true },
+  // [pending] conflictingInstructions,
   // [pending] poorOrganization, undefinedOutputFormat, overloadedPrompt,
   // [pending] inefficientFewShot, poorDocumentation
 
