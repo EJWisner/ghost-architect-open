@@ -282,8 +282,25 @@ OF THIS DETECTOR header naming all four sibling territories, (b)
 the imperative DROP trip-wire form ("DROP that finding and continue.
 Do not emit it."), and (c) the full vocabulary list covering ambig,
 underspec, conflict, and undef-format trip words — all from the
-first write. The pattern is now well-enough understood to prevent
-at design time rather than fix incrementally.
+first write. Detector #13 (poorOrganization) repeated this result
+on its own fixtures: zero cross-fire on fixtures 37, 38, 39 from
+the first write. The pattern is now well-enough understood to
+prevent at design time rather than fix incrementally.
+
+**Counter-evidence that retrofit on existing detectors is unsafe:**
+During detector #13 ship, fixture 29 surfaced a fresh
+undefinedOutputFormat cross-fire (the existing detector started
+emitting a "Conflicting output format directives" finding that
+overlapped conflictingInstructions territory). An attempt to fix
+it by extending the existing trip-wire vocabulary on
+undefinedOutputFormat made things measurably worse: fixture 29
+went from 3 → 4 findings, and fixture 39 (a previously-clean
+negative control) gained a false-positive LOW finding. The edit
+was reverted. After revert, fixture 29 dropped to 2 findings
+(BELOW the pre-edit baseline) and fixture 39 returned to 0.
+The cross-fire on fixture 29 was sensitive to envelope edits in
+ways that made it impossible to predict by reading the change.
+See F-22 for the lesson.
 
 **Action plan, partially deferred to F-12:**
   - DONE for new detectors: every new Tier 2 detector ships with
@@ -378,6 +395,57 @@ that became visible when overloadedPrompt was added to the
 detector pack. Cite this entry if F-12 work tempts toward overly
 aggressive consolidation.
 
+### F-22 — Ad-hoc trip-wire tightening on existing Tier 2 detectors is unsafe
+**Status:** OPEN — defer all retrofit edits to F-12
+**Source:** session 7 (detector #13 ship, post-revert)
+**Priority:** HIGH (prevents future regression cycles)
+**Why:** During the detector #13 ship, an attempt to suppress a
+single undefinedOutputFormat cross-fire on fixture 29 by extending
+the trip-wire vocabulary list and adding an anti-rationalization
+clause produced TWO regressions in one round trip:
+  - Target fixture (29) went from 3 → 4 findings (opposite of intent).
+  - Previously-clean negative control (fixture 39) gained a LOW
+    false-positive on "container structure" (the change-log instruction).
+
+The edit was reverted. Post-revert, fixture 29 dropped to 2
+findings (BELOW the pre-edit baseline of 3) and fixture 39 returned
+to 0. The pre-edit cross-fire fixed itself just by removing the
+"fix" attempt. This is the second regression in one session caused
+by tightening existing Tier 2 envelopes (the first was the ambiguous
+Instruction trip-wire iteration during detector #11 ship, where
+each edit changed which fixtures fired in unpredictable ways).
+
+**Hypothesis:** Adding vocabulary words and anti-rationalization
+clauses to an existing detector's envelope changes how the LLM
+weights the entire envelope, not just the trip-wire section.
+The model can read "if you would say X, drop the finding" as
+"X is salient, look for X-shaped findings" — the very thing the
+clause was meant to prevent. This is consistent with the detector
+#11 session pattern where each successive trip-wire tightening
+shifted the cross-fire from one fixture to another rather than
+eliminating it.
+
+**Action:**
+  - DO NOT edit existing Tier 2 detector envelopes to fix
+    cross-fire incidents on individual fixtures. The edits are
+    not locally reasonable; their effects spread across all
+    fixtures unpredictably.
+  - Cross-fire incidents on existing detectors are a known F-19
+    pattern. Document them in followups when they appear, then
+    leave them for the F-12 batch fix (shared envelope template,
+    canonical vocabulary, structural separation of detector
+    boundaries).
+  - When a new detector ships and induces a cross-fire on an
+    existing detector, treat the cross-fire as a known cost of
+    the new ship, not a problem to fix by tightening the
+    existing detector. Ship the new detector at its clean state;
+    log the cross-fire fixture; move on.
+
+**Falsification:** if F-12's structural fix lands and cross-fires
+still recur on subsequent Tier 2 ships, the issue is deeper than
+vocabulary management — likely the LLM-augmented detector pattern
+itself needs revisiting. Track this when F-12 work is done.
+
 ---
 
 ## Closed items
@@ -442,3 +510,38 @@ aggressive consolidation.
   retained. All five negative controls (24, 27, 30, 33, 36) hold
   at 0. Fixture 32 co-firing pattern formalized as design principle
   — see F-21.
+- poorOrganization detector #13 (session 7, commit dc81f32): shipped.
+  3 fixtures (37-39) covering scattered length rules positive,
+  inverted SCQA dependency + buried role context positive, and
+  long-but-organized-without-markdown-headers negative control.
+  Symmetric F-15 carve-outs added to all four existing live Tier 2
+  siblings (ambig, underspec, conflict, undef-format) — one short
+  bullet each naming poorOrganization and its structural-arrangement
+  territory. Detector itself baked in the F-19 design-time prevention
+  pattern from the first write: SCOPE OF THIS DETECTOR header naming
+  all five sibling territories, imperative DROP trip-wire, full
+  vocabulary list covering ambig, underspec, conflict, undef-format,
+  and overload trip words. Result: zero cross-fire on detector #13's
+  own fixtures (37:1 ✓, 38:2 ✓, 39:0 ✓ — load-bearing negative
+  control held).
+  This ship surfaced and resolved a separate cross-fire on existing
+  fixture 29 (undefinedOutputFormat started emitting a "Conflicting
+  output format directives" finding alongside the legitimate
+  conflictingInstructions findings). An attempt to suppress the
+  cross-fire by tightening undefinedOutputFormat's trip-wire
+  vocabulary backfired: fixture 29 went 3→4 and fixture 39 gained
+  a false-positive LOW (regression on a load-bearing negative
+  control). The edit was reverted. Post-revert, fixture 29 dropped
+  to 2 findings (below the pre-edit baseline) and fixture 39
+  returned to 0. Lesson formalized as F-22.
+  Final fixture verification across the full Tier 2 corpus:
+  22:1, 23:3, 24:0, 25:4, 26:6 (6th finding within F-18 wobble band,
+  MEDIUM), 27:1 (LOW table-column-order finding, F-18 wobble),
+  28:3, 29:2, 30:0, 31:1, 32:5 (4 undef-format + 1 overloadedPrompt
+  co-fire), 33:0, 34:1, 35:6 (2 conflict + 3 overload + 1
+  poorOrganization co-fire — F-21 design principle), 36:2 (2
+  underspecified findings within F-18 wobble band), 37:1, 38:2, 39:0.
+  All MEDIUM findings on positive controls retained. All four
+  load-bearing negative controls (24, 30, 33, 39) hold at 0.
+  Fixtures 27 and 36 each gained findings within the F-18 ±1 LOW
+  variance band; not caused by this session's edits.
