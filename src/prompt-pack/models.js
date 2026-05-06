@@ -46,6 +46,18 @@ const MODELS = [
   // Google Gemini family. No mature offline tokenizer; heuristic only.
   { id: 'gemini-2-5-pro',        family: 'google',    displayName: 'Gemini 2.5 Pro',        contextWindow: 2000000, tokenizerStrategy: 'heuristic' },
   { id: 'gemini-2-5-flash',      family: 'google',    displayName: 'Gemini 2.5 Flash',      contextWindow: 1000000, tokenizerStrategy: 'heuristic' },
+
+  // Test-only entries. Marked testOnly: true so listModelsForPicker()
+  // hides them from the end-user CLI prompt. Smoke tests and the
+  // generator pass these IDs explicitly. Do not display in production UX.
+  {
+    id: 'test-tiny-4k',
+    family: 'test',
+    displayName: '(test) Tiny 4K window',
+    contextWindow: 4000,
+    tokenizerStrategy: 'tiktoken',
+    testOnly: true,
+  },
 ];
 
 // Indexed lookup. Built once at module load.
@@ -69,10 +81,23 @@ export function getModel(modelId) {
  * List every registered model. Returns a fresh array each call so
  * callers cannot mutate the registry.
  *
+ * Includes test-only entries. For end-user CLI menus, use
+ * listModelsForPicker() instead.
+ *
  * @returns {Array<object>}
  */
 export function listModels() {
   return MODELS.slice();
+}
+
+/**
+ * Like listModels() but excludes test-only entries. Use this in any
+ * end-user-facing UX (CLI inquirer choices, web pickers, docs).
+ *
+ * @returns {Array<object>}
+ */
+export function listModelsForPicker() {
+  return MODELS.filter(m => !m.testOnly);
 }
 
 /**

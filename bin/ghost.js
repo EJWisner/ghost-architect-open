@@ -33,7 +33,7 @@ const inquirerTheme = process.platform === 'win32' ? {
 import { runCompareMode } from '../src/modes/compare.js';
 import { runConflictMode } from '../src/modes/conflict.js';
 import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
-import { listModels } from '../src/prompt-pack/models.js';
+import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
@@ -709,7 +709,7 @@ async function main() {
         }]);
         let targetModel = null;
         if (specifyModel) {
-          const modelChoices = listModels().map(m => ({
+          const modelChoices = listModelsForPicker().map(m => ({
             name: m.displayName + chalk.gray(' (' + m.family + ', '
               + m.contextWindow.toLocaleString() + ' tokens)'),
             value: m.id,

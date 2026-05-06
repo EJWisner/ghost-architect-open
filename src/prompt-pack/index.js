@@ -30,6 +30,8 @@
 
 import * as formatting from './formatting.js';
 import * as length from './length.js';
+import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
+import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
 /**
  * Registry: detector module + metadata.
@@ -43,10 +45,14 @@ const REGISTRY = [
   // Tier 1: regex/structural
   { id: 'formatting',          tier: 1, module: formatting },
   { id: 'length',              tier: 1, module: length },
-  // [pending] tokenLimitContextOverflow, tokenLimitExcessive, unboundedOutput,
-  // [pending] roleSeparation, poorDocumentation, injectionStaticPattern
+  // [pending] unboundedOutput, roleSeparation, poorDocumentation,
+  // [pending] injectionStaticPattern
 
-  // Tier 2: LLM-assisted
+  // Tier 2: LLM/API-augmented. requiresTargetModel signals to the mode
+  // file that these detectors emit nothing without a target model and
+  // a one-line skip note should be shown.
+  { id: 'tokenLimitContextOverflow', tier: 2, module: tokenLimitContextOverflow, requiresTargetModel: true },
+  { id: 'tokenLimitExcessive',       tier: 2, module: tokenLimitExcessive,       requiresTargetModel: true },
   // [pending] ambiguousInstruction, underspecifiedConstraints, conflictingInstructions,
   // [pending] poorOrganization, undefinedOutputFormat, overloadedPrompt,
   // [pending] inefficientFewShot
@@ -102,10 +108,15 @@ export async function runAll(promptText, filePath, opts = {}) {
 
 /**
  * List detector IDs that are currently registered. Used by the mode
- * file to render a "ran N detectors against M prompts" summary line.
+ * file to render a "ran N detectors against M prompts" summary line
+ * and to detect which registered detectors require a target model.
  *
- * @returns {Array<{id: string, tier: number}>}
+ * @returns {Array<{id: string, tier: number, requiresTargetModel?: boolean}>}
  */
 export function listDetectors() {
-  return REGISTRY.map(e => ({ id: e.id, tier: e.tier }));
+  return REGISTRY.map(e => ({
+    id: e.id,
+    tier: e.tier,
+    requiresTargetModel: !!e.requiresTargetModel,
+  }));
 }

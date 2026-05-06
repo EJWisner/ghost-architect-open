@@ -1,32 +1,43 @@
 /**
  * src/prompt-pack/tokenizer.js
  *
- * Pluggable token counter for Prompt Triage. Returns accurate counts
- * for OpenAI models (via gpt-tokenizer) and a heuristic estimate for
- * everything else.
+ * Pluggable token counter for Prompt Triage. Two public functions:
  *
- * Single public API:
+ *   countTokens(text, modelId)
+ *     Returns exact tiktoken counts for OpenAI models, heuristic
+ *     estimates for everything else (including Claude and Gemini).
+ *     No network calls. Used by detectors that prefer speed and
+ *     graceful degradation over precision (currently length/excessive).
  *
- *   countTokens(text, modelId) -> { count, estimated, strategy }
+ *   countTokensExact(text, modelId)
+ *     Same as countTokens for OpenAI (tiktoken is already exact).
+ *     For Claude, calls the Anthropic SDK messages.countTokens()
+ *     endpoint over the network for ground-truth counts. For Gemini,
+ *     falls back to heuristic (no offline tokenizer; no Gemini SDK
+ *     dep this session). Used by detectors that need precision to
+ *     answer their question correctly (tokenLimitContextOverflow,
+ *     tokenLimitExcessive). On any API failure, degrades to heuristic
+ *     and tags the result with estimated: true.
  *
- *   text:       string to count
- *   modelId:    model registry ID (or null/undefined for heuristic)
- *   returns:    {
- *     count:      number of tokens
- *     estimated:  true if heuristic was used, false if tokenizer was exact
- *     strategy:   'tiktoken' | 'heuristic'
- *   }
+ * Both functions return the same shape:
  *
- * Why the contract matters: callers (detectors) use the `estimated`
- * flag to decide what language to put in finding messages. A finding
- * that says "approximately 3,200 tokens (estimated)" sets different
- * user expectations than "3,124 tokens (counted via gpt-tokenizer)."
+ *   { count: number, estimated: boolean, strategy: string }
  *
- * Failure mode: if a tiktoken-strategy model is requested but the
- * encoding fails to load (corrupt install, unsupported model ID), we
- * fall back to the heuristic and tag the result as estimated. We never
- * throw from countTokens(); detector pipelines should not crash because
- * a tokenizer module misbehaved.
+ *   strategy is one of: 'tiktoken' | 'heuristic' | 'anthropic-api'
+ *
+ * Why two functions instead of one with a flag: detectors that should
+ * NEVER hit the network (length/excessive runs against every prompt)
+ * cannot accidentally do so. The function name is the contract.
+ *
+ * Per-run cache: results are cached by (functionName, modelId,
+ * text-fingerprint) so repeated calls for the same input return
+ * instantly. Cache lifetime is module-load (process lifetime for the
+ * CLI). Acceptable because the same (text, model) pair deterministically
+ * produces the same count.
+ *
+ * Failure mode: neither function ever throws. Any failure path
+ * returns the heuristic count with estimated: true. Detector
+ * pipelines should not crash because a tokenizer module misbehaved.
  */
 
 import { getModel } from './models.js';
@@ -47,10 +58,14 @@ const CHARS_PER_TOKEN = 4;
  * OpenAI models are added to models.js.
  */
 const OPENAI_ENCODING_PATHS = {
-  'gpt-5':       'gpt-tokenizer/encoding/o200k_base',
-  'gpt-4o':      'gpt-tokenizer/encoding/o200k_base',
-  'gpt-4o-mini': 'gpt-tokenizer/encoding/o200k_base',
-  'gpt-4-1':     'gpt-tokenizer/encoding/o200k_base',
+  'gpt-5':         'gpt-tokenizer/encoding/o200k_base',
+  'gpt-4o':        'gpt-tokenizer/encoding/o200k_base',
+  'gpt-4o-mini':   'gpt-tokenizer/encoding/o200k_base',
+  'gpt-4-1':       'gpt-tokenizer/encoding/o200k_base',
+  // Test-only entry. Uses the same o200k_base encoder as modern OpenAI
+  // models so fixture sizing math is consistent across real and test
+  // models.
+  'test-tiny-4k':  'gpt-tokenizer/encoding/o200k_base',
 };
 
 // Cache loaded encoders so we only dynamically import each one once.
@@ -76,6 +91,86 @@ function heuristicCount(text) {
   return Math.round(text.length / CHARS_PER_TOKEN);
 }
 
+// ── Per-run result cache ───────────────────────────────────────────────────
+
+// Keyed by (functionName, modelId, textFingerprint). Same text +
+// same model deterministically produces the same count, so we cache
+// across calls within a process. Function name is part of the key
+// because countTokens and countTokensExact may produce different
+// results for the same input (Claude: heuristic vs anthropic-api).
+const RESULT_CACHE = new Map();
+
+// Cheap content fingerprint: length + first 64 + middle 64 + last 64.
+// For text under 192 chars, returns the text itself. Three samples
+// catch most realistic cases of distinct prompts that happen to share
+// length and edges; full hashing would be more correct but cryptographic
+// hashing of every prompt on every call is overkill for this workload.
+function fingerprint(text) {
+  if (text.length <= 192) return text;
+  const mid = Math.floor(text.length / 2);
+  return text.length
+    + '::' + text.slice(0, 64)
+    + '::' + text.slice(mid - 32, mid + 32)
+    + '::' + text.slice(-64);
+}
+
+function cacheKey(fn, modelId, text) {
+  return fn + '::' + (modelId || '_none_') + '::' + fingerprint(text);
+}
+
+// ── Anthropic API counter ──────────────────────────────────────────────────
+
+// Lazy-loaded Anthropic client. Instantiated on first need so we
+// don't pay the SDK import cost when no Claude prompts are audited.
+let anthropicClient = null;
+let anthropicClientLoadFailed = false;
+
+async function getAnthropicClient() {
+  if (anthropicClient) return anthropicClient;
+  if (anthropicClientLoadFailed) return null;
+  try {
+    const mod = await import('@anthropic-ai/sdk');
+    // The SDK is CJS with `exports.Anthropic = class`. Dynamic import
+    // from ESM exposes the class as mod.Anthropic. The fallback
+    // (mod.default && mod.default.Anthropic) covers a future bundler
+    // shape where everything is on `default`.
+    const Anthropic = mod.Anthropic || (mod.default && mod.default.Anthropic);
+    if (!Anthropic) {
+      anthropicClientLoadFailed = true;
+      return null;
+    }
+    // The SDK reads ANTHROPIC_API_KEY from env automatically. If the
+    // key is missing the constructor still succeeds; the failure shows
+    // up at call time as a 401, which our try/catch handles.
+    anthropicClient = new Anthropic();
+    return anthropicClient;
+  } catch (err) {
+    anthropicClientLoadFailed = true;
+    return null;
+  }
+}
+
+/**
+ * Count tokens for a Claude prompt by calling the Anthropic API.
+ * Returns null on any failure so the caller can fall back to heuristic.
+ */
+async function anthropicCountTokens(text, modelId) {
+  const client = await getAnthropicClient();
+  if (!client) return null;
+  try {
+    const result = await client.messages.countTokens({
+      model: modelId,
+      messages: [{ role: 'user', content: text }],
+    });
+    if (result && typeof result.input_tokens === 'number') {
+      return result.input_tokens;
+    }
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 /**
@@ -88,6 +183,15 @@ function heuristicCount(text) {
 export async function countTokens(text, modelId) {
   const safeText = text == null ? '' : String(text);
 
+  const key = cacheKey('fast', modelId, safeText);
+  if (RESULT_CACHE.has(key)) return RESULT_CACHE.get(key);
+
+  const result = await countTokensImpl(safeText, modelId);
+  RESULT_CACHE.set(key, result);
+  return result;
+}
+
+async function countTokensImpl(safeText, modelId) {
   // No model specified or unknown model: heuristic only.
   const model = getModel(modelId);
   if (!model) {
@@ -141,4 +245,66 @@ export async function countTokens(text, modelId) {
     estimated: true,
     strategy: 'heuristic',
   };
+}
+
+/**
+ * Count tokens with maximum available precision for the given model.
+ *
+ * Same behavior as countTokens() for OpenAI (tiktoken is already exact)
+ * and for null/unknown models (heuristic). For Claude, calls the
+ * Anthropic API for ground-truth counts; falls back to heuristic on
+ * any API failure (no key, network, rate limit, etc.). For Gemini,
+ * falls back to heuristic (no API integration in v1).
+ *
+ * Use this from detectors that need precision to answer their
+ * question correctly. Uses the network for Claude prompts.
+ *
+ * @param {string}   text
+ * @param {string}  [modelId]
+ * @returns {Promise<{ count: number, estimated: boolean, strategy: string }>}
+ */
+export async function countTokensExact(text, modelId) {
+  const safeText = text == null ? '' : String(text);
+
+  const key = cacheKey('exact', modelId, safeText);
+  if (RESULT_CACHE.has(key)) return RESULT_CACHE.get(key);
+
+  const result = await countTokensExactImpl(safeText, modelId);
+  RESULT_CACHE.set(key, result);
+  return result;
+}
+
+async function countTokensExactImpl(safeText, modelId) {
+  const model = getModel(modelId);
+
+  // No model or unknown model: heuristic.
+  if (!model) {
+    return {
+      count: heuristicCount(safeText),
+      estimated: true,
+      strategy: 'heuristic',
+    };
+  }
+
+  // Anthropic family: try API, fall back to heuristic on any failure.
+  if (model.family === 'anthropic') {
+    const apiCount = await anthropicCountTokens(safeText, model.id);
+    if (apiCount !== null) {
+      return {
+        count: apiCount,
+        estimated: false,
+        strategy: 'anthropic-api',
+      };
+    }
+    return {
+      count: heuristicCount(safeText),
+      estimated: true,
+      strategy: 'heuristic',
+    };
+  }
+
+  // OpenAI: tiktoken is already exact. Defer to countTokens().
+  // Gemini: heuristic (no offline tokenizer, no SDK call this session).
+  // Test entries with tiktoken strategy: tiktoken via countTokens().
+  return countTokens(safeText, modelId);
 }

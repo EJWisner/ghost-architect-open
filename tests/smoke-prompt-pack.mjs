@@ -45,7 +45,7 @@ const FOLDERS = [
   {
     label: 'BROKEN FIXTURES (expected: findings)',
     dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus'),
-    targetModel: 'gpt-4o',
+    targetModel: 'test-tiny-4k',
   },
 ];
 

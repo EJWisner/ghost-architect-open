@@ -117,6 +117,19 @@ export async function runPromptTriageMode(options = {}) {
   console.log(chalk.gray('  Running ' + detectors.length + ' detector'
     + (detectors.length === 1 ? '' : 's')
     + ': ' + detectors.map(d => d.id).join(', ')));
+
+  // If any registered detectors require a target model and none was
+  // specified, surface a one-line note so the absence of those
+  // findings is explained rather than invisible.
+  if (!targetModel) {
+    const requiresModel = detectors.filter(d => d.requiresTargetModel);
+    if (requiresModel.length > 0) {
+      console.log(chalk.gray('  Note: ' + requiresModel.length
+        + ' detector' + (requiresModel.length === 1 ? '' : 's')
+        + ' require a target model and will not run ('
+        + requiresModel.map(d => d.id).join(', ') + ')'));
+    }
+  }
   console.log('');
 
   // ── Scan ────────────────────────────────────────────────────────────────
