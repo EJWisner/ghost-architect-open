@@ -287,7 +287,7 @@ current pace.
 
 ### F-20 — Standardize trip-wire vocabulary across Tier 2 detectors
 **Status:** OPEN — batch with F-12
-**Source:** session 7 (sessions 7 cross-fire fixes on three different detectors)
+**Source:** session 7 (cross-fire fixes on three different detectors)
 **Why:** Each Tier 2 detector has its own trip-wire vocabulary list
 in its envelope, drifted from the others by accident:
   - ambiguousInstruction: "conflicting", "contradictory",
