@@ -41,6 +41,7 @@
  */
 
 import { getModel } from './models.js';
+import { resolveApiKey } from '../config.js';
 
 // Approximate chars-per-token for English prose. Used by the heuristic
 // fallback. Matches the constant in length.js so the two stay in sync.
@@ -139,10 +140,19 @@ async function getAnthropicClient() {
       anthropicClientLoadFailed = true;
       return null;
     }
-    // The SDK reads ANTHROPIC_API_KEY from env automatically. If the
-    // key is missing the constructor still succeeds; the failure shows
-    // up at call time as a 401, which our try/catch handles.
-    anthropicClient = new Anthropic();
+    // The SDK reads ANTHROPIC_API_KEY from env automatically, but Ghost
+    // users typically configure their key via `ghost setup` (configstore)
+    // and never set the env var. Resolve through Ghost's normal key
+    // resolution path so the audit client sees the same key that POI/
+    // Blast/Conflict do. If no key is configured anywhere, the SDK
+    // constructor will throw at call time and our try/catch handles it.
+    const apiKey = resolveApiKey();
+    if (!apiKey) {
+      // No key configured. Don't even instantiate; audit will fail open.
+      anthropicClientLoadFailed = true;
+      return null;
+    }
+    anthropicClient = new Anthropic({ apiKey });
     return anthropicClient;
   } catch (err) {
     anthropicClientLoadFailed = true;

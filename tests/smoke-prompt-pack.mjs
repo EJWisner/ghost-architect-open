@@ -36,6 +36,12 @@ const __dirname  = path.dirname(__filename);
 // Script lives in tests/, so repo root is one level up.
 const REPO_ROOT  = path.dirname(__dirname);
 
+// Tier 2 detectors make live API calls and cost real money on every run.
+// Default: skip Tier 2 in smoke. Opt in for occasional verification with
+// SMOKE_TIER2=1.
+const RUN_TIER2 = process.env.SMOKE_TIER2 === '1';
+const SKIP_TIERS = RUN_TIER2 ? [] : [2];
+
 const FOLDERS = [
   {
     label: 'DOGFOOD CORPUS (real prompts, behavior depends on tuning)',
@@ -57,6 +63,15 @@ function severitySymbol(s) {
     case 'LOW':      return '🔵';
     default:         return '⚪';
   }
+}
+
+function formatLocation(location) {
+  if (!location) return '';
+  if (typeof location.line === 'number' && location.line > 0) return ' L' + location.line;
+  if (typeof location.hint === 'string' && location.hint.trim().length > 0) {
+    return ' (' + location.hint.trim() + ')';
+  }
+  return '';
 }
 
 async function scanFolder(label, dir, targetModel) {
@@ -83,7 +98,7 @@ async function scanFolder(label, dir, targetModel) {
   for (const file of files) {
     const filePath = path.join(dir, file);
     const promptText = fs.readFileSync(filePath, 'utf8');
-    const findings = await runAll(promptText, filePath, { targetModel });
+    const findings = await runAll(promptText, filePath, { targetModel, skipTiers: SKIP_TIERS });
     totalFindings += findings.length;
 
     console.log('');
@@ -95,7 +110,7 @@ async function scanFolder(label, dir, targetModel) {
       console.log('  no findings');
     } else {
       for (const f of findings) {
-        const loc = f.location ? (' L' + f.location.line) : '';
+        const loc = formatLocation(f.location);
         console.log('  ' + severitySymbol(f.severity) + ' [' + f.severity + '] ' + f.detector + loc);
         console.log('     ' + f.title);
         console.log('     ' + f.detail.split('\n').join('\n     '));
@@ -110,6 +125,11 @@ async function scanFolder(label, dir, targetModel) {
 async function main() {
   const detectors = listDetectors();
   console.log('Registered detectors: ' + detectors.map(d => d.id + '(t' + d.tier + ')').join(', '));
+  if (RUN_TIER2) {
+    console.log('Tier 2 mode: ENABLED (SMOKE_TIER2=1) — live API calls will be made.');
+  } else {
+    console.log('Tier 2 mode: skipped (set SMOKE_TIER2=1 to enable, costs API spend).');
+  }
 
   let grandTotal = 0;
   for (const folder of FOLDERS) {

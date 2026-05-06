@@ -51,6 +51,23 @@ function basename(filePath) {
 }
 
 /**
+ * Format a finding's location for the report header. Tier 1 detectors
+ * emit { line, column } with concrete numbers; Tier 2 detectors emit
+ * { hint: 'free-form string' } because LLMs cannot reliably count
+ * lines in arbitrary text. Both shapes render here.
+ */
+function formatLocation(location) {
+  if (!location) return '';
+  if (typeof location.line === 'number' && location.line > 0) {
+    return ' (L' + location.line + ')';
+  }
+  if (typeof location.hint === 'string' && location.hint.trim().length > 0) {
+    return ' (' + location.hint.trim() + ')';
+  }
+  return '';
+}
+
+/**
  * Build the markdown report from a flat array of findings + metadata.
  *
  * @param {Object} args
@@ -143,7 +160,7 @@ export function renderReport({ findings, scannedFiles, detectors, scanDate, fold
       lines.push('');
 
       for (const f of fileFindings) {
-        const loc = f.location && f.location.line ? ' (L' + f.location.line + ')' : '';
+        const loc = formatLocation(f.location);
         lines.push('#### ' + severityEmoji(f.severity) + ' [' + f.severity + '] '
           + f.detector + loc);
         lines.push('');

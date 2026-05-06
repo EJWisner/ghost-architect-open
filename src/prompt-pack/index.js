@@ -20,9 +20,18 @@
  * registered detector against every prompt in a folder.
  *
  * v1 ships 15 detectors organized in three tiers:
- *   Tier 1, regex/structural, no LLM call (6 detectors)
- *   Tier 2, LLM-assisted, one Claude call per detector per prompt (8 detectors)
+ *   Tier 1, no LLM judgment, may use offline tokenizers or free counting
+ *     APIs (8 detectors)
+ *   Tier 2, LLM judgment required, one Claude call per detector per
+ *     prompt (6 detectors)
  *   Tier 3, hybrid, regex flags then LLM verification (1 detector)
+ *
+ * Tier definition note: "Tier 1" means "no LLM judgment about prompt
+ * content," not "no API call." The tokenLimit detectors are Tier 1
+ * because they only count tokens (free Anthropic countTokens endpoint
+ * for Claude, offline tiktoken for OpenAI). They never ask the LLM to
+ * evaluate prompt quality. Tier 2 is for detectors that send the prompt
+ * to a model and use the model's judgment as the answer.
  *
  * Note on Tier 1 vs Tier 2 split: poorDocumentation moved from Tier 1 to
  * Tier 2 because the question "is this prompt documented enough?" is
@@ -39,6 +48,7 @@ import * as length from './length.js';
 import * as unboundedOutput from './unboundedOutput.js';
 import * as injectionStaticPattern from './injectionStaticPattern.js';
 import * as roleSeparation from './roleSeparation.js';
+import * as ambiguousInstruction from './ambiguousInstruction.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
@@ -51,20 +61,24 @@ import * as tokenLimitExcessive from './tokenLimitExcessive.js';
  * order chosen for the v1 prompt-pack so output is stable across runs.
  */
 const REGISTRY = [
-  // Tier 1: regex/structural
+  // Tier 1: no LLM judgment about prompt content. Includes pure-regex
+  // detectors and token-counting detectors. May still require a target
+  // model when the count needs to be tier-specific (tokenLimit/*).
   { id: 'formatting',          tier: 1, module: formatting },
   { id: 'length',              tier: 1, module: length },
   { id: 'unboundedOutput',     tier: 1, module: unboundedOutput },
   { id: 'injectionStaticPattern', tier: 1, module: injectionStaticPattern },
   { id: 'roleSeparation',      tier: 1, module: roleSeparation },
-  // Tier 1 complete after roleSeparation (6 detectors).
+  { id: 'tokenLimitContextOverflow', tier: 1, module: tokenLimitContextOverflow, requiresTargetModel: true },
+  { id: 'tokenLimitExcessive',       tier: 1, module: tokenLimitExcessive,       requiresTargetModel: true },
 
-  // Tier 2: LLM/API-augmented. requiresTargetModel signals to the mode
-  // file that these detectors emit nothing without a target model and
-  // a one-line skip note should be shown.
-  { id: 'tokenLimitContextOverflow', tier: 2, module: tokenLimitContextOverflow, requiresTargetModel: true },
-  { id: 'tokenLimitExcessive',       tier: 2, module: tokenLimitExcessive,       requiresTargetModel: true },
-  // [pending] ambiguousInstruction, underspecifiedConstraints, conflictingInstructions,
+  // Tier 2: LLM judgment required. Each detector sends the prompt to
+  // a model and uses the model's judgment as the answer. Costs money.
+  // requiresTargetModel: true signals to the mode file that these
+  // detectors emit nothing without a target model and a one-line skip
+  // note should be shown.
+  { id: 'ambiguousInstruction',      tier: 2, module: ambiguousInstruction,      requiresTargetModel: true },
+  // [pending] underspecifiedConstraints, conflictingInstructions,
   // [pending] poorOrganization, undefinedOutputFormat, overloadedPrompt,
   // [pending] inefficientFewShot, poorDocumentation
 
@@ -88,12 +102,19 @@ const REGISTRY = [
  *                              by length-aware detectors for accurate
  *                              token counts. Detectors that don't care
  *                              about the target model ignore opts.
+ *                              opts.skipTiers - array of tier numbers to
+ *                              skip entirely (e.g. [2] to run only Tier 1
+ *                              and Tier 3). Used by the smoke harness to
+ *                              avoid live API calls during routine
+ *                              detector verification. Default: [].
  * @returns {Promise<Array>}   Findings from all detectors.
  */
 export async function runAll(promptText, filePath, opts = {}) {
   const allFindings = [];
+  const skipTiers = Array.isArray(opts.skipTiers) ? opts.skipTiers : [];
 
   for (const entry of REGISTRY) {
+    if (skipTiers.includes(entry.tier)) continue;
     try {
       const findings = await entry.module.detect(promptText, filePath, opts);
       if (Array.isArray(findings)) {
