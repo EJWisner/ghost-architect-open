@@ -212,7 +212,45 @@ Conflict:
 
 ---
 
+## New from session 7 (Tier 2 detector ship plan)
+
+### F-18 — ambiguousInstruction may have narrowed positive scope after trip-wire edit
+**Status:** OPEN — verify during next detector smoke run
+**Source:** session 7 (conflictingInstructions ship verification)
+**Why:** After adding the SCOPE OF THIS DETECTOR header and trip-wire
+language to ambiguousInstruction's defect description (commit 17389f2),
+fixture 22 dropped from 2 → 1 finding and fixture 26 dropped from 5 →
+4 findings on the post-edit smoke. The dropped findings were both LOW-
+edge, all MEDIUM findings retained. Most likely Tier 2 LLM-judgment
+variance (Haiku 4.5 sampling differences run-to-run), but plausible
+that the new framing inadvertently signaled "be more conservative
+across the board."
+
+Falsification plan: when smoke runs for detector #11
+(undefinedOutputFormat) execute, compare fixture 22 and fixture 26
+finding counts against this baseline. If they remain at 1 and 4
+respectively in the absence of further envelope edits to
+ambiguousInstruction or underspecifiedConstraints, that's variance.
+If they wobble back up to 2 and 5 with the same code applied, also
+variance. If they stay flat at the lower count for multiple
+consecutive runs, treat as positive-scope shrinkage and walk back
+the trip-wire phrasing.
+
+Not blocking detector ship cadence. Just track.
+
+---
+
 ## Closed items
 
 - F-10 (session 6, commit 9401916): Tier 2 fixtures moved to dedicated folder.
 - F-15 (session 6, partial): cross-detector envelope carve-outs landed; report-layer dedup deferred (different problem class).
+- conflictingInstructions detector #10 (session 7, commit 17389f2): shipped.
+  3 fixtures (28-30), F-15 carve-outs symmetrically extended to
+  ambiguousInstruction (added scope header + trip-wire vocabulary list)
+  and underspecifiedConstraints (named conflict sibling explicitly).
+  Cross-fire on fixture 29 resolved (was 2 ambig + 2 conflict, now 0
+  ambig + 2 conflict). Negative control fixture 30 (precedence-
+  resolved tensions) holds at 0 findings. Dogfood corpus surfaced new
+  conflict findings on POI severity-vs-billing-tier mapping, which is
+  real defect territory — added to F-17 implicitly (already covered
+  by existing POI billing-tier item).
