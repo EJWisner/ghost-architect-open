@@ -53,6 +53,16 @@ const FOLDERS = [
     dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus'),
     targetModel: 'test-tiny-4k',
   },
+  // Tier 2 fixtures live in their own folder targeting a real Claude
+  // model (Haiku, for cost) so the testOnly bypass doesn't silently
+  // skip the audit. This folder is only scanned when SMOKE_TIER2=1
+  // because it costs real money on every run. Default smoke skips it.
+  {
+    label: 'TIER 2 FIXTURES (Tier 2 only, opt-in via SMOKE_TIER2=1)',
+    dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus-tier2'),
+    targetModel: 'claude-haiku-4-5',
+    tier2Only: true,
+  },
 ];
 
 function severitySymbol(s) {
@@ -133,6 +143,10 @@ async function main() {
 
   let grandTotal = 0;
   for (const folder of FOLDERS) {
+    // Skip Tier-2-only folders unless Tier 2 is enabled. Their fixtures
+    // exist solely to verify Tier 2 detectors and would produce zero
+    // useful output (and waste an iteration) under Tier 1 mode.
+    if (folder.tier2Only && !RUN_TIER2) continue;
     grandTotal += await scanFolder(folder.label, folder.dir, folder.targetModel);
   }
 
