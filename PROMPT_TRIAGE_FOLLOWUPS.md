@@ -126,33 +126,46 @@ vs. Remediation Summary billing tiers (LOW/MEDIUM/HIGH)"). Add
 schema constraint or envelope instruction to keep hints terse.
 
 ### F-15 — Cross-detector dedup at report layer
-**Status:** OPEN
+**Status:** PARTIAL (envelope-level carve-outs DONE; report-layer dedup deferred)
 **Source:** session 6 review; reinforced session 6 underspecifiedConstraints ship
-**Priority:** HIGH (now visible on every dogfood prompt with rating dimensions)
-**Why:** Multiple detectors fire on the same underlying defect from different
-angles. Concrete examples observed in session 6 with both Tier 2 detectors
-active:
-  - ambiguousInstruction's 'unbounded quantifier' findings overlap with
-    unboundedOutput's line-level findings
-  - ambiguousInstruction reads 'Risk level: LOW/MEDIUM/HIGH/CRITICAL' as
-    'ambiguous categorization' while underspecifiedConstraints reads the
-    same text as 'rubric missing' — both detectors fire, two findings per
-    constraint defect
-  - On fixture 25 (5 underspecified bucketed ratings), the test produces
-    7 total findings: 4 from underspecifiedConstraints + 3 from
-    ambiguousInstruction, all naming the same defects from different
-    angles
-This nearly doubles report length without doubling signal. As more Tier 2
-detectors ship, the overlap will get worse. Solutions to consider:
-  (a) Report-layer consolidation: when two detectors fire on overlapping
-      location hints, merge into one finding with both detector tags.
-  (b) Detector-level suppression: e.g. ambiguousInstruction skips when
-      underspecifiedConstraints already fires on the same span.
-  (c) Prompt envelope shaping: tell each Tier 2 detector to ignore
-      defects that would be the responsibility of another named detector.
-F-12 (consolidate findings within one detector) and F-15 (consolidate
-across detectors) are different problems. F-15 is the larger ergonomic
-problem now that we have N>1 Tier 2 detectors.
+**Resolution:** Updated both Tier 2 detectors' envelopes with explicit
+negative-space carve-outs naming each other. ambiguousInstruction now
+explicitly excludes rating/measurement/quality-bar defects (those
+belong to underspecifiedConstraints). underspecifiedConstraints now
+explicitly excludes pronoun/scope/quantifier defects (those belong
+to ambiguousInstruction). Each carve-out includes concrete examples
+of what NOT to flag.
+
+Verified end-to-end:
+  - Fixture 25 (5 underspecified bucketed ratings): 7 → 4 findings
+    (was 4 underspec + 3 ambig overlapping on same defects;
+    now 4 underspec + 0 ambig, clean separation)
+  - Fixture 26 (quality bars): 8 → 4 findings
+    (was 4 underspec + 3 ambig + 1 unbounded; now 3 underspec + 0
+    ambig + 1 unbounded)
+  - Fixtures 22-24 (ambiguousInstruction territory): unchanged
+  - Fixture 27 (negative control): unchanged at 0 findings
+
+Unexpected outcome on dogfood: total Tier 2 findings increased
+(~30 → ~36) because the carved-out detectors looked harder at their
+own territory. The new findings are distinct and substantive, not
+duplicates. Carve-outs cleanly resolved cross-detector overlap on
+fixtures, but on rich Ghost prompts the freed-up detectors found
+more real defects.
+
+Report-layer dedup (the original (a) approach) deferred. The
+carve-outs solved the structural duplication problem. If reader
+fatigue from long reports becomes a real concern, that's a
+different problem with different levers (severity floors, lower
+FINDINGS_CAP, detector-grouped report sections, or fixing the
+Ghost prompts themselves — see F-17). Not appropriate to solve
+with dedup.
+
+**Followup if dedup-revisit becomes warranted:** Track concrete
+user-experience complaints first. "Two detectors fire on the same
+defect" is solved. If "the report is too long" becomes a real
+concern, diagnose what's actually noisy before reaching for
+consolidation.
 
 ### F-16 — Reconsider MEDIUM severity cap on ambiguousInstruction
 **Status:** OPEN
@@ -202,3 +215,4 @@ Conflict:
 ## Closed items
 
 - F-10 (session 6, commit 9401916): Tier 2 fixtures moved to dedicated folder.
+- F-15 (session 6, partial): cross-detector envelope carve-outs landed; report-layer dedup deferred (different problem class).
