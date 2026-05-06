@@ -81,15 +81,13 @@ per-prompt progress line.
 ## New from session 6 (rail-fix and Tier 2 verification)
 
 ### F-10 — Fixtures 22-24 unused in current smoke setup
-**Status:** OPEN
+**Status:** DONE (commit 9401916, session 6)
 **Source:** session 6
-**Why:** Fixtures 22-24 (ambiguousInstruction positive/negative
-controls) target test-tiny-4k, which Tier 2 silently skips via the
-testOnly bypass. They effectively never run. Two options:
-(a) delete them and admit Tier 2 doesn't have offline fixtures,
-(b) add a third smoke folder targeting a real Claude model and
-accept ongoing API spend per smoke run. Decide before the next
-Tier 2 detector ships.
+**Resolution:** Moved fixtures 22-24 to tests/prompt-triage-corpus-tier2/
+targeting claude-haiku-4-5 (cheap Claude). Smoke runner adds a third
+folder gated by tier2Only flag, only scanned when SMOKE_TIER2=1.
+Verified end-to-end: fixtures 22 (2 findings) and 23 (3 findings) fire
+as designed; fixture 24 produces zero findings as the clear-control.
 
 ### F-11 — Tier 2 fail-open is too quiet during development
 **Status:** OPEN
@@ -129,11 +127,32 @@ schema constraint or envelope instruction to keep hints terse.
 
 ### F-15 — Cross-detector dedup at report layer
 **Status:** OPEN
-**Source:** session 6 review
-**Why:** ambiguousInstruction's "unbounded quantifier" findings overlap
-with unboundedOutput's line-level findings. Both fire on the same
-prompt for the same defect class. Consolidate at report layer or add
-a suppression rule.
+**Source:** session 6 review; reinforced session 6 underspecifiedConstraints ship
+**Priority:** HIGH (now visible on every dogfood prompt with rating dimensions)
+**Why:** Multiple detectors fire on the same underlying defect from different
+angles. Concrete examples observed in session 6 with both Tier 2 detectors
+active:
+  - ambiguousInstruction's 'unbounded quantifier' findings overlap with
+    unboundedOutput's line-level findings
+  - ambiguousInstruction reads 'Risk level: LOW/MEDIUM/HIGH/CRITICAL' as
+    'ambiguous categorization' while underspecifiedConstraints reads the
+    same text as 'rubric missing' — both detectors fire, two findings per
+    constraint defect
+  - On fixture 25 (5 underspecified bucketed ratings), the test produces
+    7 total findings: 4 from underspecifiedConstraints + 3 from
+    ambiguousInstruction, all naming the same defects from different
+    angles
+This nearly doubles report length without doubling signal. As more Tier 2
+detectors ship, the overlap will get worse. Solutions to consider:
+  (a) Report-layer consolidation: when two detectors fire on overlapping
+      location hints, merge into one finding with both detector tags.
+  (b) Detector-level suppression: e.g. ambiguousInstruction skips when
+      underspecifiedConstraints already fires on the same span.
+  (c) Prompt envelope shaping: tell each Tier 2 detector to ignore
+      defects that would be the responsibility of another named detector.
+F-12 (consolidate findings within one detector) and F-15 (consolidate
+across detectors) are different problems. F-15 is the larger ergonomic
+problem now that we have N>1 Tier 2 detectors.
 
 ### F-16 — Reconsider MEDIUM severity cap on ambiguousInstruction
 **Status:** OPEN
@@ -182,4 +201,4 @@ Conflict:
 
 ## Closed items
 
-(none yet — append as work completes)
+- F-10 (session 6, commit 9401916): Tier 2 fixtures moved to dedicated folder.
