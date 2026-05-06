@@ -43,7 +43,7 @@ const REGISTRY = [
   // Tier 1: regex/structural
   { id: 'formatting',          tier: 1, module: formatting },
   { id: 'length',              tier: 1, module: length },
-  // [pending] tokenLimitContextOverflow, unboundedOutput,
+  // [pending] tokenLimitContextOverflow, tokenLimitExcessive, unboundedOutput,
   // [pending] roleSeparation, poorDocumentation, injectionStaticPattern
 
   // Tier 2: LLM-assisted

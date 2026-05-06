@@ -1,3 +1,9 @@
 node_modules/
 web/.next/
 web/node_modules/
+
+# Defensive: audit reports normally write to ~/Ghost Architect Reports/
+# (outside the repo). Guard against any future code path that might
+# emit them inside the working tree.
+Ghost Architect Reports/
+*.audit-report.md

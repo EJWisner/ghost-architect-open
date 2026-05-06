@@ -5,8 +5,9 @@
  * Manual smoke-test harness for the Prompt Triage detector pack. Runs
  * every registered detector against two folders and prints findings:
  *
- *   1. prompts-extracted/         the dogfood corpus, expected to be clean
- *                                 against well-tuned detectors
+ *   1. prompts-extracted/         the dogfood corpus, behavior depends on
+ *                                 detector tuning (some prompts may legitimately
+ *                                 fire findings as the detector pack grows)
  *   2. tests/prompt-triage-corpus/ synthetic broken prompts, expected
  *                                 to fire the detectors they target
  *
@@ -36,8 +37,8 @@ const __dirname  = path.dirname(__filename);
 const REPO_ROOT  = path.dirname(__dirname);
 
 const FOLDERS = [
-  { label: 'DOGFOOD CORPUS (expected: clean)',     dir: path.join(REPO_ROOT, 'prompts-extracted') },
-  { label: 'BROKEN FIXTURES (expected: findings)', dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus') },
+  { label: 'DOGFOOD CORPUS (real prompts, behavior depends on tuning)', dir: path.join(REPO_ROOT, 'prompts-extracted') },
+  { label: 'BROKEN FIXTURES (expected: findings)',                       dir: path.join(REPO_ROOT, 'tests', 'prompt-triage-corpus') },
 ];
 
 function severitySymbol(s) {
