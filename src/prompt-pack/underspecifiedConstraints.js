@@ -116,7 +116,14 @@ const DEFECT_DESCRIPTION =
   + 'whose scale is undefined.\n'
   + '  - Constraints that ARE defined elsewhere in the same prompt '
   + '(if the prompt later defines what each complexity tier means, the '
-  + 'constraint is specified)';
+  + 'constraint is specified)\n'
+  + '  - Output STRUCTURE specification gaps (e.g. "output as JSON" '
+  + 'without listing fields, "provide a report" without naming '
+  + 'sections). Those belong to a different detector (undefined '
+  + 'output format), NOT an underspecified constraint. Skip them. '
+  + 'Flag here only when the prompt asks for a measurement on a '
+  + 'dimension whose scale is undefined, not when an output '
+  + 'container lacks an internal schema.';
 
 const POSITIVE_EXAMPLES =
   '  - "Complexity: Low / Medium / High / Requires architect" '

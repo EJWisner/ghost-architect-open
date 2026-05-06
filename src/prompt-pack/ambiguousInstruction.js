@@ -67,9 +67,10 @@ const DEFECT_DESCRIPTION =
   + '(conflicting instructions). Even if the conflict feels '
   + '"ambiguous" because the model has to pick one, do NOT flag it '
   + 'here. Trip-wire: if a finding you are about to emit would use '
-  + 'the words "conflicting", "contradictory", "incompatible", or '
-  + '"cannot both be satisfied" in its title or detail, you are in '
-  + 'the wrong detector — drop that finding and continue.\n\n'
+  + 'the words "conflicting", "contradictory", "incompatible", '
+  + '"in tension", "mutually exclusive", "cannot both be satisfied", '
+  + 'or "cannot coexist" in its title or detail, you are in the '
+  + 'wrong detector — DROP that finding and continue. Do not emit it.\n\n'
   + 'Common shapes of ambiguous instructions:\n'
   + '  - Pronoun reference unclear (what does "it" or "they" refer to?)\n'
   + '  - Scope unclear (which subset does this apply to?)\n'
@@ -110,7 +111,11 @@ const DEFECT_DESCRIPTION =
   + '  - Instructions that are merely short or informal but have one '
   + 'clear reading\n'
   + '  - Stylistic preferences ("be helpful" is vague but not ambiguous '
-  + 'in the sense we care about; the model knows what helpful means)';
+  + 'in the sense we care about; the model knows what helpful means)\n'
+  + '  - Output STRUCTURE specification gaps (e.g. "output as JSON" '
+  + 'without listing fields, "provide a report" without naming '
+  + 'sections). Those belong to a different detector (undefined '
+  + 'output format), NOT ambiguity. Skip them.';
 
 const POSITIVE_EXAMPLES =
   '  - "When the customer mentions an issue, summarize it." '

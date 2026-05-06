@@ -132,7 +132,14 @@ const DEFECT_DESCRIPTION =
   + 'only when satisfying one rule actively prevents satisfying '
   + 'another.\n'
   + '  - Restating the same rule in different words (e.g. "Be brief. '
-  + 'Keep it short. Do not ramble."). Redundant but not conflicting.';
+  + 'Keep it short. Do not ramble."). Redundant but not conflicting.\n'
+  + '  - A single output format with missing internal specification '
+  + '(e.g. "output as JSON" with no field list, "provide a report" '
+  + 'with no section list). One stated format with an incomplete spec '
+  + 'is undefined output format (different detector), NOT a conflict. '
+  + 'Flag here only when TWO formats are stated and they cannot '
+  + 'coexist in one output (e.g. "output as JSON" plus "use markdown '
+  + 'headers"); not when one format is named without a complete spec.';
 
 const POSITIVE_EXAMPLES =
   '  - Prompt says: "Be concise. Keep your response brief." '
