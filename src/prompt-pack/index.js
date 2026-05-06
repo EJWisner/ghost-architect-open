@@ -30,6 +30,7 @@
 
 import * as formatting from './formatting.js';
 import * as length from './length.js';
+import * as unboundedOutput from './unboundedOutput.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
@@ -45,8 +46,8 @@ const REGISTRY = [
   // Tier 1: regex/structural
   { id: 'formatting',          tier: 1, module: formatting },
   { id: 'length',              tier: 1, module: length },
-  // [pending] unboundedOutput, roleSeparation, poorDocumentation,
-  // [pending] injectionStaticPattern
+  { id: 'unboundedOutput',     tier: 1, module: unboundedOutput },
+  // [pending] roleSeparation, poorDocumentation, injectionStaticPattern
 
   // Tier 2: LLM/API-augmented. requiresTargetModel signals to the mode
   // file that these detectors emit nothing without a target model and
