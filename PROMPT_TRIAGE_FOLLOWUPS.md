@@ -215,28 +215,101 @@ Conflict:
 ## New from session 7 (Tier 2 detector ship plan)
 
 ### F-18 — ambiguousInstruction may have narrowed positive scope after trip-wire edit
-**Status:** OPEN — verify during next detector smoke run
+**Status:** RESOLVED — confirmed as Tier 2 LLM-judgment variance, not regression
 **Source:** session 7 (conflictingInstructions ship verification)
 **Why:** After adding the SCOPE OF THIS DETECTOR header and trip-wire
 language to ambiguousInstruction's defect description (commit 17389f2),
 fixture 22 dropped from 2 → 1 finding and fixture 26 dropped from 5 →
 4 findings on the post-edit smoke. The dropped findings were both LOW-
-edge, all MEDIUM findings retained. Most likely Tier 2 LLM-judgment
-variance (Haiku 4.5 sampling differences run-to-run), but plausible
-that the new framing inadvertently signaled "be more conservative
-across the board."
+edge, all MEDIUM findings retained.
 
-Falsification plan: when smoke runs for detector #11
-(undefinedOutputFormat) execute, compare fixture 22 and fixture 26
-finding counts against this baseline. If they remain at 1 and 4
-respectively in the absence of further envelope edits to
-ambiguousInstruction or underspecifiedConstraints, that's variance.
-If they wobble back up to 2 and 5 with the same code applied, also
-variance. If they stay flat at the lower count for multiple
-consecutive runs, treat as positive-scope shrinkage and walk back
-the trip-wire phrasing.
+**Resolution:** Across five consecutive Tier 2 fixture-only runs during
+detector #11 development (commits 3f966f4 and intermediates), fixture 22
+finding count was {1, 2, 1, 2, 1} — wobble of ±1 LOW finding per run.
+Fixture 26 was {4, 6, 7, 5, 5}. MEDIUM-severity findings on both
+fixtures held stable across all five runs. The LOW-edge wobble appears
+on multiple fixtures (22, 23, 26, 28, 30, 31, 32) at roughly ±1 finding
+per run with no directional bias. This is consistent with Haiku 4.5
+sampling variance at borderline severity. The trip-wire edit did not
+shrink positive scope.
 
-Not blocking detector ship cadence. Just track.
+**Practical implication:** Tier 2 fixture counts have a built-in noise
+floor of approximately ±1 LOW finding per fixture per run. Treat
+fixture deltas of 1 LOW as variance unless they reproduce across 2+
+consecutive runs with the same code. MEDIUM-severity counts are stable
+and can be treated as load-bearing test signal.
+
+### F-19 — Cross-fire pattern recurs on every new Tier 2 detector ship
+**Status:** OPEN — batch-fix during F-12 tuning pass
+**Source:** sessions 6, 7 (every Tier 2 detector ship to date)
+**Priority:** MEDIUM (predictable, not blocking)
+**Why:** Every new Tier 2 detector cross-fires with at least one
+existing sibling on the synthetic worst-case fixture (the one
+constructed with maximum thematic overlap). Pattern observed:
+  - Session 6 underspecifiedConstraints ship: ambiguousInstruction
+    cross-fired on fixtures 25/26. Fixed by adding "missing rubrics"
+    carve-out paragraph to ambiguousInstruction.
+  - Session 7 conflictingInstructions ship: ambiguousInstruction
+    cross-fired on fixture 29 with literal "Conflicting" in finding
+    titles. Fixed by promoting carve-out into SCOPE OF THIS DETECTOR
+    header + adding imperative trip-wire vocabulary list.
+  - Session 7 undefinedOutputFormat ship: undefinedOutputFormat
+    cross-fired on fixture 29; ambiguousInstruction also re-leaked
+    on fixture 29. Fixed both with imperative trip-wire vocabulary.
+
+The cross-fire never appeared on dogfood prompts — only on synthetic
+fixtures by construction. Real-world prompt structures don't produce
+the pure-overlap shapes the fixtures probe for.
+
+**Hypothesis on root cause:** Tier 2 detectors share the same envelope
+template and audit client. When two detectors' positive-scope
+language covers thematically related defect classes, the LLM
+sometimes pattern-matches on the surface signal ("these instructions
+seem to be in tension") without consulting the carve-out clauses
+until the carve-out is in load-bearing position (early in the
+envelope, imperative voice, with the literal vocabulary the model
+tends to use).
+
+**Action plan, deferred to F-12:**
+  - Standardize trip-wire vocabulary across all Tier 2 detectors
+    (see F-20).
+  - Promote SCOPE OF THIS DETECTOR header to a templated structure
+    in llmAuditClient.js so each detector defines its scope statement
+    in a structured way rather than free-form prose.
+  - Add a short proactive negative-space framing at the top of the
+    envelope listing the OTHER live detectors and their territories,
+    so the model sees the boundaries before reading the positive
+    examples.
+
+Not blocking detector ship cadence. Predictable, single-edit fix per
+incident; the pattern will continue through detector #15 ship at
+current pace.
+
+### F-20 — Standardize trip-wire vocabulary across Tier 2 detectors
+**Status:** OPEN — batch with F-12
+**Source:** session 7 (sessions 7 cross-fire fixes on three different detectors)
+**Why:** Each Tier 2 detector has its own trip-wire vocabulary list
+in its envelope, drifted from the others by accident:
+  - ambiguousInstruction: "conflicting", "contradictory",
+    "incompatible", "in tension", "mutually exclusive", "cannot
+    both be satisfied", "cannot coexist"
+  - undefinedOutputFormat: "ambiguous", "multiple readings",
+    "conflicting", "contradictory", "in tension", "mutually
+    exclusive", "cannot both be satisfied", "no length cap",
+    "rubric", "criteria"
+  - underspecifiedConstraints, conflictingInstructions: no trip-wire
+    yet (only the older Do NOT flag bullets)
+
+During F-12, build a canonical vocabulary table mapping each detector
+to: (a) its own positive-scope marker words, (b) the marker words
+that indicate territory belongs to a sibling detector. Enforce
+through a shared template in llmAuditClient.js so adding detector
+#N+1 doesn't require N edits to existing detectors.
+
+Falsification: track cross-fire incidents per detector ship after
+the shared template lands. If incidents drop to <1 per ship, the
+template works. If they continue at current rate, the issue is
+structural to the envelope approach, not vocabulary management.
 
 ---
 
@@ -254,3 +327,28 @@ Not blocking detector ship cadence. Just track.
   conflict findings on POI severity-vs-billing-tier mapping, which is
   real defect territory — added to F-17 implicitly (already covered
   by existing POI billing-tier item).
+- undefinedOutputFormat detector #11 (session 7, commit 3f966f4): shipped.
+  3 fixtures (31-33) covering stated container with no schema, composite
+  output, and a non-adjacent-spec negative control. Symmetric F-15
+  carve-outs added to all three live Tier 2 siblings. Trip-wire
+  vocabulary on ambiguousInstruction expanded after fixture 29 cross-fire
+  recurred (added "in tension", "mutually exclusive", "cannot both be
+  satisfied", "cannot coexist"; verb tightened from "drop" to "DROP
+  that finding and continue. Do not emit it."). Trip-wire on
+  undefinedOutputFormat itself uses the same imperative form. Fixture
+  24 cleaned: "ordered by urgency" replaced with explicit rubric
+  pointing at observable text in the customer message, removing a
+  latent underspec defect that surfaced when Haiku ran more aggressively
+  on one mid-development run. Final fixture verification across the
+  full Tier 2 corpus: 22:1, 23:3, 24:0, 25:4, 26:5, 27:0, 28:3,
+  29:2 (conflict-only attribution), 30:0, 31:1, 32:4, 33:0. All
+  MEDIUM findings retained, all four negative controls (24, 27, 30,
+  33) hold at 0. Dogfood scan from prior full run surfaced 6 new
+  conflict-shaped output-structure findings on POI/Conflict prompts,
+  all distinct from existing ambig/underspec findings (real defect
+  territory).
+- F-18 (session 7, commit 3f966f4): variance hypothesis confirmed.
+  Tier 2 fixture counts have ~±1 LOW finding noise floor per run;
+  MEDIUM findings are stable. No positive-scope shrinkage from the
+  trip-wire edit. Treat single-LOW deltas as variance unless they
+  reproduce across 2+ runs.
