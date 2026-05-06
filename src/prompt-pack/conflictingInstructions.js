@@ -147,7 +147,12 @@ const DEFECT_DESCRIPTION =
   + 'do not conflict — they multiply. That is overloadedPrompt '
   + '(different detector), NOT conflict. Flag here only when satisfying '
   + 'one rule actively prevents satisfying another, not when the '
-  + 'rules merely accumulate.';
+  + 'rules merely accumulate.\n'
+  + '  - Prompts whose individual rules do not actually contradict '
+  + 'but are scattered across the prompt or appear in an order '
+  + 'that creates structural friction (rule A in section 1 uses a '
+  + 'definition introduced in section 4). That is poorOrganization '
+  + '(different detector), NOT conflict. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - Prompt says: "Be concise. Keep your response brief." '

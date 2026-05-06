@@ -181,7 +181,13 @@ const DEFECT_DESCRIPTION =
   + 'a unit test"). That is overloadedPrompt (different detector), '
   + 'NOT undefined output format. Each individual deliverable may '
   + 'have a clear (or unclear) format spec; the defect there is '
-  + 'task-count sprawl, not missing structure. Skip it.';
+  + 'task-count sprawl, not missing structure. Skip it.\n'
+  + '  - Prompts where the format spec exists but is scattered or '
+  + 'placed awkwardly relative to other content. If the schema is '
+  + 'present in the prompt at all (even non-adjacent to its '
+  + 'directive), that is poorOrganization (different detector), '
+  + 'NOT undefined output format. Flag here only when the spec is '
+  + 'genuinely ABSENT, not just badly placed.';
 
 const POSITIVE_EXAMPLES =
   '  - "Output your response as a JSON object." '

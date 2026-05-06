@@ -129,7 +129,12 @@ const DEFECT_DESCRIPTION =
   + 'a unit test"). That is overloadedPrompt (different detector), '
   + 'NOT an underspecified constraint. Each individual measurement '
   + 'request may have a clear scale; the defect is task-count '
-  + 'sprawl. Skip it.';
+  + 'sprawl. Skip it.\n'
+  + '  - Prompts whose individual constraints are well-defined but '
+  + 'arranged poorly (rules scattered across sections, definitions '
+  + 'introduced after the rules that use them). That is '
+  + 'poorOrganization (different detector), NOT an underspecified '
+  + 'constraint. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Complexity: Low / Medium / High / Requires architect" '

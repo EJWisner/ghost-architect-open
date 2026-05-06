@@ -120,7 +120,12 @@ const DEFECT_DESCRIPTION =
   + '(e.g. "analyze X, then write a marketing email, then generate a '
   + 'unit test"). That is overloadedPrompt (different detector), '
   + 'NOT ambiguity. Each individual instruction may be clear; the '
-  + 'defect is task-count sprawl. Skip it.';
+  + 'defect is task-count sprawl. Skip it.\n'
+  + '  - Prompts whose individual instructions are clear but whose '
+  + 'arrangement creates structural friction (critical context '
+  + 'buried late, related rules scattered across sections, '
+  + 'inverted dependencies, examples before instructions). That is '
+  + 'poorOrganization (different detector), NOT ambiguity. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "When the customer mentions an issue, summarize it." '
