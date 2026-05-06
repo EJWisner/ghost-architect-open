@@ -20,9 +20,15 @@
  * registered detector against every prompt in a folder.
  *
  * v1 ships 15 detectors organized in three tiers:
- *   Tier 1, regex/structural, no LLM call (7 detectors)
- *   Tier 2, LLM-assisted, one Claude call per detector per prompt (7 detectors)
+ *   Tier 1, regex/structural, no LLM call (6 detectors)
+ *   Tier 2, LLM-assisted, one Claude call per detector per prompt (8 detectors)
  *   Tier 3, hybrid, regex flags then LLM verification (1 detector)
+ *
+ * Note on Tier 1 vs Tier 2 split: poorDocumentation moved from Tier 1 to
+ * Tier 2 because the question "is this prompt documented enough?" is
+ * inherently a judgment call that needs LLM context to answer well. A
+ * regex check would either fire on every prompt without comments
+ * (most of them) or never fire (if we only flag obvious omissions).
  *
  * As detectors land, they get registered here. v1 starts with formatting/
  * syntax errors (Tier 1, detector #1).
@@ -32,6 +38,7 @@ import * as formatting from './formatting.js';
 import * as length from './length.js';
 import * as unboundedOutput from './unboundedOutput.js';
 import * as injectionStaticPattern from './injectionStaticPattern.js';
+import * as roleSeparation from './roleSeparation.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
@@ -49,7 +56,8 @@ const REGISTRY = [
   { id: 'length',              tier: 1, module: length },
   { id: 'unboundedOutput',     tier: 1, module: unboundedOutput },
   { id: 'injectionStaticPattern', tier: 1, module: injectionStaticPattern },
-  // [pending] roleSeparation, poorDocumentation
+  { id: 'roleSeparation',      tier: 1, module: roleSeparation },
+  // Tier 1 complete after roleSeparation (6 detectors).
 
   // Tier 2: LLM/API-augmented. requiresTargetModel signals to the mode
   // file that these detectors emit nothing without a target model and
@@ -58,7 +66,7 @@ const REGISTRY = [
   { id: 'tokenLimitExcessive',       tier: 2, module: tokenLimitExcessive,       requiresTargetModel: true },
   // [pending] ambiguousInstruction, underspecifiedConstraints, conflictingInstructions,
   // [pending] poorOrganization, undefinedOutputFormat, overloadedPrompt,
-  // [pending] inefficientFewShot
+  // [pending] inefficientFewShot, poorDocumentation
 
   // Tier 3: hybrid
   // [pending] integrationMismatch
