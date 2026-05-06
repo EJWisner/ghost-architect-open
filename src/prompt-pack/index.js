@@ -29,6 +29,7 @@
  */
 
 import * as formatting from './formatting.js';
+import * as length from './length.js';
 
 /**
  * Registry: detector module + metadata.
@@ -41,7 +42,8 @@ import * as formatting from './formatting.js';
 const REGISTRY = [
   // Tier 1: regex/structural
   { id: 'formatting',          tier: 1, module: formatting },
-  // [pending] tokenLimitContextOverflow, tokenLimitExcessive, unboundedOutput,
+  { id: 'length',              tier: 1, module: length },
+  // [pending] tokenLimitContextOverflow, unboundedOutput,
   // [pending] roleSeparation, poorDocumentation, injectionStaticPattern
 
   // Tier 2: LLM-assisted
