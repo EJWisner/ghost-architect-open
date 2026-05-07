@@ -12,15 +12,16 @@ Ghost Architect scans your codebase, categorizes risk by severity, and gives you
 
 Ghost triages your codebase — categorizes risk, prioritizes findings, gives your team a map of where to start.
 
-Five scan modes are available:
+Six scan modes are available:
 
 - **Chat** — interactive Q&A with the codebase. Ask anything about the architecture, the conventions, the suspicious bits.
 - **Points of Interest** — auto-map red flags, landmarks, dead zones, and fault lines across the whole codebase. Severity-scored, with effort estimates and recommended fixes.
 - **Blast Radius** — pick a file, class, or method. Ghost maps every dependency that would be affected by a change, plus a complete rollback plan.
 - **Conflict Detection** — find contract mismatches, schema conflicts, config key errors, and constant disagreements that no linter catches.
 - **Recon** — sizing-only mode. Single planner call, ~$0.05. Tells you what a full scan would surface before you commit to running one.
+- **Prompt Triage** — audit a folder of LLM prompts for defects: ambiguous instructions, conflicting directives, prompt-injection patterns, undefined output formats, token-budget overflows, and more. Backed by 15 detectors built on the Tian et al. (2025) prompt-defect taxonomy.
 
-Every scan produces three files:
+Every codebase scan produces three files:
 
 - `ghost-poi.txt` / `ghost-poi.md` / `ghost-poi.pdf` — for Points of Interest
 - `ghost-blast.txt` / `ghost-blast.md` / `ghost-blast.pdf` — for Blast Radius
@@ -28,6 +29,8 @@ Every scan produces three files:
 - `ghost-recon.txt` / `ghost-recon.md` / `ghost-recon.pdf` — for Recon
 
 Reports save to `~/Ghost Architect Reports/` and overwrite the prior run for that mode. Chat is interactive only and does not save a transcript.
+
+Prompt Triage saves a timestamped Markdown report (one per scan, never overwritten) to `~/Ghost Architect Reports/prompt-triage/prompt-triage-YYYYMMDD-HHMMSS.md`.
 
 Reports run locally. Your code never leaves your machine. Analysis calls go directly from your machine to Anthropic's API using your own key.
 
@@ -101,7 +104,22 @@ Reports save to:
 ~/Ghost Architect Reports/
 ```
 
-Each mode produces three files (TXT, MD, PDF). Each run overwrites the prior run's reports for that mode.
+Each scan mode (POI / Blast / Conflict / Recon) produces three files (TXT, MD, PDF). Each run overwrites the prior run's reports for that mode.
+
+---
+
+## Running a Prompt Triage Audit
+
+From the same launch menu, pick **🧪 Audit prompts (folder) — Prompt Triage scan**. Then provide:
+
+1. **A folder containing prompt files** — Ghost recognizes `.md`, `.markdown`, `.txt`, `.yaml`, `.yml`, and `.json`
+2. **Optional target model** — pick from Claude (Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5), OpenAI (GPT-5, GPT-4o, GPT-4o mini, GPT-4.1), or Google (Gemini 2.5 Pro, Gemini 2.5 Flash). Specifying a target model unlocks 10 additional detectors that need it for accurate token counting and context-window analysis.
+
+Ghost runs all 15 detectors against each prompt file and produces a Markdown report grouped by file, with each finding tagged by severity, detector name, location, and suggested fix.
+
+**The 15 detectors** cover both Tier 1 defects (deterministic, structural — formatting, length, unbounded output, prompt-injection patterns, role separation, token-limit overflow, token-limit excessive) and Tier 2 defects (LLM-evaluated — ambiguous instruction, underspecified constraints, conflicting instructions, undefined output format, overloaded prompt, poor organization, inefficient few-shot, poor documentation).
+
+**Detection methodology** is based on Tian et al. (2025), "A Taxonomy of Prompt Defects in LLM Systems" ([arXiv:2509.14404](https://arxiv.org/abs/2509.14404)). Tier 1 detectors run locally with no API calls; Tier 2 detectors call Claude (your default configured model) once per detector per prompt for evaluation. Cost typically lands at a few cents per prompt audited.
 
 ---
 
@@ -150,6 +168,7 @@ Ghost Open is the full scan engine. Pro, Team, Enterprise, and Partner add track
 | Feature | Ghost Open | Ghost Pro | Team | Enterprise |
 |---|---|---|---|---|
 | Chat / POI / Blast / Conflict / Recon | ✅ all | ✅ all | ✅ all | ✅ all |
+| Prompt Triage (15 detectors) | ✅ | ✅ | ✅ | ✅ |
 | Reports save as MD/PDF/TXT | ✅ | ✅ | ✅ | ✅ |
 | Project labels + history tracking | ❌ no labels | ✅ | ✅ | ✅ |
 | Project Dashboard | ❌ | ✅ | ✅ | ✅ |
