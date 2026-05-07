@@ -2,6 +2,12 @@
 cleanup-*.mjs
 fix-*.mjs
 
+# Stale npm pack artifacts. Without this rule, prior `npm pack` outputs
+# accumulate in the working tree and get bundled into subsequent publishes.
+# Caught in v5.1.0 post-publish: a 175 KB ghost-architect-open-5.0.0.tgz
+# from the prior pack/publish session shipped inside the v5.1.0 tarball.
+*.tgz
+
 # Tests
 jest.config.js
 test-agent.js
