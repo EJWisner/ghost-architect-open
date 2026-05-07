@@ -12,8 +12,12 @@ import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { runReconMode } from '../src/modes/recon.js';
+import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
+import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
+import fs from 'fs';
+import path from 'path';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -30,7 +34,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.0.0';
+const VERSION      = '5.1.0';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -196,6 +200,7 @@ async function selectInputMethod() {
     { name: IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory', value: 'files' },
     { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
     { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
+    { name: (IS_WINDOWS ? '[PRT] Audit prompts (folder)' : '🧪  Audit prompts (folder)') + chalk.gray('  — Prompt Triage scan'), value: 'prompt-triage' },
     new inquirer.Separator(),
   ];
 
@@ -305,6 +310,65 @@ async function main() {
       if (method === 'reconfigure') {
         await reconfigure();
         printBanner();
+        continue;
+      }
+
+      if (method === 'prompt-triage') {
+        const { folderPath } = await inquirer.prompt([{
+          type: 'input',
+          name: 'folderPath',
+          message: chalk.cyan('Folder containing prompt files:'),
+          default: process.cwd(),
+          theme: inquirerTheme,
+          validate: (input) => {
+            if (!input || !input.trim()) return 'Folder path is required.';
+            const abs = path.resolve(input.trim());
+            if (!fs.existsSync(abs)) return 'Folder does not exist: ' + abs;
+            try {
+              if (!fs.statSync(abs).isDirectory()) return 'Path is not a directory: ' + abs;
+            } catch (err) {
+              return 'Could not access path: ' + err.message;
+            }
+            return true;
+          },
+        }]);
+
+        // Optional target-model selection. When specified, length-aware
+        // detectors use the correct tokenizer (exact for OpenAI, heuristic
+        // with model-specific context-window labels for others).
+        const { specifyModel } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'specifyModel',
+          message: chalk.cyan('Specify a target model?'),
+          default: false,
+          theme: inquirerTheme,
+        }]);
+        let targetModel = null;
+        if (specifyModel) {
+          const modelChoices = listModelsForPicker().map(m => ({
+            name: m.displayName + chalk.gray(' (' + m.family + ', '
+              + m.contextWindow.toLocaleString() + ' tokens)'),
+            value: m.id,
+          }));
+          const answer = await inquirer.prompt([{
+            type: 'list',
+            name: 'targetModel',
+            message: chalk.cyan('Target model:'),
+            choices: modelChoices,
+            pageSize: 12,
+            theme: inquirerTheme,
+          }]);
+          targetModel = answer.targetModel;
+        }
+
+        try {
+          await runPromptTriageMode({
+            source: { kind: 'localFolder', path: folderPath.trim() },
+            targetModel,
+          });
+        } catch (err) {
+          console.log(chalk.red('\n' + SYM.cross + ' Prompt Triage failed: ' + err.message + '\n'));
+        }
         continue;
       }
 

@@ -7,11 +7,15 @@ jest.config.js
 test-agent.js
 src/__tests__/
 **/*.test.js
+tests/
+extract-prompts.mjs
+prompts-extracted/
 
 # Internal / Claude Code
 .claude/
 CLAUDE.md
 HALLUCINATION_AUDIT.md
+PROMPT_TRIAGE_FOLLOWUPS.md
 
 # Web (separate Next.js marketing site — not part of CLI package)
 web/
