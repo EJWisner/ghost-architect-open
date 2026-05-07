@@ -131,14 +131,10 @@ function extractFindings(text) {
 
   const sectionPattern = /^(?:🔴|🏛|🏛️|⚰️|⚡|📊|##\s)/;
   const landmarkPattern = /LANDMARK|🏛/i;
-  // Field patterns assume a pre-stripped line (no `**` markdown bold).
-  // See src/utils/finding-parser.js for full rationale on this approach.
-  const findingPattern = /^(?:###\s+)?\d+\.\s+(.+?)$/;
-  const severityPattern = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
-  const importancePattern = /^[Ii]mportance\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
-  const naPattern = /^[Ss]everity\s*:\s*N\/A/;
-
-  const stripBold = s => s.replace(/\*+/g, '');
+  const findingPattern = /^(?:###\s+)?\d+\.\s+\*?\*?(.+?)\*?\*?$/;
+  const severityPattern = /\*?\*?Severity:\*?\*?\s*(CRITICAL|HIGH|MEDIUM|LOW)/i;
+  const importancePattern = /\*?\*?Importance:\*?\*?\s*(CRITICAL|HIGH|MEDIUM|LOW)/i;
+  const naPattern = /\*?\*?Severity:\*?\*?\s*N\/A/i;  // LANDMARK findings use Severity: N/A
 
   const fixStepVerbs = /^(add|remove|use|replace|check|ensure|move|set|document|consider|implement|audit|update|extract|provide|expose|validate|track|introduce|accumulate|log|test|grep|keep|delete|run|verify|create|disable|enable|gate|save|restore|notify|post|close|open|read|write|scan|load|store|if\s|or\s|see\s|apply\s|for\s)/i;
 
@@ -150,7 +146,6 @@ function extractFindings(text) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    const stripped = stripBold(line);  // for field-pattern matching
 
     // Detect section header changes
     if (sectionPattern.test(line)) {
@@ -158,7 +153,7 @@ function extractFindings(text) {
       inRecommendedFix = false;
     }
 
-    // Enter fix section (raw line — bold form handled inline by (\*\*)? )
+    // Enter fix section
     if (/^(\*\*)?Recommended Fix:(\*\*)?/i.test(line)) { inRecommendedFix = true; continue; }
 
     // Exit fix section
@@ -171,22 +166,21 @@ function extractFindings(text) {
     }
     if (inRecommendedFix) continue;
 
-    // Skip description bullets (raw line — bullet markers may use *)
+    // Skip description bullets
     if (descBullet.test(line)) continue;
 
-    // Match against the pre-stripped line so `**` doesn't break the patterns.
-    const match = stripped.match(findingPattern);
+    const match = line.match(findingPattern);
     if (match) {
-      const title = match[1].trim();
+      const title = match[1].replace(/\*\*/g, '').trim();
       if (fixStepVerbs.test(title) || title.length > 100 || descBullet.test(title)) continue;
 
       if (currentFinding) findings.push(currentFinding);
       currentFinding = { title, severity: inLandmarkSection ? 'LANDMARK' : 'UNKNOWN', raw: line };
     } else if (currentFinding) {
-      const sev = stripped.match(severityPattern) || stripped.match(importancePattern);
+      const sev = line.match(severityPattern) || line.match(importancePattern);
       if (sev) currentFinding.severity = sev[1].toUpperCase();
       // Severity: N/A means this is a LANDMARK architectural finding
-      if (naPattern.test(stripped)) currentFinding.severity = 'LANDMARK';
+      if (naPattern.test(line)) currentFinding.severity = 'LANDMARK';
     }
   }
 
