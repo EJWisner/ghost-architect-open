@@ -96,25 +96,111 @@ async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFin
 }
 
 // ── Extract conflict candidates from raw pass results ─────────────────────────
+//
+// Parses the model's free-form conflict scan output into structured candidate
+// objects for the verifier. Two failure modes the prior version had:
+//
+// 1. Greedy numbered-list matching pulled fix-step bullets from inside
+//    "Resolution:", "Fix:", or "What to do:" sub-sections as if they were
+//    top-level conflict findings. On small codebases the model produces lots
+//    of fix recommendations and few real conflicts, so the candidate list
+//    became dominated by recommendation prose like "Update both functions to
+//    reference this constant" — which the verifier can't classify because
+//    those aren't conflict claims, they're fix instructions. The verifier
+//    ended up returning INSUFFICIENT for all of them.
+//
+// 2. The `**` bold markers were handled by a fragile inline `\*?\*?` pattern
+//    that doesn't account for the most common model output form
+//    (`**Severity:** HIGH` with colon inside bold). Same bug pattern as the
+//    canonical parser fix in src/utils/finding-parser.js.
+//
+// Fix: pre-strip markdown bold per line, track whether we're inside a
+// fix-recommendation sub-section, and apply a backstop filter that drops
+// candidates whose title starts with imperative fix-verbs (Update, Define,
+// Add, etc.) since those are recommendation bullets, not conflict claims.
 
-function extractCandidates(rawResults) {
+// Imperative verbs that fix-recommendation bullets typically start with.
+// If a candidate's title starts with one of these, it's almost certainly a
+// fix instruction, not a conflict claim. The verbs are listed lowercased
+// because we lowercase the title before checking.
+const FIX_VERB_RE = /^(add|address|adjust|apply|audit|build|change|check|choose|configure|consider|consolidate|convert|create|define|delete|deprecate|disable|document|enable|ensure|establish|exclude|export|extract|fix|gate|generate|harden|implement|improve|include|inject|install|introduce|investigate|isolate|keep|load|log|maintain|migrate|modify|move|normalize|prevent|provide|publish|refactor|register|remove|rename|replace|resolve|restructure|return|review|run|save|search|set|setup|simplify|split|standardize|store|switch|test|track|update|use|validate|verify|wire|wrap)\b/i;
+
+// Section headers that mark the start of a fix-recommendation sub-section.
+// Numbered items inside these sections are fix steps, not conflict findings.
+// Patterns are matched against pre-stripped lines (no `**`).
+const FIX_SECTION_RE = /^(?:resolution|recommended\s+fix|fix\s+steps?|fix|what\s+to\s+do|how\s+to\s+(?:fix|resolve)|remediation|action\s+items?|next\s+steps?|to\s+resolve|to\s+fix|recommendation|recommendations)\s*:/i;
+
+function stripBoldMarkdown(line) {
+  return line.replace(/\*+/g, '');
+}
+
+// Exported for use by tests and diagnostic tooling. The verifier consumes
+// the candidate list internally; external consumers should call runConflictScan
+// rather than this function directly.
+export function extractCandidates(rawResults) {
   const candidates = [];
   const combined   = Array.isArray(rawResults) ? rawResults.join('\n') : rawResults;
   const lines      = combined.split('\n');
 
-  let current = null;
-  const severityRe = /severity[:\s]+?(BLOCKING|CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
-  const filesRe    = /files?[:\s]+(.+)/i;
-  const findingRe  = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
+  // Patterns assume pre-stripped lines. Anchored to start of line so body
+  // text like "…both files…" can't hijack the file list.
+  const severityRe = /^[Ss]everity\s*:[^A-Za-z]*(BLOCKING|CRITICAL|HIGH|MEDIUM|LOW|INFO)/;
+  const filesRe    = /^[Ff]iles?\s*:\s*(.+)/;
+  const findingRe  = /^\d+\.\s+(.+?)$/;
+
+  let current        = null;
+  let inFixSection   = false;  // Inside a Resolution/Fix-steps sub-section?
 
   for (const line of lines) {
-    const t = line.trim();
+    const tRaw = line.trim();
+    const t    = stripBoldMarkdown(tRaw);
 
-    const fm = t.match(findingRe);
+    // Section state tracking. A fix-section header ("Resolution:",
+    // "Recommended Fix:", etc.) starts a fix block. A markdown header
+    // (## / ###), a horizontal rule (---), or a new finding header
+    // ("### Conflict 2", `1. **Title**`) ends the fix block.
+    if (FIX_SECTION_RE.test(t)) {
+      inFixSection = true;
+    } else if (/^#{1,3}\s+/.test(tRaw)) {
+      // Markdown header always ends a fix section — the model is starting
+      // a new top-level section.
+      inFixSection = false;
+    } else if (tRaw.startsWith('---')) {
+      // Horizontal rule ends a fix section. Blank lines do NOT — they're
+      // common inside fix sub-sections.
+      inFixSection = false;
+    }
+
+    // Try to match a finding header. Skip this match if we're inside a fix
+    // sub-section — those numbered items are fix steps, not findings.
+    const fm = !inFixSection ? t.match(findingRe) : null;
     if (fm) {
+      const titleCandidate = fm[1].trim();
+
+      // Backstop: if the title starts with an imperative fix-verb, it's
+      // almost certainly a fix-step bullet that escaped the section
+      // detection. Skip it. Keep `current` open so the surrounding finding
+      // continues to accumulate description.
+      if (FIX_VERB_RE.test(titleCandidate)) {
+        // Treat as description content of the current finding, not a new one.
+        if (current && titleCandidate.length > 10) {
+          current.description += (current.description ? ' ' : '') + tRaw;
+        }
+        continue;
+      }
+
+      // Backstop: titles ending with `:` (like "Update both functions to
+      // reference this constant:") are usually fix-step bullet headers.
+      if (titleCandidate.endsWith(':')) {
+        if (current && titleCandidate.length > 10) {
+          current.description += (current.description ? ' ' : '') + tRaw;
+        }
+        continue;
+      }
+
       if (current) candidates.push(current);
       current = {
-        title:       fm[1].replace(/\*\*/g, '').trim(),
+        title:       titleCandidate,
         description: '',
         severity:    'MEDIUM',
         files:       [],
@@ -130,7 +216,7 @@ function extractCandidates(rawResults) {
 
       const fileM = t.match(filesRe);
       if (fileM) {
-        current.files = fileM[1].split(/[,;]/).map(f => f.trim()).filter(Boolean);
+        current.files = fileM[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
         continue;
       }
 
@@ -141,6 +227,7 @@ function extractCandidates(rawResults) {
   }
   if (current) candidates.push(current);
 
+  // Dedupe by title prefix (catches near-duplicates from multi-pass merge)
   const seen = new Set();
   return candidates.filter(c => {
     const key = c.title.toLowerCase().slice(0, 40);
@@ -153,14 +240,28 @@ function extractCandidates(rawResults) {
 // ── Extract skeleton for cross-pass context ────────────────────────────────────
 
 function extractConflictSkeleton(result) {
+  // Same section-awareness as extractCandidates so cross-pass context isn't
+  // poisoned by fix-step bullets. See extractCandidates for full rationale.
   const lines    = result.split('\n');
   const skeleton = [];
+  let inFixSection = false;
+
   for (const line of lines) {
-    const t = line.trim();
-    if (/^\d+\.\s+\*?\*?.+/.test(t) && t.length < 120)  skeleton.push(t.replace(/\*\*/g, ''));
-    if (/Severity:/i.test(t))                              skeleton.push(t);
-    if (/Files?:/i.test(t) && t.length < 100)             skeleton.push(t);
-    if (/Contract|Schema|Config|API|Interface/i.test(t) && t.length < 100) skeleton.push(t);
+    const tRaw = line.trim();
+    const t    = stripBoldMarkdown(tRaw);
+
+    if (FIX_SECTION_RE.test(t))   inFixSection = true;
+    else if (tRaw.startsWith('---') || /^#{1,3}\s+/.test(tRaw)) inFixSection = false;
+
+    // Numbered finding header — only count outside fix sections, and only if
+    // the title isn't an imperative fix-verb bullet.
+    const findingMatch = !inFixSection && /^\d+\.\s+(.+?)$/.test(t) && t.length < 120 ? t.match(/^\d+\.\s+(.+?)$/) : null;
+    if (findingMatch && !FIX_VERB_RE.test(findingMatch[1].trim()) && !findingMatch[1].trim().endsWith(':')) {
+      skeleton.push(t);
+    }
+    if (/^[Ss]everity\s*:/.test(t))                          skeleton.push(t);
+    if (/^[Ff]iles?\s*:/.test(t) && t.length < 100)         skeleton.push(t);
+    if (/Contract|Schema|Config|API|Interface/i.test(tRaw) && tRaw.length < 100) skeleton.push(tRaw);
   }
   return skeleton.slice(0, 30).join('\n');
 }

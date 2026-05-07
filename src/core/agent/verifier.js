@@ -6,6 +6,9 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import fs        from 'fs';
+import path      from 'path';
+import os        from 'os';
 import { getConfig, resolveApiKey } from '../../config.js';
 import { AgentMemory }              from './memory.js';
 import { buildTools }               from './tools.js';
@@ -13,6 +16,23 @@ import { runMiniLoop }              from './loop.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+
+// Debug telemetry directory — written when verification falls through to
+// INSUFFICIENT for diagnosability. Files here are NEVER shown to the user;
+// they're for diagnosing why the verifier couldn't classify findings.
+const DEBUG_DIR = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+
+function writeVerifierDebugLog(name, payload) {
+  try {
+    if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    const ts   = new Date().toISOString().replace(/[:.]/g, '-');
+    const file = path.join(DEBUG_DIR, `conflict-verifier-${ts}-${name}.json`);
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
+    return file;
+  } catch {
+    return null;  // Never let debug logging fail the verifier.
+  }
+}
 
 // ── Verdict types ─────────────────────────────────────────────────────────────
 
@@ -71,19 +91,29 @@ Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in
     evidence      = finding.detail || '';
     verdict       = confidence >= 80 ? Verdict.CONFIRMED : Verdict.POSSIBLE;
   } else {
-    // Agent didn't flag anything — check finish summary for verdict
+    // Agent didn't flag anything — inspect the finish summary for verdict.
+    // The regex set is deliberately broad: real model outputs use a wide
+    // variety of phrasings beyond the obvious keywords. Order matters —
+    // FALSE_POSITIVE patterns are checked first so a summary like "this
+    // is not a conflict, although it could matter under load" is correctly
+    // classified as FALSE_POSITIVE rather than getting picked up by the
+    // POSSIBLE catch-all.
     const finishAction = result.auditTrail?.find(a => a.action === 'finish');
     const summary      = finishAction?.result?.summary || finishAction?.resultSummary || '';
 
-    if (/false.positive|not a conflict|no conflict|disabled|different scope/i.test(summary)) {
+    const FALSE_POSITIVE_RE = /false[\s.-]*positive|not\s+(?:a|an|actually|really)\s+(?:a\s+)?conflict|no\s+(?:actual|real)?\s*conflict|already\s+(?:fixed|resolved|implemented|in\s+place)|disabled|different\s+scope|does\s+not\s+(?:match|conflict|appear)|cannot\s+confirm.*conflict|safe\s+(?:as|because)|correctly\s+handled|properly\s+(?:scoped|isolated)/i;
+    const CONFIRMED_RE      = /confirmed|definitely|will\s+(?:break|fail|cause|conflict)|definite\s+conflict|real\s+conflict|genuine\s+conflict|both\s+sides.*conflict|incompatible/i;
+    const POSSIBLE_RE       = /possible|possibly|might|could|may|under\s+(?:certain|some|specific)\s+conditions?|in\s+some\s+cases|edge\s+case|potential\s+(?:conflict|issue)|partial(?:ly)?\s+(?:supported|true)/i;
+
+    if (FALSE_POSITIVE_RE.test(summary)) {
       verdict    = Verdict.FALSE_POSITIVE;
       evidence   = summary;
       confidence = 85;
-    } else if (/confirmed|definitely|will break/i.test(summary)) {
+    } else if (CONFIRMED_RE.test(summary)) {
       verdict    = Verdict.CONFIRMED;
       evidence   = summary;
       confidence = 80;
-    } else if (/possible|might|could|may/i.test(summary)) {
+    } else if (POSSIBLE_RE.test(summary)) {
       verdict    = Verdict.POSSIBLE;
       evidence   = summary;
       confidence = 60;
@@ -91,6 +121,33 @@ Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in
       verdict    = Verdict.INSUFFICIENT;
       evidence   = summary || 'Verification inconclusive';
       confidence = 40;
+      // Diagnostic log: when we hit INSUFFICIENT, record the candidate and
+      // the agent's actual summary so future bug investigation has data
+      // instead of the current black hole. Disable via
+      // GHOST_VERIFIER_DEBUG=0 to avoid disk writes in performance runs.
+      if (process.env.GHOST_VERIFIER_DEBUG !== '0') {
+        writeVerifierDebugLog('insufficient', {
+          timestamp:  new Date().toISOString(),
+          candidate: {
+            title:       candidate.title,
+            description: candidate.description,
+            severity:    candidate.severity,
+            files:       candidate.files,
+            type:        candidate.type,
+          },
+          agentRanSteps:    result.stepCount,
+          agentFlagged:     result.findings.length,
+          finishSummary:    summary,
+          finishSummaryLen: summary.length,
+          auditTrail:       (result.auditTrail || []).map(a => ({
+            action:     a.action,
+            input:      typeof a.input === 'string' ? a.input.slice(0, 200) : a.input,
+            resultPreview: typeof a.result === 'string'
+              ? a.result.slice(0, 200)
+              : (a.result?.summary || JSON.stringify(a.result || {}).slice(0, 200)),
+          })),
+        });
+      }
     }
   }
 
@@ -219,11 +276,26 @@ Respond with JSON only:
       evidence:   parsed.evidence   || '',
       method:     'quick',
     };
-  } catch {
+  } catch (err) {
+    // Diagnostic log: capture the raw model response on parse failure so we
+    // can see WHY the JSON didn't parse (truncation, prose preamble, etc.).
+    if (process.env.GHOST_VERIFIER_DEBUG !== '0') {
+      writeVerifierDebugLog('quick-parse-fail', {
+        timestamp:    new Date().toISOString(),
+        candidate: {
+          title:    candidate.title,
+          severity: candidate.severity,
+          files:    candidate.files,
+        },
+        error:        err.message,
+        // We can't access `raw` here — it's scoped inside the try. Re-call
+        // would double the cost. Future improvement: hoist `raw` out of try.
+      });
+    }
     return {
       ...candidate,
       verdict:    Verdict.INSUFFICIENT,
-      evidence:   'Quick verification failed',
+      evidence:   'Quick verification failed: ' + err.message,
       confidence: 0,
       method:     'quick',
     };
