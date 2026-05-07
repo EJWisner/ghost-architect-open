@@ -549,6 +549,60 @@ Address these post-v5.0.0 ship as part of "dogfood the prompt
 pack on Ghost's own prompts" cleanup work. Not blocking v5.0.0
 release.
 
+### F-25 — Strategic deviation: ship Prompt Triage to ghost-architect-open in v5.1.0
+**Status:** ACCEPTED — strategic call, not a defect
+**Source:** session 8 (post-detector-#15 ship decision)
+**Priority:** N/A (decision log)
+**Why:** The original May 5 strategy (chat 84f82b42) sequenced Prompt
+Triage as a Pro-tier private-branch feature for v5.x with cherry-picks
+to Open deferred 2-4 weeks for paid-tier conversion hook ("Prompt
+Triage available now on Pro — Open users get it next month"). After
+detector #15 shipped, the call was made to ship Prompt Triage to
+ghost-architect-open simultaneously with paid tiers in v5.1.0 rather
+than holding it back.
+
+**Risks accepted by this decision:**
+
+  - **Hallucination tuning gap.** The May 5 plan budgeted "week of
+    May 19" for ground-truth corpus work and false-positive tuning
+    against real-world prompts. That week never happened. Open users
+    will throw real-world prompts at the pack that the test corpus
+    did not cover. Expected effect: occasional false positives and
+    false negatives that a paid-tier-first release would have tuned
+    out before public exposure.
+  - **API key dependency confusion.** Tier 2 detectors require an
+    Anthropic API key. Open users without one get clean fail-open
+    behavior (Tier 2 detectors silently skip, only Tier 1 runs) but
+    will see the "Tier 2 detectors not run" notice and may not
+    understand why.
+  - **No paid-tier conversion hook.** "Prompt Triage available now on
+    Pro" pitch is gone. Pro/Team/Enterprise tiers ship the same
+    feature set as Open for this release.
+
+**Reasons the call was made:**
+
+  - Maximum top-of-funnel reach. Public Open users are the largest
+    install base by far; shipping the feature there immediately means
+    real-world feedback at scale.
+  - "Shipped today" clarity outranks staged-rollout strategy at this
+    pre-revenue stage.
+  - Open's prompt-pack hides Tier 2 behind API key requirement, which
+    naturally limits initial real-API exposure to users who already
+    have an Anthropic account and credits — a self-selected technical
+    cohort.
+
+**What we still owe Pro/Team customers:** the Ghost Partner branded
+PDF rendering integration with Prompt Triage reports. That work is
+on the ghost-partner branch and was the original "Pro+ exclusive"
+hook for the May 5 plan. With Open shipping the feature too, the
+conversion pitch is now branded reports, not access. F-26 (future)
+will track that integration.
+
+**No action items.** This is a decision log entry. Future Open users
+hitting false positives or unexpected behavior should be tracked
+under the existing F-12 (root-cause consolidation) and F-19 (cross-
+fire prevention) followups, not here.
+
 ---
 
 ## Closed items
