@@ -194,6 +194,50 @@ Resolution:
 }
 console.log('');
 
+// Test 8: Long single-line title (model concatenated title + description with
+// no newline). Should be split at the em-dash, with the rest going into
+// description. This was the actual bug from the May 7 smoke run — a 246-char
+// "title" that left candidate.files empty and stumped the verifier.
+console.log('Test 8: Long single-line title gets split at em-dash');
+{
+  const raw = `1. **TAX_RATE_DRIFT — Two different default tax rates (5% vs 8%) mean customers see inconsistent final prices depending on which calculation function is used, creating revenue errors and potential tax compliance issues.**
+
+**Severity:** MEDIUM
+`;
+  const candidates = extractCandidates(raw);
+  check('count is 1', candidates.length, 1);
+  if (candidates.length === 1) {
+    checkPredicate('title is short and starts with TAX_RATE_DRIFT',
+      candidates[0].title,
+      t => t && t.length < 120 && t.startsWith('TAX_RATE_DRIFT'),
+      'should be < 120 chars and start with TAX_RATE_DRIFT'
+    );
+    checkPredicate('description contains the rest',
+      candidates[0].description,
+      d => d && d.includes('inconsistent final prices'),
+      'should contain the prose that came after the em-dash'
+    );
+  }
+}
+console.log('');
+
+// Test 9: Period-separated long title gets split at sentence boundary
+console.log('Test 9: Long title with period split');
+{
+  const raw = `1. **CONFLICT_NAME**: Long description that goes on and on without a sentence break and then. Eventually has a period followed by capital letter.
+`;
+  const candidates = extractCandidates(raw);
+  check('count is 1', candidates.length, 1);
+  if (candidates.length === 1) {
+    checkPredicate('title is the short part',
+      candidates[0].title,
+      t => t && t.length < 120,
+      'should be split, title under 120 chars'
+    );
+  }
+}
+console.log('');
+
 // Test 7: Real historic data from a working v5.0.0 conflict scan output
 // This is a synthetic approximation of what the model produced on April 27.
 // The structure is "C-001:" style with bold severity badges and structured sections.

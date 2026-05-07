@@ -199,9 +199,31 @@ export function extractCandidates(rawResults) {
       }
 
       if (current) candidates.push(current);
+      // Long titles indicate the model wrote title + description on a single
+      // line without a newline separator. Split on the first sentence-end
+      // character (period, semicolon, em-dash followed by capital) so the
+      // verifier gets a short, focused title to anchor on. The remainder
+      // becomes the description — the verifier reads both, so no info is
+      // lost. Threshold of 120 chars matches the skeleton extractor's limit.
+      let titleText = titleCandidate;
+      let extractedDescription = '';
+      if (titleText.length > 120) {
+        // Find the first natural split point. Prefer em-dash (most common in
+        // model output: "NAME — explanation") then sentence terminators.
+        const dashSplit  = titleText.search(/\s—\s/);
+        const colonSplit = titleText.search(/:\s+[A-Z]/);
+        const periodSplit = titleText.search(/\.\s+[A-Z]/);
+        const candidateSplits = [dashSplit, colonSplit, periodSplit].filter(i => i > 0 && i < 120);
+        if (candidateSplits.length > 0) {
+          const firstSplit = Math.min(...candidateSplits);
+          extractedDescription = titleText.slice(firstSplit + 1).trim();
+          titleText = titleText.slice(0, firstSplit).trim();
+        }
+      }
+
       current = {
-        title:       titleCandidate,
-        description: '',
+        title:       titleText,
+        description: extractedDescription,
         severity:    'MEDIUM',
         files:       [],
         type:        'scan_detected',

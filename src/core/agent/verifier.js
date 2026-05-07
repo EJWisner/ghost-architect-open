@@ -54,17 +54,26 @@ async function verifyOne(candidate, fileMap, callbacks = {}) {
   const memory = new AgentMemory();
   const tools  = buildTools(fileMap, memory);
 
-  // Build a targeted verification task
+  // Build a targeted verification task. When candidate.files is empty (the
+  // model didn't write a structured Files: line for this conflict, or the
+  // parser couldn't extract one), the agent has nothing to anchor on. Give
+  // it explicit instructions to start by mapping the codebase so it doesn't
+  // burn its first step asking "where do I look?"
+  const filesList = (candidate.files || []).filter(Boolean);
+  const filesGuidance = filesList.length > 0
+    ? `Files involved: ${filesList.join(', ')}`
+    : `Files involved: (not specified — use listDirectory and searchFiles to locate the relevant files based on the description)`;
+
   const task = `Verify whether this is a REAL conflict or a false positive.
 
 CANDIDATE CONFLICT:
 Type: ${candidate.type || 'unknown'}
 Severity: ${candidate.severity || 'unknown'}
-Files involved: ${(candidate.files || []).join(', ')}
+${filesGuidance}
 Description: ${candidate.description || candidate.title || 'No description'}
 
 YOUR JOB:
-1. Use the tools to examine the files involved
+1. Use the tools to examine the files involved (or locate them if not specified)
 2. Check: Are both sides actually active? Same scope/context? Correct sort order?
 3. Look for conditions, guards, or scope limits that might prevent the conflict
 4. Conclude with flagFinding (if CONFIRMED or POSSIBLE) then finish
@@ -74,10 +83,16 @@ Verification criteria:
 - POSSIBLE: The conflict could manifest under certain conditions
 - FALSE_POSITIVE: There is no real conflict (e.g., one side is disabled, different scope, correct sort order)
 
-Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in the summary.`;
+Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in the summary.
+Use your verification budget efficiently — you have a limited number of steps before you must finish.`;
 
-  // Run mini loop — max 3 steps per conflict
-  const result = await runMiniLoop(task, tools, memory, 3);
+  // Run mini loop. We give the verifier 5 steps because a typical conflict
+  // verification needs: (1) listDirectory to map the codebase, (2) readFile
+  // for the suspected file(s), (3) searchFiles to find related callers, plus
+  // (4) flagFinding and (5) finish. Three steps was too tight — the agent
+  // would burn all its budget on context-gathering and never reach the
+  // verdict-producing actions, falling through to INSUFFICIENT.
+  const result = await runMiniLoop(task, tools, memory, 5);
 
   // Determine verdict from what the agent did
   let verdict    = Verdict.INSUFFICIENT;
@@ -101,6 +116,22 @@ Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in
     const finishAction = result.auditTrail?.find(a => a.action === 'finish');
     const summary      = finishAction?.result?.summary || finishAction?.resultSummary || '';
 
+    // Step-cap detection. When the loop hits its step cap, loop.js synthesizes
+    // a finish action with reason='step_cap' and summary='Step cap of N
+    // reached'. That summary text doesn't match any verdict regex, so without
+    // special handling the verifier falls through to INSUFFICIENT — even
+    // when the agent was making productive progress (read files, found
+    // matches). If the agent did 2+ productive non-finish steps before being
+    // capped, treat the candidate as POSSIBLE rather than INSUFFICIENT: the
+    // agent was actively building evidence and just ran out of budget.
+    const finishReason = finishAction?.input?.reason || finishAction?.result?.reason;
+    const productiveSteps = (result.auditTrail || []).filter(a =>
+      a.action !== 'finish' &&
+      a.action !== 'parse_error' &&
+      a.action !== 'api_error' &&
+      a.action !== 'invalid_action'
+    ).length;
+
     const FALSE_POSITIVE_RE = /false[\s.-]*positive|not\s+(?:a|an|actually|really)\s+(?:a\s+)?conflict|no\s+(?:actual|real)?\s*conflict|already\s+(?:fixed|resolved|implemented|in\s+place)|disabled|different\s+scope|does\s+not\s+(?:match|conflict|appear)|cannot\s+confirm.*conflict|safe\s+(?:as|because)|correctly\s+handled|properly\s+(?:scoped|isolated)/i;
     const CONFIRMED_RE      = /confirmed|definitely|will\s+(?:break|fail|cause|conflict)|definite\s+conflict|real\s+conflict|genuine\s+conflict|both\s+sides.*conflict|incompatible/i;
     const POSSIBLE_RE       = /possible|possibly|might|could|may|under\s+(?:certain|some|specific)\s+conditions?|in\s+some\s+cases|edge\s+case|potential\s+(?:conflict|issue)|partial(?:ly)?\s+(?:supported|true)/i;
@@ -117,6 +148,12 @@ Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in
       verdict    = Verdict.POSSIBLE;
       evidence   = summary;
       confidence = 60;
+    } else if (finishReason === 'step_cap' && productiveSteps >= 2) {
+      // Agent ran out of steps but was making progress. Surface as POSSIBLE
+      // so it shows up in the report instead of being silently dropped.
+      verdict    = Verdict.POSSIBLE;
+      evidence   = `Agent ran out of verification steps after ${productiveSteps} productive actions. Inspected files: ${(result.filesAnalyzed || []).join(', ') || '(none recorded)'}. Manual review recommended.`;
+      confidence = 50;
     } else {
       verdict    = Verdict.INSUFFICIENT;
       evidence   = summary || 'Verification inconclusive';
@@ -139,6 +176,8 @@ Flag the finding if CONFIRMED or POSSIBLE. Then call finish with your verdict in
           agentFlagged:     result.findings.length,
           finishSummary:    summary,
           finishSummaryLen: summary.length,
+          finishReason,
+          productiveSteps,
           auditTrail:       (result.auditTrail || []).map(a => ({
             action:     a.action,
             input:      typeof a.input === 'string' ? a.input.slice(0, 200) : a.input,
