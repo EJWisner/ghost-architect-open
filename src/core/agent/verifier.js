@@ -151,8 +151,16 @@ Use your verification budget efficiently — you have a limited number of steps 
     } else if (finishReason === 'step_cap' && productiveSteps >= 2) {
       // Agent ran out of steps but was making progress. Surface as POSSIBLE
       // so it shows up in the report instead of being silently dropped.
+      // result.filesAnalyzed is a count (memory.filesRead.size), not an array,
+      // so we extract actual paths from the audit trail's readFile actions.
+      const inspectedPaths = (result.auditTrail || [])
+        .filter(a => a.action === 'readFile' && a.input?.path)
+        .map(a => a.input.path);
+      const inspectedSummary = inspectedPaths.length > 0
+        ? inspectedPaths.join(', ')
+        : '(none recorded)';
       verdict    = Verdict.POSSIBLE;
-      evidence   = `Agent ran out of verification steps after ${productiveSteps} productive actions. Inspected files: ${(result.filesAnalyzed || []).join(', ') || '(none recorded)'}. Manual review recommended.`;
+      evidence   = `Agent ran out of verification steps after ${productiveSteps} productive actions. Inspected files: ${inspectedSummary}. Manual review recommended.`;
       confidence = 50;
     } else {
       verdict    = Verdict.INSUFFICIENT;
