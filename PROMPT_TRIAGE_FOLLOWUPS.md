@@ -284,8 +284,13 @@ Do not emit it."), and (c) the full vocabulary list covering ambig,
 underspec, conflict, and undef-format trip words — all from the
 first write. Detector #13 (poorOrganization) repeated this result
 on its own fixtures: zero cross-fire on fixtures 37, 38, 39 from
-the first write. The pattern is now well-enough understood to
-prevent at design time rather than fix incrementally.
+the first write. Detector #14 (inefficientFewShot) repeated this
+result a third time on fixtures 40, 41, 42 from the first write,
+despite operating in territory that thematically overlaps every
+other Tier 2 detector. The design-time prevention pattern is now
+confirmed across three consecutive new-detector ships. The pattern
+is well-enough understood to prevent at design time rather than
+fix incrementally.
 
 **Counter-evidence that retrofit on existing detectors is unsafe:**
 During detector #13 ship, fixture 29 surfaced a fresh
@@ -446,6 +451,51 @@ still recur on subsequent Tier 2 ships, the issue is deeper than
 vocabulary management — likely the LLM-augmented detector pattern
 itself needs revisiting. Track this when F-12 work is done.
 
+### F-23 — Same-root-cause co-fire is distinct from cross-fire and legitimate co-fire
+**Status:** DOCUMENTED — F-12 territory, no new action
+**Source:** session 8 (detector #14 ship, fixture 40)
+**Priority:** LOW (clarifying note)
+**Why:** Distinguish a third pattern that emerged with detector
+#14 from the two patterns documented in F-21:
+
+  - **Cross-fire (F-21 defect):** Two detectors fire on the SAME
+    defect from DIFFERENT framings, where one detector should not
+    have emitted at all. The losing detector's envelope needs a
+    carve-out.
+
+  - **Legitimate co-fire (F-21 correct):** Two detectors fire on
+    DIFFERENT defects that happen to coexist in one prompt. Both
+    findings are correct; both stay.
+
+  - **Same-root-cause co-fire (F-23 new pattern):** Two detectors
+    fire on the SAME defect, BOTH correctly per their positive
+    scopes. Example: fixture 40 has an example output that
+    contradicts the JSON format spec. undefinedOutputFormat
+    correctly identifies this as "example output contradicts JSON
+    format spec" (the format guidance is undermined by its own
+    example). inefficientFewShot correctly identifies this as
+    "example contradicts JSON format instruction" (the example
+    fails to teach the requested pattern). Both findings are
+    technically correct given each detector's defined scope; the
+    defect simply lives at their intersection.
+
+Unlike cross-fire (where one detector is wrong and needs envelope
+tightening), same-root-cause co-fire cannot be fixed at the
+envelope layer without breaking one detector's legitimate scope.
+The right fix is at the report layer: when two findings cite the
+same prompt fragment with similar root-cause framing, consolidate
+them into one finding with both detectors named as contributors.
+
+This is exactly the F-12 root-cause consolidation work. F-23
+documents the pattern but does not add new action — F-12 is the
+structural fix.
+
+Critically: do NOT attempt to suppress same-root-cause co-fire by
+retrofitting either detector's envelope (per F-22). The findings
+are not wrong; they're just redundant. Envelope tightening would
+either suppress legitimate findings or create cross-detector
+ordering bugs.
+
 ---
 
 ## Closed items
@@ -545,3 +595,40 @@ itself needs revisiting. Track this when F-12 work is done.
   load-bearing negative controls (24, 30, 33, 39) hold at 0.
   Fixtures 27 and 36 each gained findings within the F-18 ±1 LOW
   variance band; not caused by this session's edits.
+- inefficientFewShot detector #14 (session 8, commit 3732e92): shipped.
+  3 fixtures (40-42) covering example-contradicts-JSON-spec
+  positive, placeholder-meta-examples positive, and clean-three-
+  examples-with-clean-instructions negative control. Symmetric
+  F-15 carve-outs added to all six existing live Tier 2 siblings
+  (ambig, underspec, conflict, undef-format, overload, poor-org).
+  Bonus catch-up during this ship: added missing poorOrganization
+  carve-out to overloadedPrompt's Do NOT flag list (omitted during
+  detector #13 ship; symmetric carve-out maintenance, not the kind
+  of ad-hoc tightening F-22 warns against).
+  Detector itself baked in the F-19 design-time prevention pattern
+  from the first write, with one additional design choice: a
+  CRITICAL SCOPE GATE stating that the detector only fires when
+  examples ARE present in the prompt (absence of examples is out
+  of scope). The scope gate is stated three times in the envelope
+  (in the SCOPE header, in the trip-wire, and in the Do NOT flag
+  list) to eliminate the most common false-positive risk for this
+  detector class. Result: zero cross-fire on detector #14's own
+  fixtures from the first write — third consecutive new-detector
+  ship to hit this result.
+  Fixture 40 surfaced a new pattern: same-root-cause co-fire
+  between inefficientFewShot and undefinedOutputFormat. Both
+  detectors correctly identify the example-contradicts-JSON-spec
+  defect under their respective positive scopes. Per F-22, did not
+  attempt to fix this by retrofitting either envelope. Logged as
+  F-23 — a distinct pattern from F-21 cross-fire/co-fire that
+  requires F-12 report-layer consolidation, not envelope-layer
+  tightening.
+  Final fixture verification across the full Tier 2 corpus:
+  22:1, 23:3, 24:0, 25:4, 26:5, 27:0, 28:3, 29:3, 30:0, 31:1,
+  32:5, 33:0, 34:1, 35:4, 36:0, 37:1, 38:2, 39:0, 40:2 (1
+  inefficient-few-shot + 1 same-root-cause co-fire on undef-format
+  per F-23), 41:2 (1 inefficient-few-shot + 1 legitimate F-21
+  co-fire on undef-format — different defects), 42:0. All five
+  load-bearing negative controls (24, 30, 33, 39, 42) hold at 0.
+  All MEDIUM positive findings on prior fixtures retained. Variance
+  on fixtures 26, 27, 35, 36 within F-18 ±1 LOW noise band.
