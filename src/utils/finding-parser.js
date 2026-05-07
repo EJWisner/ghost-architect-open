@@ -7,11 +7,36 @@
  */
 
 // ── Shared regex patterns ─────────────────────────────────────────────────────
+//
+// These regexes assume the input line has been pre-stripped of `**` markdown
+// bold markers via stripBoldMarkdown(). Pre-stripping is critical because the
+// model produces variants like `**Field:** value`, `**Field**: value`, and
+// `**Field:** **value**` — trying to encode all those positions inline with
+// optional asterisks is fragile (see git history for the bugs that caused).
+//
+// Pre-stripping reduces every variant to the canonical `Field: value` form,
+// and these regexes match only that form. FILES_RE is anchored with `^` so
+// body text containing the word "files" cannot hijack the file list.
 
-export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?\*?\*?(.+?)\*?\*?$/;
-export const SEVERITY_RE = /^\*?\*?[Ss]everity\*?\*?:\s*\*?\*?(CRITICAL|HIGH|MEDIUM|LOW)\*?\*?/;
-export const FILES_RE    = /\*?\*?[Ff]iles?\*?\*?[:\s]+(.+)/i;
-export const EFFORT_RE   = /\*?\*?[Ee]ffort\*?\*?[:\s]+([\d.]+[\u2013\-][\d.]+)\s*hrs?/i;
+export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?(.+?)$/;
+export const SEVERITY_RE = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
+export const FILES_RE    = /^[Ff]iles?\s*:\s*(.+)/;
+export const EFFORT_RE   = /^[Ee]ffort\s*:[^\d]*([\d.]+[\u2013\-][\d.]+)\s*(?:hours?|hrs?)/i;
+
+/**
+ * Strip markdown bold/italic markers (`**`, `*`) from a line.
+ *
+ * The model wraps field labels in markdown bold (`**Severity:**`) and
+ * sometimes wraps values too (`**HIGH**`). Trying to encode all asterisk
+ * positions in regex via optional groups is brittle. Instead, strip first,
+ * then match against the canonical un-bolded form.
+ *
+ * Backticks are NOT stripped here — they're handled separately when needed,
+ * because file-list parsing uses backticks to delimit individual filenames.
+ */
+export function stripBoldMarkdown(line) {
+  return line.replace(/\*+/g, '');
+}
 
 // ── Deterministic finding ID ──────────────────────────────────────────────────
 
@@ -78,9 +103,13 @@ export function extractFindings(reportText) {
   let inCodeBlock = false;
 
   for (const line of lines) {
-    const t = line.trim();
+    const tRaw = line.trim();
+    // Pre-strip markdown bold so regex patterns can be simple. See header
+    // comments above the regex patterns for why.
+    const t = stripBoldMarkdown(tRaw);
 
-    if (t.startsWith('```')) {
+    // Code block detection uses the raw line (`***` is not a code fence).
+    if (tRaw.startsWith('```')) {
       inCodeBlock = !inCodeBlock;
       continue;
     }
@@ -96,7 +125,7 @@ export function extractFindings(reportText) {
         continue;
       }
       inNonFindingSection = false;
-      currentSectionSeverity = inferSeverityFromSection(t);
+      currentSectionSeverity = inferSeverityFromSection(tRaw);  // raw — emoji indicators are part of the header
       continue;
     }
 
@@ -104,7 +133,7 @@ export function extractFindings(reportText) {
 
     if (/^###\s+/.test(t)) {
       if (current) findings.push(finalize(current));
-      const title = t.replace(/^###\s+/, '').replace(/^\d+\.\s+/, '').replace(/\*\*/g, '').trim();
+      const title = t.replace(/^###\s+/, '').replace(/^\d+\.\s+/, '').trim();
       current = {
         title,
         severity:    currentSectionSeverity,
@@ -122,6 +151,9 @@ export function extractFindings(reportText) {
 
       const fim = t.match(FILES_RE);
       if (fim) {
+        // Each file may still have backticks left from the un-stripped raw
+        // form (e.g. `Files: \`pricing.js\`, \`utils.js\``). Strip them after
+        // splitting on commas/semicolons.
         current.files = fim[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
         continue;
       }
@@ -133,8 +165,8 @@ export function extractFindings(reportText) {
         continue;
       }
 
-      if (t && t.length > 10 && !t.startsWith('---') && !t.startsWith('===') && !t.startsWith('```') && !t.startsWith('|')) {
-        current.detail += (current.detail ? ' ' : '') + t.replace(/\*\*/g, '');
+      if (t && t.length > 10 && !t.startsWith('---') && !t.startsWith('===') && !tRaw.startsWith('```') && !t.startsWith('|')) {
+        current.detail += (current.detail ? ' ' : '') + t;
       }
     }
   }

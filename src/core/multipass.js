@@ -357,25 +357,31 @@ async function mergePassResults(results, label) {
 function extractFindingsForNarrator(mergedText) {
   const findings = [];
   const lines    = mergedText.split('\n');
-  const findingRe  = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const severityRe = /severity[:\s]+?(CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
-  const filesRe    = /files?[:\s]+(.+)/i;
-  const effortRe   = /effort[:\s]+(\d[\d–\-]*)\s*hours?/i;
+  const findingRe  = /^\d+\.\s+(.+?)$/;
+  const severityRe = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW|INFO)/;
+  const filesRe    = /^[Ff]iles?\s*:\s*(.+)/;
+  const effortRe   = /^[Ee]ffort\s*:[^\d]*(\d[\d–\-]*)\s*(?:hours?|hrs?)/i;
+
+  // Pre-strip markdown bold so the simple regexes above match all variants:
+  // `**Severity:** HIGH`, `**Severity**: HIGH`, `Severity: 🟠 HIGH`, etc.
+  // See src/utils/finding-parser.js for full rationale on this approach.
+  const stripBold = s => s.replace(/\*+/g, '');
 
   let current = null;
   for (const line of lines) {
-    const t  = line.trim();
-    const fm = t.match(findingRe);
+    const tRaw = line.trim();
+    const t    = stripBold(tRaw);
+    const fm   = t.match(findingRe);
     if (fm) {
       if (current) findings.push(current);
-      current = { title: fm[1].replace(/\*\*/g, '').trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
+      current = { title: fm[1].trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
       continue;
     }
     if (current) {
       const sm = t.match(severityRe);
       if (sm) { current.severity = sm[1].toUpperCase(); continue; }
       const fm2 = t.match(filesRe);
-      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim()).filter(Boolean); continue; }
+      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean); continue; }
       if (t && t.length > 10 && !t.startsWith('---')) {
         current.detail += (current.detail ? ' ' : '') + t;
       }

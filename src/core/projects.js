@@ -75,17 +75,23 @@ export function fuzzyMatch(input, existing) {
 export function extractFindingsFromReport(reportText) {
   const findings  = [];
   const lines     = reportText.split('\n');
-  const findingRe = /^(?:###\s+)?\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const severityRe = /\*?\*?Severity:\*?\*?\s*(CRITICAL|HIGH|MEDIUM|LOW)/i;
-  const effortRe  = /Effort:\s*([\d–\-]+)\s*hours?/i;
+  const findingRe = /^(?:###\s+)?\d+\.\s+(.+?)$/;
+  const severityRe = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
+  const effortRe  = /^[Ee]ffort\s*:[^\d]*([\d–\-]+)\s*(?:hours?|hrs?)/i;
+
+  // Pre-strip markdown bold so the simple regexes above match all variants:
+  // `**Severity:** HIGH`, `**Severity**: HIGH`, `Severity: 🟠 HIGH`, etc.
+  // See src/utils/finding-parser.js for full rationale on this approach.
+  const stripBold = s => s.replace(/\*+/g, '');
+
   let current = null;
 
   for (const line of lines) {
-    const trimmed = line.trim();
+    const trimmed = stripBold(line.trim());
     const m = trimmed.match(findingRe);
     if (m) {
       if (current) findings.push(current);
-      current = { title: m[1].replace(/\*\*/g, '').trim(), severity: 'UNKNOWN', effortHours: 0 };
+      current = { title: m[1].trim(), severity: 'UNKNOWN', effortHours: 0 };
     } else if (current) {
       const sm = trimmed.match(severityRe);
       if (sm) current.severity = sm[1].toUpperCase();
