@@ -287,10 +287,17 @@ on its own fixtures: zero cross-fire on fixtures 37, 38, 39 from
 the first write. Detector #14 (inefficientFewShot) repeated this
 result a third time on fixtures 40, 41, 42 from the first write,
 despite operating in territory that thematically overlaps every
-other Tier 2 detector. The design-time prevention pattern is now
-confirmed across three consecutive new-detector ships. The pattern
-is well-enough understood to prevent at design time rather than
-fix incrementally.
+other Tier 2 detector. Detector #15 (poorDocumentation) repeated
+this result a fourth time on fixtures 43, 44, 45 from the first
+write — including the load-bearing negative control (fixture 45)
+which is the highest false-positive risk fixture in the entire
+Tier 2 corpus because it deliberately contains magic numbers,
+internal tier names, and a negative constraint, all WITH inline
+rationales and a glossary. The detector correctly recognized that
+documentation-IS-present means do-not-flag. The design-time
+prevention pattern is now confirmed across four consecutive new-
+detector ships and is the dominant approach for new Tier 2
+detectors going forward.
 
 **Counter-evidence that retrofit on existing detectors is unsafe:**
 During detector #13 ship, fixture 29 surfaced a fresh
@@ -496,6 +503,52 @@ are not wrong; they're just redundant. Envelope tightening would
 either suppress legitimate findings or create cross-detector
 ordering bugs.
 
+### F-24 — Dogfood corpus surfaces real maintainability issues in Ghost's own prompts
+**Status:** OPEN MEDIUM (action queue, not blocking)
+**Source:** session 8 (detector #15 ship, dogfood smoke)
+**Priority:** MEDIUM — real findings, not a detector bug
+**Why:** When detector #15 (poorDocumentation) ran for the first
+time against the Ghost Architect dogfood corpus
+(`/Users/ejwisner/ghost/ghost-architect4/prompts-extracted/`), it
+surfaced legitimate maintainability findings on Ghost's own
+production prompts:
+
+  - **POI default**: `$85/hr / $125/hr / $200/hr` billing rates
+    lack rationale (where do these come from? market data?
+    company pricing?); consultant profile referenced but `null`
+    in this snapshot, with no doc explaining what a profile is
+    or how it modifies the framework.
+  - **POI with profile**: same billing-rate gap;
+    `buildSystemPOI(DEFAULT_RATES, SAMPLE_PROFILE)` header
+    reference doesn't document what those inputs look like; four
+    Ghost categories (RED FLAGS / LANDMARKS / DEAD ZONES / FAULT
+    LINES) presented without rationale on why these four (vs.
+    SECURITY, PERFORMANCE).
+  - **Conflict with profile**: Composer commit-hash pinning rule
+    flagged as a red flag without rationale (and pinning is
+    generally considered a best practice — without context, this
+    looks wrong); severity rubric definitions reference
+    unexplained scope.
+
+These findings are correct. The detector is doing its job.
+Ghost's own prompts have real undocumented choices that would
+block a future maintainer. Tracking as future work, separate from
+prompt-pack ship cadence:
+
+  - Add inline rationales to billing-rate tiers in
+    `src/scan/buildSystemPOI.js`.
+  - Document what "consultant profile" is and what shape it
+    takes; or note that profiles are documented in a separate
+    file.
+  - Document why the four Ghost categories were chosen (or note
+    product-contract dependency).
+  - Document the rationale behind the Composer commit-hash rule
+    (or remove it if it's not consultant-specific guidance).
+
+Address these post-v5.0.0 ship as part of "dogfood the prompt
+pack on Ghost's own prompts" cleanup work. Not blocking v5.0.0
+release.
+
 ---
 
 ## Closed items
@@ -632,3 +685,53 @@ ordering bugs.
   load-bearing negative controls (24, 30, 33, 39, 42) hold at 0.
   All MEDIUM positive findings on prior fixtures retained. Variance
   on fixtures 26, 27, 35, 36 within F-18 ±1 LOW noise band.
+- poorDocumentation detector #15 (session 8, commit 7fe89e9): shipped.
+  3 fixtures (43-45): magic-thresholds-without-rationale positive
+  (customer-support triage with 4hr SLA, Tier 3+ tiers, 2-round-
+  trip threshold, $500 dispute, 90-min timeout, 10% credit, AM-
+  East queue, no-pricing constraint, 200-word limit, 48-hr
+  followup — all undocumented; expected 3-10 findings, fired 10
+  capped), internal-jargon-without-glossary positive (marketing
+  prompt with Bumblebee/Falcon/Helios/Q-cycle/Atlas/Pegasus/
+  Goldfinch all undefined; fired 4 poorDoc + 1 unrelated
+  unbounded), and clean-with-rationale-and-glossary load-bearing
+  negative (every magic number has inline rationale, glossary
+  block defines all internal terms, negative constraints have
+  justification; held at 0 poorDoc — single LOW unbounded finding
+  from existing Tier 1 detector unrelated to this ship).
+  Symmetric F-15 carve-outs added to all seven existing live
+  Tier 2 siblings (ambig, underspec, conflict, undef-format,
+  overload, poor-org, inefficient-fewshot).
+  Detector envelope baked in F-19 design-time prevention pattern
+  from the first write with one additional design choice: a
+  CRITICAL SCOPE GATE stating that detector ONLY fires on non-
+  obvious choices that LACK rationale (not on prompts that simply
+  lack comments, not on stylistic verbosity preferences, not on
+  conventional domain terminology). The scope gate was stated
+  three times in the envelope (in the SCOPE header, in the trip-
+  wire, and in the Do NOT flag list) to eliminate the most common
+  false-positive risk for this detector class. The Do NOT flag
+  list was the most explicit of any Tier 2 detector because the
+  false-positive surface area is largest. Result: zero cross-fire
+  on detector #15's own fixtures from the first write — fourth
+  consecutive new-detector ship to hit this result.
+  Detector additionally surfaced legitimate F-21 co-fires on
+  fixtures 38 and 39 in the existing Tier 2 corpus. Fixture 38:
+  3 poorDoc findings on undocumented financial weighting
+  threshold, modified Altman Z-score reference, and forbidden
+  hedge-words rule. Fixture 39: 2 poorDoc findings on 110% word-
+  count ceiling and 4-sentences-per-paragraph rule. These are
+  correct findings on real defects that the original detectors
+  (poorOrganization, undefinedOutputFormat) were not designed to
+  catch. Per F-21 legitimate co-fire pattern, both findings stay;
+  not a regression.
+  Final fixture verification across the full Tier 2 corpus:
+  22:1, 23:2, 24:0, 25:4, 26:6, 27:0, 28:3, 29:3, 30:0, 31:1,
+  32:4, 33:0, 34:1, 35:7, 36:0, 37:1, 38:5, 39:3, 40:2, 41:2,
+  42:0, 43:10, 44:5, 45:1. All five existing load-bearing
+  negative controls (24, 27, 30, 33, 36, 42) hold at 0. New
+  poorDocumentation negative control (45) holds at 0 for poorDoc
+  (single LOW unbounded finding from existing Tier 1 detector,
+  unrelated to this ship). All MEDIUM positive findings on prior
+  fixtures retained. Variance on fixtures 26, 29, 32, 35, 38
+  within F-18 wobble band.
