@@ -125,7 +125,13 @@ const DEFECT_DESCRIPTION =
   + 'arrangement creates structural friction (critical context '
   + 'buried late, related rules scattered across sections, '
   + 'inverted dependencies, examples before instructions). That is '
-  + 'poorOrganization (different detector), NOT ambiguity. Skip it.';
+  + 'poorOrganization (different detector), NOT ambiguity. Skip it.\n'
+  + '  - Prompts whose few-shot examples are present but inefficient '
+  + '(examples contradict the instruction text, contain placeholder '
+  + 'content, lack the structure they should teach, or vary the '
+  + 'wrong dimension). That is inefficientFewShot (different '
+  + 'detector), NOT ambiguity. The instruction itself may be clear; '
+  + 'the defect is the example quality. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "When the customer mentions an issue, summarize it." '

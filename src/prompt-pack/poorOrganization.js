@@ -164,7 +164,18 @@ const DEFECT_DESCRIPTION =
   + 'not a structural defect, even if it is repetitive.\n'
   + '  - Cosmetic markdown choices. "This prompt uses ## instead of '
   + '###" or "this prompt does not have a table of contents" is not '
-  + 'a structural defect.';
+  + 'a structural defect.\n'
+  + '  - Few-shot example quality problems. If the issue is that the '
+  + 'examples themselves are inefficient (contradict the instruction, '
+  + 'contain placeholder content, lack the structure they should '
+  + 'teach), that is inefficientFewShot (different detector), NOT '
+  + 'poor organization. This detector cares about WHERE content sits '
+  + 'in the prompt; inefficientFewShot cares whether examples '
+  + 'demonstrate what they claim to demonstrate. Examples placed '
+  + 'before the instruction they exemplify is a poor-organization '
+  + 'defect (placement). Examples that show the wrong format or '
+  + 'contain placeholder text is an inefficient-few-shot defect '
+  + '(content). Skip the latter here.';
 
 const POSITIVE_EXAMPLES =
   '  - A 2,000-token prompt where lines 1-50 give detailed task '

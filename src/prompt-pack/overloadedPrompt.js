@@ -160,7 +160,18 @@ const DEFECT_DESCRIPTION =
   + 'and serve one task. "Cite sources, use specific terminology, '
   + 'fit a defined schema, include examples" for one analytical '
   + 'task is demanding but not overloaded. Flag only when the '
-  + 'requirements span multiple distinct task types.';
+  + 'requirements span multiple distinct task types.\n'
+  + '  - Prompts whose individual instructions are clear and not '
+  + 'too numerous, but whose arrangement creates structural '
+  + 'friction (critical context buried late, related rules '
+  + 'scattered across sections, inverted dependencies). That is '
+  + 'poorOrganization (different detector), NOT overload. Skip it.\n'
+  + '  - Prompts whose few-shot examples are present but inefficient '
+  + '(examples contradict the instruction, contain placeholder '
+  + 'content, lack the structure they should teach, or vary the '
+  + 'wrong dimension). That is inefficientFewShot (different '
+  + 'detector), NOT overload. The task count itself may be '
+  + 'reasonable; the defect is example quality. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Analyze the user\'s code for security issues. Then write '

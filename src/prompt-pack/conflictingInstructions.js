@@ -152,7 +152,18 @@ const DEFECT_DESCRIPTION =
   + 'but are scattered across the prompt or appear in an order '
   + 'that creates structural friction (rule A in section 1 uses a '
   + 'definition introduced in section 4). That is poorOrganization '
-  + '(different detector), NOT conflict. Skip it.';
+  + '(different detector), NOT conflict. Skip it.\n'
+  + '  - Prompts whose few-shot examples are present but inefficient '
+  + 'in ways OTHER than direct contradiction with the instructions. '
+  + 'Examples that contain placeholder content, lack the structure '
+  + 'they should teach, are too narrow to generalize from, or vary '
+  + 'the wrong dimension are inefficientFewShot (different '
+  + 'detector), NOT conflict. Conflict is reserved for cases where '
+  + 'an example DIRECTLY DEMONSTRATES THE OPPOSITE of an instruction '
+  + 'rule (e.g. instruction says "respond in English", example '
+  + 'responds in Spanish). Generally weak or placeholder-y examples '
+  + 'that do not concretely contradict any instruction belong to '
+  + 'inefficientFewShot. Skip them here.';
 
 const POSITIVE_EXAMPLES =
   '  - Prompt says: "Be concise. Keep your response brief." '

@@ -134,7 +134,13 @@ const DEFECT_DESCRIPTION =
   + 'arranged poorly (rules scattered across sections, definitions '
   + 'introduced after the rules that use them). That is '
   + 'poorOrganization (different detector), NOT an underspecified '
-  + 'constraint. Skip it.';
+  + 'constraint. Skip it.\n'
+  + '  - Prompts whose few-shot examples are present but inefficient '
+  + '(examples contradict the rubric, contain placeholder content, '
+  + 'or fail to demonstrate the rating scale they should teach). '
+  + 'That is inefficientFewShot (different detector), NOT an '
+  + 'underspecified constraint. The rubric itself may be present '
+  + 'or absent; the defect there is example quality. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Complexity: Low / Medium / High / Requires architect" '

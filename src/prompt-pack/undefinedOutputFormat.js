@@ -187,7 +187,13 @@ const DEFECT_DESCRIPTION =
   + 'present in the prompt at all (even non-adjacent to its '
   + 'directive), that is poorOrganization (different detector), '
   + 'NOT undefined output format. Flag here only when the spec is '
-  + 'genuinely ABSENT, not just badly placed.';
+  + 'genuinely ABSENT, not just badly placed.\n'
+  + '  - Prompts whose few-shot examples are present but inefficient '
+  + '(examples contradict the format spec, contain placeholder '
+  + 'content, or fail to demonstrate the schema they should teach). '
+  + 'That is inefficientFewShot (different detector), NOT undefined '
+  + 'output format. The format spec itself may be present or absent; '
+  + 'the defect there is example quality. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Output your response as a JSON object." '
