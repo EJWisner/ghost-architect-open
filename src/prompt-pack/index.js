@@ -55,6 +55,7 @@ import * as undefinedOutputFormat from './undefinedOutputFormat.js';
 import * as overloadedPrompt from './overloadedPrompt.js';
 import * as poorOrganization from './poorOrganization.js';
 import * as inefficientFewShot from './inefficientFewShot.js';
+import * as poorDocumentation from './poorDocumentation.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
 
@@ -90,7 +91,7 @@ const REGISTRY = [
   { id: 'overloadedPrompt',           tier: 2, module: overloadedPrompt,           requiresTargetModel: true },
   { id: 'poorOrganization',           tier: 2, module: poorOrganization,           requiresTargetModel: true },
   { id: 'inefficientFewShot',         tier: 2, module: inefficientFewShot,         requiresTargetModel: true },
-  // [pending] poorDocumentation
+  { id: 'poorDocumentation',          tier: 2, module: poorDocumentation,          requiresTargetModel: true },
 
   // Tier 3: hybrid
   // [pending] integrationMismatch

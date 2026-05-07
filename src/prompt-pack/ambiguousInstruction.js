@@ -131,7 +131,13 @@ const DEFECT_DESCRIPTION =
   + 'content, lack the structure they should teach, or vary the '
   + 'wrong dimension). That is inefficientFewShot (different '
   + 'detector), NOT ambiguity. The instruction itself may be clear; '
-  + 'the defect is the example quality. Skip it.';
+  + 'the defect is the example quality. Skip it.\n'
+  + '  - Prompts whose individual instructions are clear but contain '
+  + 'undocumented non-obvious choices (magic numbers without '
+  + 'rationale, internal jargon without glossary, negative constraints '
+  + 'without justification). That is poorDocumentation (different '
+  + 'detector), NOT ambiguity. A maintainability defect, not an '
+  + 'instruction-clarity defect. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "When the customer mentions an issue, summarize it." '

@@ -175,7 +175,15 @@ const DEFECT_DESCRIPTION =
   + 'before the instruction they exemplify is a poor-organization '
   + 'defect (placement). Examples that show the wrong format or '
   + 'contain placeholder text is an inefficient-few-shot defect '
-  + '(content). Skip the latter here.';
+  + '(content). Skip the latter here.\n'
+  + '  - Prompts with a sensible structural arrangement but '
+  + 'undocumented non-obvious choices (specific thresholds without '
+  + 'rationale, internal jargon without glossary, negative '
+  + 'constraints without justification). That is poorDocumentation '
+  + '(different detector), NOT poor organization. This detector '
+  + 'cares about WHERE content sits; poorDocumentation cares '
+  + 'whether non-obvious choices have stated rationale. Skip the '
+  + 'latter here.';
 
 const POSITIVE_EXAMPLES =
   '  - A 2,000-token prompt where lines 1-50 give detailed task '

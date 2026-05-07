@@ -163,7 +163,13 @@ const DEFECT_DESCRIPTION =
   + 'rule (e.g. instruction says "respond in English", example '
   + 'responds in Spanish). Generally weak or placeholder-y examples '
   + 'that do not concretely contradict any instruction belong to '
-  + 'inefficientFewShot. Skip them here.';
+  + 'inefficientFewShot. Skip them here.\n'
+  + '  - Prompts whose rules do not contradict each other but '
+  + 'contain undocumented non-obvious choices (specific thresholds '
+  + 'without rationale, internal jargon without glossary, negative '
+  + 'constraints without justification). That is poorDocumentation '
+  + '(different detector), NOT conflict. A maintainability defect, '
+  + 'not a logical contradiction. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - Prompt says: "Be concise. Keep your response brief." '

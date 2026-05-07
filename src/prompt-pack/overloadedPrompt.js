@@ -171,7 +171,13 @@ const DEFECT_DESCRIPTION =
   + 'content, lack the structure they should teach, or vary the '
   + 'wrong dimension). That is inefficientFewShot (different '
   + 'detector), NOT overload. The task count itself may be '
-  + 'reasonable; the defect is example quality. Skip it.';
+  + 'reasonable; the defect is example quality. Skip it.\n'
+  + '  - Prompts with a reasonable task count but undocumented '
+  + 'non-obvious choices (specific thresholds without rationale, '
+  + 'internal jargon without glossary, negative constraints '
+  + 'without justification). That is poorDocumentation (different '
+  + 'detector), NOT overload. A maintainability defect, not a '
+  + 'task-count defect. Skip it.';
 
 const POSITIVE_EXAMPLES =
   '  - "Analyze the user\'s code for security issues. Then write '

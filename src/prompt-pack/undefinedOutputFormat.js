@@ -193,7 +193,14 @@ const DEFECT_DESCRIPTION =
   + 'content, or fail to demonstrate the schema they should teach). '
   + 'That is inefficientFewShot (different detector), NOT undefined '
   + 'output format. The format spec itself may be present or absent; '
-  + 'the defect there is example quality. Skip it.';
+  + 'the defect there is example quality. Skip it.\n'
+  + '  - Prompts whose output format is fully defined but contain '
+  + 'undocumented non-obvious choices elsewhere (specific thresholds '
+  + 'without rationale, internal jargon without glossary). That is '
+  + 'poorDocumentation (different detector), NOT undefined output '
+  + 'format. Flag here only when the format STRUCTURE is missing, '
+  + 'not when the format is defined but other parts of the prompt '
+  + 'have undocumented choices.';
 
 const POSITIVE_EXAMPLES =
   '  - "Output your response as a JSON object." '

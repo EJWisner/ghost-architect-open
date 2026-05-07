@@ -216,7 +216,14 @@ const DEFECT_DESCRIPTION =
   + 'optimal, and "more examples would help" is not a defect.\n'
   + '  - Examples that match the instructions, follow the requested '
   + 'schema, and use concrete content. These are working examples; '
-  + 'do not flag.';
+  + 'do not flag.\n'
+  + '  - Prompts whose examples are working but contain undocumented '
+  + 'non-obvious choices elsewhere (magic numbers without rationale, '
+  + 'internal jargon without glossary, negative constraints without '
+  + 'justification). That is poorDocumentation (different detector), '
+  + 'NOT inefficient few-shot. The examples themselves may be fine; '
+  + 'the defect is undocumented choices in the surrounding prompt. '
+  + 'Skip it here.';
 
 const POSITIVE_EXAMPLES =
   '  - A prompt that says "Respond in JSON with keys severity, '

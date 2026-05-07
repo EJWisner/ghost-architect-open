@@ -140,7 +140,14 @@ const DEFECT_DESCRIPTION =
   + 'or fail to demonstrate the rating scale they should teach). '
   + 'That is inefficientFewShot (different detector), NOT an '
   + 'underspecified constraint. The rubric itself may be present '
-  + 'or absent; the defect there is example quality. Skip it.';
+  + 'or absent; the defect there is example quality. Skip it.\n'
+  + '  - Prompts whose constraints are well-defined but contain '
+  + 'undocumented non-obvious choices (specific thresholds without '
+  + 'rationale, internal tier names without glossary). That is '
+  + 'poorDocumentation (different detector), NOT an underspecified '
+  + 'constraint. The rubric exists but lacks rationale documentation. '
+  + 'Flag here only when the measurement scale itself is undefined, '
+  + 'not when the scale is defined but its origin is unexplained.';
 
 const POSITIVE_EXAMPLES =
   '  - "Complexity: Low / Medium / High / Requires architect" '
