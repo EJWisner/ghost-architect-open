@@ -241,10 +241,19 @@ export async function runPOIMode(codebaseContext) {
         codebaseContext,
         (chunk) => {
           // Silent capture; spinner covers the UX.
+          //
+          // The spinner is normally started by the onNarratorStart callback below
+          // (which fires before the first chunk arrives). The narratorSpinner guard
+          // here prevents creating a SECOND spinner and orphaning the first — which
+          // would leave a dangling spinner that never gets stopped, hiding the save
+          // prompt that follows. The guard preserves the fallback for any caller that
+          // doesn't fire onNarratorStart.
           if (!started) {
             started = true;
             readSpinner.stop();
-            narratorSpinner = ora({ text: chalk.cyan('  Ghost is writing the final report...'), color: 'cyan' }).start();
+            if (!narratorSpinner) {
+              narratorSpinner = ora({ text: chalk.cyan('  Ghost is writing the final report...'), color: 'cyan' }).start();
+            }
           }
           buffer += chunk;
         },
