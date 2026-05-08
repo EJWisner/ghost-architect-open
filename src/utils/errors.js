@@ -57,7 +57,44 @@ export function friendlyError(err) {
     const when  = match ? `Resets ${match[1]} UTC.` : 'Check console.anthropic.com/settings/limits.';
     return `Monthly API spend limit reached. ${when} Increase your limit at console.anthropic.com/settings/limits.`;
   }
+  // Programmer-error classes: always surface the real message so the user
+  // and the developer get a useful signal. Never hide these behind a vague
+  // 'try again' fallback — retrying a TypeError doesn't help, and silent
+  // suppression means future regressions ship invisibly.
+  //
+  // Caught yesterday during v5.1.0 smoke testing: a TypeError in the
+  // verifier step_cap evidence string `(result.filesAnalyzed || []).join`
+  // (filesAnalyzed was a number, not an array) was suppressed by the
+  // friendly fallback. The user retried, hit it again, retried, hit it
+  // again — no signal that anything was broken in Ghost.
+  if (isProgrammerError(err)) {
+    const errName = (err.constructor && err.constructor.name) || err.name || 'Error';
+    return `Internal error: ${errName}: ${msg || '(no message)'}\n  This is a Ghost Architect bug, not a transient issue. Retrying will not help.\n  Please report at: https://github.com/EJWisner/ghost-architect-open/issues`;
+  }
   return 'Something went wrong. Please try again.';
+}
+
+// True when the error is a programmer-error class — a bug in Ghost itself,
+// not an API/network/transient issue. Used by friendlyError to bypass the
+// vague fallback for these errors so they surface visibly.
+export function isProgrammerError(err) {
+  if (!err || typeof err !== 'object') return false;
+  const ctor = err.constructor && err.constructor.name;
+  if (ctor === 'TypeError' ||
+      ctor === 'ReferenceError' ||
+      ctor === 'RangeError' ||
+      ctor === 'SyntaxError' ||
+      ctor === 'URIError') {
+    return true;
+  }
+  // Some non-Anthropic errors set `name` but not a custom constructor.
+  if (err.name === 'TypeError' ||
+      err.name === 'ReferenceError' ||
+      err.name === 'RangeError' ||
+      err.name === 'SyntaxError') {
+    return true;
+  }
+  return false;
 }
 
 export function showFriendlyError(err) {
