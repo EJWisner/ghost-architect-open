@@ -6,6 +6,10 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import boxen from 'boxen';
 import { REPORTS_DIR } from '../reports.js';
+import {
+  extractFindings as extractFindingsCanonical,
+  similarFinding as similarFindingCanonical,
+} from '../utils/finding-parser.js';
 
 export async function runCompareMode() {
   console.log('\n' + boxen(
@@ -125,84 +129,32 @@ export async function runCompareMode() {
   }
 }
 
+// ── Finding extraction ─────────────────────────────────────────────────────────
+//
+// F-26 fix (2026-05-08): the previous local implementation tried to
+// match both `### Title` and numbered-list `1. Title` shapes with a
+// big regex plus a fixStepVerbs filter and a descBullet filter to
+// avoid mis-extracting fix-step bullets. It was complex and still
+// wrong on real saved reports. The canonical parser in
+// src/utils/finding-parser.js anchors on `### Title` (the format
+// SYSTEM_POI/SYSTEM_BLAST actually instruct the model to emit) and
+// is the single source of truth across analyst, compare, projects,
+// and multipass.
+//
+// Compare needs landmarks tracked across runs (architectural patterns
+// can change between scans), so we pass keepLandmarks: true.
+//
+// similarFinding is also delegated to the canonical implementation,
+// which uses deterministic finding IDs as the primary match key with
+// fuzzy title overlap as a fallback — strictly better than the local
+// 60%-overlap heuristic that compare previously used.
+
 function extractFindings(text) {
-  const findings = [];
-  const lines = text.split('\n');
-
-  const sectionPattern = /^(?:🔴|🏛|🏛️|⚰️|⚡|📊|##\s)/;
-  const landmarkPattern = /LANDMARK|🏛/i;
-  const findingPattern = /^(?:###\s+)?\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const severityPattern = /\*?\*?Severity:\*?\*?\s*(CRITICAL|HIGH|MEDIUM|LOW)/i;
-  const importancePattern = /\*?\*?Importance:\*?\*?\s*(CRITICAL|HIGH|MEDIUM|LOW)/i;
-  const naPattern = /\*?\*?Severity:\*?\*?\s*N\/A/i;  // LANDMARK findings use Severity: N/A
-
-  const fixStepVerbs = /^(add|remove|use|replace|check|ensure|move|set|document|consider|implement|audit|update|extract|provide|expose|validate|track|introduce|accumulate|log|test|grep|keep|delete|run|verify|create|disable|enable|gate|save|restore|notify|post|close|open|read|write|scan|load|store|if\s|or\s|see\s|apply\s|for\s)/i;
-
-  const descBullet = /^(•|\*\s|-\s|`|WHY:|IMPACT:|FUNCTION|EXAMPLE|CAVEAT|Also\s|Contains\s|Every\s|This\s|The\s|If\s|On\s|When\s|Changes\s|Modifies\s|Handles\s|Manages\s|Performs\s|Reads\s|Writes\s|Translates\s|Determines\s|Maps\s|Polls\s|Resets\s|Transfers\s|Triggers\s|Acquires\s|Creates\s|Schedules\s|Waits\s|Releases\s|Copies\s|Allocates\s|Manually\s|Automatically\s|Decodes\s|Opens\s|Implements\s|Intercepts\s|Converts\s|Connects\s|Bridges\s|Wraps\s|Exposes\s|Provides\s)/;
-
-  let currentFinding = null;
-  let inRecommendedFix = false;
-  let inLandmarkSection = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-
-    // Detect section header changes
-    if (sectionPattern.test(line)) {
-      inLandmarkSection = landmarkPattern.test(line);
-      inRecommendedFix = false;
-    }
-
-    // Enter fix section
-    if (/^(\*\*)?Recommended Fix:(\*\*)?/i.test(line)) { inRecommendedFix = true; continue; }
-
-    // Exit fix section
-    if (/^Fix Priority:/i.test(line)) { inRecommendedFix = false; continue; }
-    if (inRecommendedFix && line === '') {
-      let j = i + 1;
-      while (j < lines.length && lines[j].trim() === '') j++;
-      const next = lines[j]?.trim() || '';
-      if (/^(?:###\s+)?\d+\.\s+/.test(next) || sectionPattern.test(next)) inRecommendedFix = false;
-    }
-    if (inRecommendedFix) continue;
-
-    // Skip description bullets
-    if (descBullet.test(line)) continue;
-
-    const match = line.match(findingPattern);
-    if (match) {
-      const title = match[1].replace(/\*\*/g, '').trim();
-      if (fixStepVerbs.test(title) || title.length > 100 || descBullet.test(title)) continue;
-
-      if (currentFinding) findings.push(currentFinding);
-      currentFinding = { title, severity: inLandmarkSection ? 'LANDMARK' : 'UNKNOWN', raw: line };
-    } else if (currentFinding) {
-      const sev = line.match(severityPattern) || line.match(importancePattern);
-      if (sev) currentFinding.severity = sev[1].toUpperCase();
-      // Severity: N/A means this is a LANDMARK architectural finding
-      if (naPattern.test(line)) currentFinding.severity = 'LANDMARK';
-    }
-  }
-
-  if (currentFinding) findings.push(currentFinding);
-  return findings;
+  return extractFindingsCanonical(text, { keepLandmarks: true });
 }
 
 function similarFinding(a, b) {
-  // Normalize titles for comparison — strip numbers, punctuation, lowercase
-  const normalize = s => s.toLowerCase().replace(/^\d+\.\s+/, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-  const na = normalize(a.title);
-  const nb = normalize(b.title);
-
-  // Exact match
-  if (na === nb) return true;
-
-  // Significant word overlap (>60%)
-  const wordsA = new Set(na.split(' ').filter(w => w.length > 3));
-  const wordsB = new Set(nb.split(' ').filter(w => w.length > 3));
-  if (wordsA.size === 0) return false;
-  const overlap = [...wordsA].filter(w => wordsB.has(w)).length;
-  return overlap / wordsA.size >= 0.6;
+  return similarFindingCanonical(a, b);
 }
 
 function buildCompareReport(beforeName, afterName, resolved, remaining, newIssues, progress) {
