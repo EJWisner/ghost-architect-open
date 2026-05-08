@@ -37,7 +37,7 @@ import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-const VERSION   = '5.0.0';
+const VERSION   = '5.1.3-pro';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER      = 'pro';
@@ -182,21 +182,41 @@ function printBanner() {
 }
 
 // ── Input method selector ───────────────────────────────────────────────────
+//
+// Grouped by what the user is analyzing, not just where the input comes from.
+// Prompt Triage was previously stacked alongside Local/ZIP/GitHub which made
+// it look like just another way to load a code project — users couldn't find
+// it because they were looking in the mode menu (Chat/POI/Blast/Conflict/
+// Recon) instead. Now the menu is grouped by analysis target with named
+// separators so Prompt Triage is visually distinct from code-loading options.
+//
+// Pro extras (Project Dashboard, Compare Reports, Manage Ghost Partner
+// Profiles) live under the 'Other' separator alongside Reconfigure/Exit —
+// they're tools that operate on saved data or app state, not analysis
+// targets, so they belong out of the Code/Prompt analysis groups.
 
 async function selectInputMethod(activeProfileLabel) {
   const profileSuffix = activeProfileLabel
     ? chalk.gray('  [profile: ') + chalk.cyan(activeProfileLabel) + chalk.gray(' ●]')
     : '';
+
+  const codeAnalysisGroupLabel    = IS_WINDOWS ? '── Code analysis ──'   : '─── Code analysis ──────';
+  const promptAnalysisGroupLabel  = IS_WINDOWS ? '── Prompt analysis ──' : '─── Prompt analysis ────';
+  const otherGroupLabel           = IS_WINDOWS ? '── Other ──'           : '─── Other ──────────────';
+
   const choices = [
+    new inquirer.Separator(codeAnalysisGroupLabel),
     { name: (IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory') + profileSuffix, value: 'files' },
     { name: (IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file') + profileSuffix, value: 'zip' },
     { name: (IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository') + profileSuffix, value: 'github' },
-    { name: (IS_WINDOWS ? '[PRT] Audit prompts (folder)' : '🧪  Audit prompts (folder)') + chalk.gray('  — Prompt Triage scan'), value: 'prompt-triage' },
-    new inquirer.Separator(),
+
+    new inquirer.Separator(promptAnalysisGroupLabel),
+    { name: (IS_WINDOWS ? '[PRT] Prompt Triage' : '🧪  Prompt Triage') + chalk.gray('         — audit a folder of LLM prompts for defects'), value: 'prompt-triage' },
+
+    new inquirer.Separator(otherGroupLabel),
     { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
     { name: (IS_WINDOWS ? '[GP]  Manage Ghost Partner Profiles  ' : '👤  Manage Ghost Partner Profiles  ') + (IS_WINDOWS ? '' : chalk.gray('— Create, edit, set default, delete')), value: 'profiles' },
-    new inquirer.Separator(),
   ];
 
   if (!usingEnvKey()) {
@@ -207,12 +227,13 @@ async function selectInputMethod(activeProfileLabel) {
   const { method } = await inquirer.prompt([{
     type: 'list',
     name: 'method',
-    message: chalk.cyan('Load project from:'),
+    message: chalk.cyan('What do you want to analyze?'),
     theme: inquirerTheme,
     choices
   }]);
   return method;
 }
+
 
 // ── Mode selector ───────────────────────────────────────────────────────────
 
@@ -678,11 +699,17 @@ async function main() {
       }
 
       if (method === 'prompt-triage') {
+        // No default: an explicit path must be typed. v5.1.2 had `default:
+        // process.cwd()` which created a UX trap — if the user hit Enter
+        // without typing, Ghost would silently scan the current working
+        // directory (often a code repo, not a prompts folder). Caught in
+        // the v5.1.2 smoke run when /tmp/ghost-prompt-smoke-rich was typed
+        // but cwd ended up being scanned anyway. Forcing the user to type
+        // a path eliminates the silent-fallback failure mode.
         const { folderPath } = await inquirer.prompt([{
           type: 'input',
           name: 'folderPath',
-          message: chalk.cyan('Folder containing prompt files:'),
-          default: process.cwd(),
+          message: chalk.cyan('Folder containing prompt files (absolute path):'),
           theme: inquirerTheme,
           validate: (input) => {
             if (!input || !input.trim()) return 'Folder path is required.';
