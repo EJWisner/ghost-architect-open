@@ -194,14 +194,29 @@ function printBanner() {
 }
 
 // ── Input method selector ───────────────────────────────────────────────────
+//
+// Grouped by what the user is analyzing, not just where the input comes from.
+// Prompt Triage was previously stacked alongside Local/ZIP/GitHub which made
+// it look like just another way to load a code project — users couldn't find
+// it because they were looking in the mode menu (Chat/POI/Blast/Conflict/
+// Recon) instead. Now the menu is grouped by analysis target with named
+// separators so Prompt Triage is visually distinct from code-loading options.
 
 async function selectInputMethod() {
+  const codeAnalysisGroupLabel    = IS_WINDOWS ? '── Code analysis ──' : '─── Code analysis ──────';
+  const promptAnalysisGroupLabel  = IS_WINDOWS ? '── Prompt analysis ──' : '─── Prompt analysis ────';
+  const otherGroupLabel           = IS_WINDOWS ? '── Other ──' : '─── Other ──────────────';
+
   const choices = [
-    { name: IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory', value: 'files' },
-    { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file', value: 'zip' },
-    { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository', value: 'github' },
-    { name: (IS_WINDOWS ? '[PRT] Audit prompts (folder)' : '🧪  Audit prompts (folder)') + chalk.gray('  — Prompt Triage scan'), value: 'prompt-triage' },
-    new inquirer.Separator(),
+    new inquirer.Separator(codeAnalysisGroupLabel),
+    { name: IS_WINDOWS ? '[DIR] Local directory' : '📁  Local directory' + chalk.gray('       — scan a code project on disk'), value: 'files' },
+    { name: IS_WINDOWS ? '[ZIP] ZIP file' : '🗜   ZIP file' + chalk.gray('              — scan an archived code project'), value: 'zip' },
+    { name: IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository' + chalk.gray('     — clone & scan from GitHub'), value: 'github' },
+
+    new inquirer.Separator(promptAnalysisGroupLabel),
+    { name: (IS_WINDOWS ? '[PRT] Prompt Triage' : '🧪  Prompt Triage') + chalk.gray('         — audit a folder of LLM prompts for defects'), value: 'prompt-triage' },
+
+    new inquirer.Separator(otherGroupLabel),
   ];
 
   if (!usingEnvKey()) {
@@ -212,7 +227,7 @@ async function selectInputMethod() {
   const { method } = await inquirer.prompt([{
     type: 'list',
     name: 'method',
-    message: chalk.cyan('Load project from:'),
+    message: chalk.cyan('What do you want to analyze?'),
     theme: inquirerTheme,
     choices
   }]);
