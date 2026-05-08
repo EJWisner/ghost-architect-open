@@ -5,6 +5,7 @@ import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST } from '../../prompts/index.j
 import { narrateReport, narrateExecutiveSummary } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
+import { extractFindings as extractFindingsCanonical } from '../utils/finding-parser.js';
 
 let client = null;
 
@@ -26,35 +27,30 @@ function getRates() {
 }
 
 // ── Extract findings from raw POI/Blast text for narrator ─────────────────────
+//
+// F-26 fix (2026-05-08): the previous local implementation matched
+// /^\d+\.\s+\*?\*?(.+?)\*?\*?$/ which treated NUMBERED-LIST FIX STEPS
+// inside a finding as if they were finding titles. On a real saved POI
+// report this produced 29 "findings" all of which were fix-step bullets,
+// while the canonical parser correctly extracted 8 actual findings.
+//
+// The canonical parser in src/utils/finding-parser.js correctly anchors
+// on "### Title" markdown headers (the format SYSTEM_POI/SYSTEM_BLAST
+// actually instruct the model to emit) and properly recognizes section
+// boundaries (Recommended Fix, Effort, Severity, Files). It also drops
+// findings that fall inside non-finding sections like REMEDIATION SUMMARY.
+//
+// All three call sites (analyst POI, analyst Blast, modes/compare) now
+// route through the canonical parser. No shape transformation is needed:
+// canonical returns { id, title, severity, detail, files, effortHours,
+// confidence } and the narrator only consumes title/severity/files/detail/
+// confidence, which canonical already provides.
 
 function extractFindings(rawText, mode = 'poi') {
-  const findings  = [];
-  const lines     = rawText.split('\n');
-  const findingRe = /^\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const sevRe     = /severity[:\s]+?(CRITICAL|HIGH|MEDIUM|LOW|INFO)/i;
-  const filesRe   = /files?[:\s]+(.+)/i;
-
-  let current = null;
-  for (const line of lines) {
-    const t  = line.trim();
-    const fm = t.match(findingRe);
-    if (fm) {
-      if (current) findings.push(current);
-      current = { title: fm[1].replace(/\*\*/g, '').trim(), severity: 'MEDIUM', detail: '', files: [], confidence: 85 };
-      continue;
-    }
-    if (current) {
-      const sm = t.match(sevRe);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
-      const fm2 = t.match(filesRe);
-      if (fm2) { current.files = fm2[1].split(/[,;]/).map(f => f.trim()).filter(Boolean); continue; }
-      if (t && t.length > 10 && !t.startsWith('---')) {
-        current.detail += (current.detail ? ' ' : '') + t;
-      }
-    }
-  }
-  if (current) findings.push(current);
-  return findings;
+  // mode parameter retained for API compatibility but no longer needed
+  // — the canonical parser handles POI and Blast formats identically
+  // because both follow the same ### Title + structured-fields shape.
+  return extractFindingsCanonical(rawText);
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────

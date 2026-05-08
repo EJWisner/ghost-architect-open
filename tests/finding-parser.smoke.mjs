@@ -118,6 +118,122 @@ console.log('Test 5: Effort extraction (returns upper bound of range)');
 }
 console.log('');
 
+// Test 7: F-26 regression — fix-step numbered list must NOT become findings
+console.log('Test 7: F-26 regression — fix steps are not findings');
+{
+  // This fixture mirrors the actual SYSTEM_POI output format the model
+  // emits: ### Title headers for findings, with **Recommended Fix:** sections
+  // containing numbered lists for the fix steps. Before F-26, the analyst
+  // and compare parsers anchored on /^\d+\.\s+/ which extracted EVERY
+  // fix-step bullet as a finding — producing 29 fake findings on a real
+  // 8-finding report. The canonical parser correctly anchors on `### Title`
+  // headers and skips numbered lists.
+  const text = `## \u{1F534} Critical Findings
+
+### Redactor Returns Unredacted Context When Rules Fail
+
+**Severity:** CRITICAL
+**Files:** \`src/redactor.js\`
+**Effort:** 1-2 hours
+
+When the redactor encounters an unparseable rule it falls through silently.
+
+**Recommended Fix:**
+1. Change \`redactCodebase\` to throw when redaction fails completely.
+2. Add a \`--force-unredacted\` flag for cases where the consultant explicitly wants to proceed.
+3. In modes that call redactCodebase, check result.partialRedaction and prompt the user.
+
+**Fix Priority:** 1
+
+### Silent Tier Downgrade on Invalid Tier String
+
+**Severity:** HIGH
+**Files:** \`src/loader/tierCaps.js\`
+**Effort:** 0.5-1 hour
+
+Invalid tier strings silently fall back to Open tier without warning.
+
+**Recommended Fix:**
+1. Add a validation check at the top of resolveContextCap.
+2. Log a warning when falling back to Open.
+3. Export a VALID_TIERS constant.
+`;
+  const findings = extractFindings(text);
+  check('finding count is 2 (not 6 from fix-step bullets)',
+    findings.length, 2);
+  check('finding 1 title is the header, not a fix step',
+    findings[0]?.title, 'Redactor Returns Unredacted Context When Rules Fail');
+  check('finding 2 title is the header, not a fix step',
+    findings[1]?.title, 'Silent Tier Downgrade on Invalid Tier String');
+  // Negative checks: none of the fix-step verbs should appear as titles
+  const titleStartsWithVerb = findings.some(f =>
+    /^(Change|Add|In|Log|Export)\s/.test(f.title));
+  check('no finding title starts with a fix-step verb',
+    titleStartsWithVerb, false);
+}
+console.log('');
+
+// Test 8: F-26 landmark behavior — keepLandmarks toggles inclusion
+console.log('Test 8: F-26 landmark behavior (keepLandmarks toggle)');
+{
+  const text = `## \u{1F534} Critical
+
+### Critical Bug A
+
+**Severity:** CRITICAL
+**Files:** \`a.js\`
+**Effort:** 1-2 hours
+
+Description of bug A.
+
+## \u{1F3DB}\uFE0F LANDMARKS
+
+### Two-Pass Narrator Architecture
+
+**Severity:** N/A
+**Files:** \`src/core/agent/narrator.js\`
+
+The narrator runs in two passes: first the raw scan, then the rewrite.
+
+### Tier-Gated Context Cap Enforcement
+
+**Severity:** N/A
+**Files:** \`src/loader/tierCaps.js\`
+
+Context caps enforce per-tier limits on token budget.
+
+## \u{1F7E0} High
+
+### High Bug B
+
+**Severity:** HIGH
+**Files:** \`b.js\`
+**Effort:** 2-3 hours
+
+Description of bug B.
+`;
+
+  // Default mode: landmarks dropped
+  const defaultFindings = extractFindings(text);
+  check('default mode finding count (2 non-landmark)',
+    defaultFindings.length, 2);
+  check('default mode has no LANDMARK severities',
+    defaultFindings.some(f => f.severity === 'LANDMARK'), false);
+
+  // Compare mode: landmarks kept with severity LANDMARK
+  const keepFindings = extractFindings(text, { keepLandmarks: true });
+  check('keepLandmarks=true finding count (2 + 2 landmarks = 4)',
+    keepFindings.length, 4);
+  const landmarkCount = keepFindings.filter(f => f.severity === 'LANDMARK').length;
+  check('keepLandmarks=true has 2 LANDMARK findings',
+    landmarkCount, 2);
+  // Severity transitions should be correct
+  check('keepLandmarks=true: bug B (after landmarks) gets HIGH not LANDMARK',
+    keepFindings.find(f => f.title === 'High Bug B')?.severity,
+    'HIGH');
+}
+console.log('');
+
 // Test 6: End-to-end multi-finding fixture
 console.log('Test 6: End-to-end multi-finding extraction');
 {

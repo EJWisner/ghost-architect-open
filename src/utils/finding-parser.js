@@ -92,14 +92,29 @@ function inferSeverityFromSection(sectionHeader) {
   return 'MEDIUM';
 }
 
-export function extractFindings(reportText) {
+/**
+ * Extract findings from a Ghost Architect report's markdown text.
+ *
+ * @param {string} reportText      Raw markdown text of the report.
+ * @param {object} [opts]
+ * @param {boolean} [opts.keepLandmarks=false]  When true, findings inside
+ *        LANDMARK sections (## 🏛 LANDMARKS, etc.) are included with
+ *        severity 'LANDMARK' instead of being dropped. Used by compare.js
+ *        which tracks architectural-pattern findings across runs. Default
+ *        false (POI/Blast scans drop landmarks because the narrator
+ *        doesn't render them as severity-tracked items).
+ * @returns {Array<Finding>}
+ */
+export function extractFindings(reportText, opts = {}) {
   if (!reportText) return [];
 
+  const keepLandmarks = !!opts.keepLandmarks;
   const findings = [];
   const lines    = reportText.split('\n');
   let current    = null;
   let currentSectionSeverity = 'MEDIUM';
   let inNonFindingSection = false;
+  let inLandmarkSection = false;
   let inCodeBlock = false;
 
   for (const line of lines) {
@@ -120,11 +135,33 @@ export function extractFindings(reportText) {
 
     if (/^##\s+/.test(t)) {
       if (current) { findings.push(finalize(current)); current = null; }
-      if (/landmark|architecture|summary|recommended|cost breakdown|remediation summary/i.test(t)) {
+
+      // Landmark sections are special: when keepLandmarks=true, treat them
+      // as a finding section with severity 'LANDMARK'. When false (default),
+      // skip them entirely as non-finding architectural commentary.
+      const isLandmark = /landmark/i.test(t);
+      if (isLandmark) {
+        if (keepLandmarks) {
+          inNonFindingSection = false;
+          inLandmarkSection = true;
+          currentSectionSeverity = 'LANDMARK';
+          continue;
+        }
         inNonFindingSection = true;
+        inLandmarkSection = false;
         continue;
       }
+
+      // Other non-finding sections (architecture overview, executive summary,
+      // recommended fixes, cost breakdown, remediation summary).
+      if (/architecture|summary|recommended|cost breakdown|remediation summary/i.test(t)) {
+        inNonFindingSection = true;
+        inLandmarkSection = false;
+        continue;
+      }
+
       inNonFindingSection = false;
+      inLandmarkSection = false;
       currentSectionSeverity = inferSeverityFromSection(tRaw);  // raw — emoji indicators are part of the header
       continue;
     }
