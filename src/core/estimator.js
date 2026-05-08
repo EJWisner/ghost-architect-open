@@ -8,10 +8,19 @@ const PRICING = {
   'claude-opus-4-5':   { label: 'Claude Opus 4.5',   inputPerM: 15.00, outputPerM: 75.00 },
 };
 
+// Per-mode output token estimates and human-readable labels for the cost
+// estimator panel. The label appears as 'Mode    : <label>' in the cost
+// estimate UI. If a mode is missing from this dict, estimateCost falls back
+// to the raw mode key (e.g., 'conflict') instead of a properly-cased label,
+// AND uses 800 tokens as a default — so missing entries cause both a UX
+// degradation and an inaccurate estimate. Keep this in sync with src/modes/.
 const MODE_OUTPUT_ESTIMATES = {
-  poi:   { tokens: 1800, label: 'Points of Interest Scan' },
-  blast: { tokens: 1200, label: 'Blast Radius Analysis'   },
-  chat:  { tokens: 600,  label: 'Chat (per exchange)'     },
+  poi:           { tokens: 1800, label: 'Points of Interest Scan' },
+  blast:         { tokens: 1200, label: 'Blast Radius Analysis'   },
+  conflict:      { tokens: 1500, label: 'Conflict Detection'      },
+  chat:          { tokens: 600,  label: 'Chat (per exchange)'     },
+  recon:         { tokens: 800,  label: 'Recon (sizing only)'     },
+  'prompt-triage': { tokens: 400, label: 'Prompt Triage Audit'    },
 };
 
 export function getPricing(model) {

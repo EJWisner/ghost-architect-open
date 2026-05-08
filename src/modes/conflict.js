@@ -48,7 +48,10 @@ export async function runConflictMode(codebaseContext, options = {}) {
   console.log('');
 
   if (info.singlePass) {
-    showCostEstimate(codebaseContext, 'poi', model);
+    // Pass 'conflict' as mode so the cost estimator label says
+    // 'Conflict Detection' instead of the copy-pasted 'Points of
+    // Interest Scan' default that this mode inherited from POI.
+    showCostEstimate(codebaseContext, 'conflict', model);
   }
 
   // ── Agent Planner ─────────────────────────────────────────────────────────
