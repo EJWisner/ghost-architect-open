@@ -314,11 +314,17 @@ async function main() {
       }
 
       if (method === 'prompt-triage') {
+        // No default: an explicit path must be typed. v5.1.2 had `default:
+        // process.cwd()` which created a UX trap — if the user hit Enter
+        // without typing, Ghost would silently scan the current working
+        // directory (often a code repo, not a prompts folder). Caught in
+        // the v5.1.2 smoke run when /tmp/ghost-prompt-smoke-rich was typed
+        // but cwd ended up being scanned anyway. Forcing the user to type
+        // a path eliminates the silent-fallback failure mode.
         const { folderPath } = await inquirer.prompt([{
           type: 'input',
           name: 'folderPath',
-          message: chalk.cyan('Folder containing prompt files:'),
-          default: process.cwd(),
+          message: chalk.cyan('Folder containing prompt files (absolute path):'),
           theme: inquirerTheme,
           validate: (input) => {
             if (!input || !input.trim()) return 'Folder path is required.';
