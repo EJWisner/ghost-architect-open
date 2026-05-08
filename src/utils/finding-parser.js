@@ -7,6 +7,21 @@
  */
 
 // ── Shared regex patterns ─────────────────────────────────────────────────────
+//
+// Notes on the anchoring choices:
+//
+// FILES_RE is anchored with `^` so body text containing the word "files"
+// (e.g. "Both files have the issue") cannot hijack the file list. Before
+// this anchor was added, narrator Pass 2 prose like "These files share a
+// common dependency." was matched and overwrote the actual file list.
+// Fixed: 2026-05-08.
+//
+// EFFORT_RE accepts both `hours` and `hrs` because the model emits both
+// spellings depending on whether it's running with white-label / consultant-
+// voice profiles (which prefer the longer form) or without. Before this
+// expansion, the regex required `hrs?` only and silently returned 0 for
+// any "hours" effort estimate, breaking remediation cost calculations on
+// scans that used the longer form. Fixed: 2026-05-08.
 
 export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?\*?\*?(.+?)\*?\*?$/;
 // SEVERITY_RE matches lines like `**Severity:** **HIGH**` and the newer
@@ -18,8 +33,13 @@ export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?\*?\*?(.+?)\*?\*?$/;
 // finding under `## 🔴 Red Flags ...` as CRITICAL regardless of its actual
 // per-finding rating).
 export const SEVERITY_RE = /^\*?\*?[Ss]everity\*?\*?:\s*[^A-Za-z]*\*?\*?(CRITICAL|HIGH|MEDIUM|LOW)\*?\*?/;
-export const FILES_RE    = /\*?\*?[Ff]iles?\*?\*?[:\s]+(.+)/i;
-export const EFFORT_RE   = /\*?\*?[Ee]ffort\*?\*?[:\s]+([\d.]+[\u2013\-][\d.]+)\s*hrs?/i;
+export const FILES_RE    = /^\*?\*?[Ff]iles?\*?\*?[:\s]+(.+)/i;
+// EFFORT_RE uses `[^\d]*` between the colon and the digits to absorb any
+// non-digit characters (asterisks from `**Effort:** 1-2 hrs`, emoji, extra
+// whitespace) without an exhaustive enumeration. The original regex used
+// `[:\s]+` which failed on `**Effort:** 1-2 hrs` because `**` after the
+// colon is neither colon nor whitespace and broke the match.
+export const EFFORT_RE   = /\*?\*?[Ee]ffort\*?\*?\s*:[^\d]*([\d.]+[\u2013\-][\d.]+)\s*(?:hours?|hrs?)/i;
 
 // ── Deterministic finding ID ──────────────────────────────────────────────────
 
@@ -124,9 +144,24 @@ function isNonFindingSectionHeader(line) {
   return false;
 }
 
-export function extractFindings(reportText) {
+/**
+ * Extract findings from a Ghost Architect report's markdown text.
+ *
+ * @param {string} reportText      Raw markdown text of the report.
+ * @param {object} [opts]
+ * @param {boolean} [opts.keepLandmarks=false]  When true, findings inside
+ *        a section whose name matches /landmark/i are tagged with severity
+ *        'LANDMARK' (overriding inferSeverityFromSection). Used by
+ *        compare.js to track architectural-pattern findings across runs.
+ *        When false (default), landmark sections are treated like any
+ *        other finding category and their severity is inferred from the
+ *        header (typically MEDIUM in absence of a severity emoji).
+ * @returns {Array<Finding>}
+ */
+export function extractFindings(reportText, opts = {}) {
   if (!reportText) return [];
 
+  const keepLandmarks = !!opts.keepLandmarks;
   const findings = [];
   const lines    = reportText.split('\n');
   let current    = null;
@@ -163,7 +198,17 @@ export function extractFindings(reportText) {
         continue;
       }
       inNonFindingSection = false;
-      currentSectionSeverity = inferSeverityFromSection(t);
+      // When opts.keepLandmarks is true and the section header matches
+      // /landmark/i, override the section severity to 'LANDMARK' so the
+      // compare-mode caller can identify architectural findings explicitly.
+      // Otherwise, infer severity from the header as usual (Pro's default
+      // behavior, which preserves Partner-defined categories with their
+      // own emoji-derived severity).
+      if (keepLandmarks && /landmark/i.test(t)) {
+        currentSectionSeverity = 'LANDMARK';
+      } else {
+        currentSectionSeverity = inferSeverityFromSection(t);
+      }
       continue;
     }
 

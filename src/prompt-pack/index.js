@@ -58,6 +58,7 @@ import * as inefficientFewShot from './inefficientFewShot.js';
 import * as poorDocumentation from './poorDocumentation.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
+import { dedupFindings } from './dedup.js';
 
 /**
  * Registry: detector module + metadata.
@@ -118,7 +119,15 @@ const REGISTRY = [
  *                              and Tier 3). Used by the smoke harness to
  *                              avoid live API calls during routine
  *                              detector verification. Default: [].
- * @returns {Promise<Array>}   Findings from all detectors.
+ *                              opts.verbose - if true, skip the dedup pass
+ *                              and return ALL detector findings including
+ *                              overlapping duplicates. Default: false.
+ *                              See src/prompt-pack/dedup.js for the full
+ *                              dedup taxonomy and rationale.
+ * @returns {Promise<Array>}   Deduped findings from all detectors. Each
+ *                              finding may include an `alsoFlaggedBy`
+ *                              array listing other detectors that fired
+ *                              on the same range but were suppressed.
  */
 export async function runAll(promptText, filePath, opts = {}) {
   const allFindings = [];
@@ -146,7 +155,16 @@ export async function runAll(promptText, filePath, opts = {}) {
     }
   }
 
-  return allFindings;
+  // Dedup pass: enforce the documented detector taxonomy. When two
+  // detectors fire on the same range, keep the more-specific one and
+  // suppress the more-general one (annotated as `alsoFlaggedBy` on the
+  // keeper so cross-detector signal isn't lost). See dedup.js for the
+  // full taxonomy and rationale. Skip when verbose=true is requested.
+  if (opts.verbose) {
+    return allFindings;
+  }
+  const { findings: deduped } = dedupFindings(allFindings);
+  return deduped;
 }
 
 /**
