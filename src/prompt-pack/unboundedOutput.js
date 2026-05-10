@@ -74,11 +74,24 @@ const CONSTRAINT_MARKERS = [
   // Format constraints
   /\bas\s+(a|an)\s+(json|yaml|xml|csv|table|markdown|list|bullet|paragraph|sentence|tweet|email|haiku|sonnet)\b/i,
   /\bin\s+(json|yaml|xml|csv|markdown|table)\s+format\b/i,
+  // Format-as-template constraint: 'format as "..."' or 'formatted as ...' — the
+  // request supplies an explicit format string, so output shape is bounded by it.
+  /\bformat(?:ted)?\s+as\b/i,
+  // 'In the form of X', 'in this format:', 'using this template' — explicit
+  // format-supplied bounding.
+  /\b(in\s+the\s+form\s+of|in\s+this\s+format|using\s+this\s+template|following\s+this\s+(?:format|template|schema|shape))\b/i,
   // Comparative bounds
   /\b(no\s+more\s+than|at\s+most|at\s+least|fewer\s+than|less\s+than|up\s+to|limit\s+to|limited\s+to|maximum\s+of|max\s+of|minimum\s+of|min\s+of)\s+\d+\b/i,
   // Specific format anchors with explicit count
   /\bin\s+\d+\s+(words?|sentences?|paragraphs?|lines?|characters?|chars?|bullets?|points?|steps?|items?)\b/i,
-  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+(words?|sentences?|paragraphs?|lines?|steps?|items?)\b/i,
+  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?)\b/i,
+  // Range with adjectives between number and unit: '2-4 plain English steps',
+  // '3-5 actionable bullets', '5-10 detailed sentences'. The range and unit may
+  // be separated by up to ~30 chars of adjectives/qualifiers.
+  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+\S+(?:\s+\S+){0,4}\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?)\b/i,
+  // Bare-count with adjectives between number and unit: '5 plain English steps',
+  // '3 actionable bullets'.
+  /\b\d+\s+\S+(?:\s+\S+){0,4}\s+(items?|paragraphs?|words?|sentences?|lines?|bullets?|points?|examples?|steps?|sections?|entries|results?|rows?|reasons?|tips?|ideas?|options?|choices?|things?)\b/i,
 ];
 
 // How far around a trigger we look for a constraint marker.
@@ -128,10 +141,43 @@ function matchTriggerAtLineStart(line) {
         matched: true,
         verb: t[0],
         columnInLine: prefixLen + 1,
+        isBullet: prefixLen > 0 && /[-*>]\s|\d+[.)]\s/.test(line.slice(0, prefixLen)),
       };
     }
   }
   return { matched: false };
+}
+
+/**
+ * Decide whether a bullet line is a behavioral-guideline rule rather than
+ * an output request. The heuristic: if the bullet sits under an introducing
+ * line that ends with a colon and looks like a 'rules' header ("When
+ * answering:", "For each finding:", "Rules:", "Guidelines:"), the bullets
+ * underneath are behavioral guidelines, not output requests. This prevents
+ * false positives on prompts that say things like:
+ *   When answering questions:
+ *   - Explain the WHY behind code, not just the WHAT
+ *
+ * Only applies to lines that start with a list marker (-, *, >, 1.). A bare
+ * paragraph that begins with 'Explain' is still treated as a request.
+ */
+function isBehavioralGuidelineBullet(lines, lineIndex) {
+  const BULLET_LINE = /^\s*(?:[-*>]\s+|\d+[.)]\s+)/;
+  // Walk backwards skipping blank lines AND other bullet lines (sibling items
+  // in the same list). The line we want is the non-bullet line that
+  // introduces the list — typically a sentence ending with a colon.
+  for (let j = lineIndex - 1; j >= 0; j--) {
+    const raw = lines[j];
+    const prev = raw.trim();
+    if (prev.length === 0) continue;
+    if (BULLET_LINE.test(raw)) continue;
+    // First non-empty, non-bullet line above the target. If it doesn't end
+    // with a colon, the bullets above are not under a list header.
+    if (!prev.endsWith(':')) return false;
+    const RULE_HEADER = /\b(when|for each|for every|rules?|guidelines?|behavior|behaviour|principles?|how (you|to) (answer|behave|respond|operate|work)|in (your )?responses?|while (analyzing|reviewing|answering)|when (answering|analyzing|reviewing|generating)|always|never)\b.*:$/i;
+    return RULE_HEADER.test(prev);
+  }
+  return false;
 }
 
 // ── Public detect() ──────────────────────────────────────────────────────
@@ -149,7 +195,9 @@ export async function detect(promptText, filePath, opts = {}) {
     const result = matchTriggerAtLineStart(line);
     if (result.matched) {
       const triggerCharIndex = lineOffset + (result.columnInLine - 1);
-      if (!hasNearbyConstraint(promptText, triggerCharIndex)) {
+      const bounded = hasNearbyConstraint(promptText, triggerCharIndex);
+      const isBehavioralGuideline = result.isBullet && isBehavioralGuidelineBullet(lines, i);
+      if (!bounded && !isBehavioralGuideline) {
         findings.push({
           detector: 'output/unbounded',
           severity: 'LOW',

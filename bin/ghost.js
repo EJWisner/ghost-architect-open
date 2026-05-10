@@ -34,7 +34,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.1.3';
+const VERSION      = '5.2.0';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -386,6 +386,7 @@ async function main() {
           await runPromptTriageMode({
             source: { kind: 'localFolder', path: folderPath.trim() },
             targetModel,
+            tier: TIER,
           });
         } catch (err) {
           console.log(chalk.red('\n' + SYM.cross + ' Prompt Triage failed: ' + err.message + '\n'));
