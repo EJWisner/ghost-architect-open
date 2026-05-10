@@ -111,9 +111,12 @@ async function runFixtureAssertions() {
 async function runLoaderAssertion() {
   console.log('\n\u2500 Loader assertion \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
   const loaded = await loadPromptSource({ kind: 'localFolder', path: REPO_ROOT });
-  const inRange = loaded.files.length >= 50 && loaded.files.length <= 55;
+  // Range covers Pro (52 files) and Team (46 files) and Open (variable).
+  // The point of this assertion is to catch F-34 regressions where project
+  // metadata files leak back in — a broken loader would jump well past 60.
+  const inRange = loaded.files.length >= 40 && loaded.files.length <= 65;
   assert(
-    'loader returns 50-55 files from repo root (got ' + loaded.files.length + ')',
+    'loader returns 40-65 files from repo root (got ' + loaded.files.length + ')',
     inRange,
     inRange ? null : 'F-34 loader filter may have regressed'
   );

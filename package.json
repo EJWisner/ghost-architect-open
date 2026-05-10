@@ -1,7 +1,7 @@
 {
   "name": "ghost-architect",
   "private": true,
-  "version": "5.2.0-pro",
+  "version": "5.2.1-pro",
   "description": "AI-powered codebase archaeology — understand what you inherited",
   "author": "Ghost Architect",
   "license": "SEE LICENSE IN LICENSE",

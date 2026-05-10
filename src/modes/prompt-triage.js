@@ -20,6 +20,17 @@
  *   - targetModel:   model registry ID (see src/prompt-pack/models.js).
  *                    When provided, length-aware detectors use the
  *                    correct tokenizer; otherwise the heuristic is used.
+ *   - tier:          'open' | 'pro' | 'team' | 'enterprise'. Controls
+ *                    feature gating. Project Intelligence (label prompt,
+ *                    baseline tracking, comparison, velocity) is Pro+
+ *                    only. When tier is 'open' or unset, the project
+ *                    label prompt is skipped and no project history is
+ *                    written. The bin/ghost.js for each branch is the
+ *                    single source of truth for TIER and passes it
+ *                    through. Defaults to 'open' (most conservative —
+ *                    fail-closed for Project Intelligence) so that any
+ *                    caller that forgets to pass tier does not leak
+ *                    a paid feature.
  *   - onProgress:    optional callback (file, idx, total) => void
  */
 
@@ -85,6 +96,11 @@ export async function runPromptTriageMode(options = {}) {
   const reportsDir = options.reportsDir || defaultReportsDir();
   const targetModel = options.targetModel || null;
   const targetModelEntry = targetModel ? getModel(targetModel) : null;
+  // Feature gating. Project Intelligence is Pro+ only. We default to 'open'
+  // (fail-closed) so any caller that forgets to pass tier does not leak the
+  // paid feature. The bin/ghost.js for each branch is the source of truth.
+  const tier = options.tier || 'open';
+  const projectIntelEnabled = tier !== 'open';
 
   // ── Banner ──────────────────────────────────────────────────────────────
   console.log('');
@@ -184,8 +200,16 @@ export async function runPromptTriageMode(options = {}) {
   // label produce a baseline comparison (resolved/remaining/new findings,
   // velocity trend). Hitting Enter without a label runs the scan as a
   // one-time audit with no history. Mirrors POI/Conflict/Blast behaviour.
-  const projectLabel = await promptProjectLabel();
-  console.log('');
+  //
+  // GATED: Project Intelligence is Pro+ only. On Open, we skip the label
+  // prompt entirely — the user runs a one-shot scan, gets a full report,
+  // and no project history is written. This is consistent with how Open
+  // already hides the Project Dashboard and Compare Reports menu items.
+  let projectLabel = null;
+  if (projectIntelEnabled) {
+    projectLabel = await promptProjectLabel();
+    console.log('');
+  }
 
   // ── Scan ────────────────────────────────────────────────────────────────
   const allFindings = [];

@@ -5,6 +5,21 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.2.1] - 2026-05-10
+
+### Fixed
+
+- **Project Intelligence in Prompt Triage is now correctly tier-gated.**
+  Prompt Triage now respects the same Pro+ entitlement that has always
+  applied to Project Intelligence in POI, Blast, Conflict, and Recon.
+  On Pro, Team, and Enterprise the project label prompt and baseline
+  comparison continue to work exactly as in 5.2.0. On Open the project
+  label prompt is skipped and no project history is written, matching
+  how Open already hides the Project Dashboard and Compare Reports
+  menu items. The mode now accepts a `tier` option which defaults to
+  `'open'` (fail-closed) so that any caller that forgets to pass a
+  tier does not leak a paid feature.
+
 ## [5.2.0] - 2026-05-10
 
 ### Added
