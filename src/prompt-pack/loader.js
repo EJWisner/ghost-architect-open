@@ -67,7 +67,63 @@ const SKIP_BASENAMES = new Set([
   'code_of_conduct',
   'security',
   'notice',
+  // Project-level documentation that lives next to source. These read
+  // like prompts to a regex (markdown with imperative bullets) but are
+  // developer documentation. Skip silently.
+  'claude',
+  'cursor',
+  'aider',
+  'agents',
+  'instructions',
+  'todo',
+  'todos',
+  'roadmap',
+  'plan',
+  'notes',
 ]);
+
+// Filename patterns (full filename, case-insensitive) that match repo
+// configuration manifests rather than prompts. Tested against the full
+// basename including extension. These exist to filter out package.json,
+// package-lock.json, tsconfig.json, eslint config, etc., which all have
+// a .json extension but are clearly not prompts.
+const SKIP_PATTERNS = [
+  /^package\.json$/i,
+  /^package-lock\.json$/i,
+  /^npm-shrinkwrap\.json$/i,
+  /^yarn\.lock$/i, // not in PROMPT_EXTENSIONS but defensive
+  /^pnpm-lock\.yaml$/i,
+  /^bun\.lock(b)?$/i,
+  /^composer\.json$/i,
+  /^composer\.lock$/i,
+  /^tsconfig.*\.json$/i,
+  /^jsconfig\.json$/i,
+  /^\.eslintrc.*$/i,
+  /^\.prettierrc.*$/i,
+  /^\.babelrc.*$/i,
+  /^babel\.config\.(json|yaml|yml)$/i,
+  /^jest\.config\.(json|yaml|yml)$/i,
+  /^vitest\.config\.(json|yaml|yml)$/i,
+  /^webpack\.config\.(json|yaml|yml)$/i,
+  /^rollup\.config\.(json|yaml|yml)$/i,
+  /^\.npmrc$/i,
+  /^\.yarnrc.*$/i,
+  /^renovate\.json$/i,
+  /^\.github\/.*$/i, // workflows etc.
+  /^manifest\.json$/i,
+  /^lerna\.json$/i,
+  /^nx\.json$/i,
+  /^turbo\.json$/i,
+  /^netlify\.toml$/i,
+  /^vercel\.json$/i,
+  /^firebase\.json$/i,
+  /^now\.json$/i,
+  /^\.followups?\.md$/i, // dogfood-specific developer notes
+  /^.*_FOLLOWUPS?\.md$/i, // PROMPT_TRIAGE_FOLLOWUPS.md and similar
+  /^.*_PLAN.*\.md$/i,
+  /^.*_NOTES.*\.md$/i,
+  /^.*_TODO.*\.md$/i,
+];
 
 // Directory names we always skip when walking a prompt folder. These
 // are noise; nobody stores prompts under node_modules. Matches the
@@ -146,6 +202,15 @@ function walkLocalFolder(root) {
       if (SKIP_BASENAMES.has(basenameNoExt)) {
         continue;
       }
+
+      // Skip files matching repo-config or developer-doc patterns
+      // (package.json, package-lock.json, tsconfig.json, *_FOLLOWUPS.md,
+      // *_PLAN.md, etc.). Same silent-skip semantics as SKIP_BASENAMES.
+      let matchedSkipPattern = false;
+      for (const pattern of SKIP_PATTERNS) {
+        if (pattern.test(entry.name)) { matchedSkipPattern = true; break; }
+      }
+      if (matchedSkipPattern) continue;
 
       // Size gate.
       let stat;

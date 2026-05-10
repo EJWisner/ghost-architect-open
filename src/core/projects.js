@@ -122,7 +122,14 @@ function similarFinding(a, b) {
 export function saveProjectIntelligence(label, reportText, meta) {
   if (!label) return null;
 
-  const findings   = extractFindingsFromReport(reportText);
+  // Use pre-extracted findings when the caller supplies them via meta.
+  // Prompt Triage uses this path because its report shape differs from POI's
+  // (different headers, severity tags, location format). POI / Blast / Conflict
+  // continue using the markdown extractor — when meta.findings is undefined,
+  // we fall back to extractFindingsFromReport(reportText).
+  const findings   = (meta && Array.isArray(meta.findings))
+    ? meta.findings
+    : extractFindingsFromReport(reportText);
   const existing   = loadProjectMeta(label);
   const scanDate   = new Date().toISOString();
   const scanFile   = `scan-${scanDate.slice(0,10)}-${Date.now()}.json`;

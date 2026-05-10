@@ -3,7 +3,7 @@ Ghost Architect dogfood corpus entry
 
 Title:  Chat mode system prompt
 Source: prompts/index.js :: SYSTEM_CHAT
-Generated: 2026-05-05T21:06:37.249Z
+Generated: 2026-05-10T15:19:20.166Z
 
 This file is a snapshot of a real Ghost Architect system prompt.
 Used as a test fixture for Prompt Triage detectors.

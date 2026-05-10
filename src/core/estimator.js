@@ -1,11 +1,34 @@
 /**
  * Ghost Architect — Core Estimator
  * Pure cost calculation. No Chalk. No console output. Returns data.
+ *
+ * SINGLE SOURCE OF TRUTH for model pricing across the entire codebase.
+ * Modes (poi, blast, conflict, prompt-triage, chat, recon) and detector
+ * infrastructure (llmAuditClient) all import pricing from here. Do NOT
+ * duplicate pricing tables elsewhere — keep this file canonical.
  */
 
+// Per-million-token rates in USD. Update when Anthropic announces new
+// rates or new models. Sources verified May 10, 2026:
+//   - Opus 4.7 / 4.6 / 4.5: $5 in / $25 out (Anthropic dropped Opus pricing
+//     67% on Nov 24, 2025 with Opus 4.5; subsequent Opus models keep that)
+//   - Opus 4 / 4.1: $15 in / $75 out (legacy, kept for back-compat with
+//     callers that pin to those IDs)
+//   - Sonnet 4.6 / 4.5: $3 in / $15 out
+//   - Haiku 4.5: $1 in / $5 out
 const PRICING = {
-  'claude-sonnet-4-5': { label: 'Claude Sonnet 4.5', inputPerM: 3.00,  outputPerM: 15.00 },
-  'claude-opus-4-5':   { label: 'Claude Opus 4.5',   inputPerM: 15.00, outputPerM: 75.00 },
+  // Current Opus generation (post Nov 2025 67% price drop)
+  'claude-opus-4-7':   { label: 'Claude Opus 4.7',   inputPerM:  5.00, outputPerM: 25.00 },
+  'claude-opus-4-6':   { label: 'Claude Opus 4.6',   inputPerM:  5.00, outputPerM: 25.00 },
+  'claude-opus-4-5':   { label: 'Claude Opus 4.5',   inputPerM:  5.00, outputPerM: 25.00 },
+  // Legacy Opus pricing
+  'claude-opus-4-1':   { label: 'Claude Opus 4.1',   inputPerM: 15.00, outputPerM: 75.00 },
+  'claude-opus-4':     { label: 'Claude Opus 4',     inputPerM: 15.00, outputPerM: 75.00 },
+  // Sonnet
+  'claude-sonnet-4-6': { label: 'Claude Sonnet 4.6', inputPerM:  3.00, outputPerM: 15.00 },
+  'claude-sonnet-4-5': { label: 'Claude Sonnet 4.5', inputPerM:  3.00, outputPerM: 15.00 },
+  // Haiku
+  'claude-haiku-4-5':  { label: 'Claude Haiku 4.5',  inputPerM:  1.00, outputPerM:  5.00 },
 };
 
 // Per-mode output token estimates and human-readable labels for the cost
@@ -24,7 +47,48 @@ const MODE_OUTPUT_ESTIMATES = {
 };
 
 export function getPricing(model) {
-  return PRICING[model] || PRICING['claude-sonnet-4-5'];
+  return PRICING[model] || PRICING['claude-sonnet-4-6'];
+}
+
+/**
+ * Cost-range estimation for multi-call scans (Prompt Triage Tier 2,
+ * POI verifier, Conflict). Returns a low-high band reflecting realistic
+ * variance in input size. Calibrated from May 10 dogfood scan: 472 calls,
+ * $18.58 actual; calibrated math estimated $17.70.
+ */
+export function estimateMultiCallCost({
+  model,
+  numCalls,
+  avgInputTokens = 5000,
+  avgOutputTokens = 500,
+  bandPercent = 0.20,
+}) {
+  const pricing = getPricing(model);
+  const inputCostPerCall  = (avgInputTokens  / 1_000_000) * pricing.inputPerM;
+  const outputCostPerCall = (avgOutputTokens / 1_000_000) * pricing.outputPerM;
+  const perCallCost = inputCostPerCall + outputCostPerCall;
+  const midpoint = numCalls * perCallCost;
+  const low  = midpoint * (1 - bandPercent);
+  const high = midpoint * (1 + bandPercent);
+  return {
+    low,
+    high,
+    midpoint,
+    perCallCost,
+    numCalls,
+    modelLabel: pricing.label,
+    pricing,
+  };
+}
+
+export function formatCost(usd) {
+  if (usd <= 0) return '$0.00';
+  if (usd < 0.01) return '<$0.01';
+  return '$' + usd.toFixed(2);
+}
+
+export function formatCostRange(low, high) {
+  return formatCost(low) + ' – ' + formatCost(high);
 }
 
 export function estimateCost(inputTokens, mode, model) {

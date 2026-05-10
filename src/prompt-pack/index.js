@@ -58,6 +58,7 @@ import * as inefficientFewShot from './inefficientFewShot.js';
 import * as poorDocumentation from './poorDocumentation.js';
 import * as tokenLimitContextOverflow from './tokenLimitContextOverflow.js';
 import * as tokenLimitExcessive from './tokenLimitExcessive.js';
+import * as integrationMismatch from './integrationMismatch.js';
 import { dedupFindings } from './dedup.js';
 
 /**
@@ -94,8 +95,10 @@ const REGISTRY = [
   { id: 'inefficientFewShot',         tier: 2, module: inefficientFewShot,         requiresTargetModel: true },
   { id: 'poorDocumentation',          tier: 2, module: poorDocumentation,          requiresTargetModel: true },
 
-  // Tier 3: hybrid
-  // [pending] integrationMismatch
+  // Tier 3: hybrid (regex flag + LLM verification). Same
+  // requiresTargetModel semantics as Tier 2 — the LLM-verify phase needs
+  // a target model, and the detector emits zero findings without one.
+  { id: 'integrationMismatch', tier: 3, module: integrationMismatch, requiresTargetModel: true },
 ];
 
 /**

@@ -27,11 +27,20 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import chalk from 'chalk';
+import inquirer from 'inquirer';
 
 import { loadPromptSource } from '../prompt-pack/loader.js';
 import { runAll, listDetectors } from '../prompt-pack/index.js';
 import { renderReport } from '../prompt-pack/report.js';
 import { getModel } from '../prompt-pack/models.js';
+import { resetSessionUsage, getSessionUsage } from '../prompt-pack/llmAuditClient.js';
+import { promptProjectLabel, handleProjectIntelligence } from '../projects.js';
+import {
+  estimateMultiCallCost,
+  formatCost,
+  formatCostRange,
+  calcActualCost,
+} from '../core/estimator.js';
 
 function defaultReportsDir() {
   return path.join(os.homedir(), 'Ghost Architect Reports', 'prompt-triage');
@@ -132,6 +141,52 @@ export async function runPromptTriageMode(options = {}) {
   }
   console.log('');
 
+  // ── Cost pre-flight ────────────────────────────────────
+  // Tier 2 detectors send the prompt to the target model. When a target
+  // model is set, estimate the cost band and ask the user to confirm
+  // before any LLM calls fire. Without a target model, only Tier 1
+  // detectors run — those use the free Anthropic countTokens endpoint or
+  // pure regex, no charges.
+  if (targetModel) {
+    const tier2Count = detectors.filter(d => d.tier === 2).length;
+    const numCalls = tier2Count * loaded.files.length;
+    if (numCalls > 0) {
+      const estimate = estimateMultiCallCost({ model: targetModel, numCalls });
+      console.log(chalk.bold('Cost estimate'));
+      console.log(chalk.gray('  ' + numCalls + ' LLM call' + (numCalls === 1 ? '' : 's')
+        + ' against ' + estimate.modelLabel
+        + ' (' + tier2Count + ' Tier 2 detector' + (tier2Count === 1 ? '' : 's')
+        + ' × ' + loaded.files.length + ' prompt' + (loaded.files.length === 1 ? '' : 's') + ')'));
+      console.log(chalk.gray('  Estimated cost: ')
+        + chalk.bold(formatCostRange(estimate.low, estimate.high))
+        + chalk.gray(' (varies with prompt size)'));
+      console.log('');
+      const { proceed } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'proceed',
+        message: 'Continue with this scan?',
+        default: true,
+      }]);
+      if (!proceed) {
+        console.log(chalk.yellow('Scan cancelled. No charges incurred.'));
+        return { reportPath: null, totalFindings: 0, scannedCount: 0, cancelled: true };
+      }
+      console.log('');
+      // Reset session usage so post-scan cost reflects only this scan,
+      // not any prior scans within the same Node process.
+      resetSessionUsage();
+    }
+  }
+
+  // ── Project label ────────────────────────────────────────────────
+  // Optional project tracking. When the user provides a label, the scan
+  // will be saved to project history; subsequent scans against the same
+  // label produce a baseline comparison (resolved/remaining/new findings,
+  // velocity trend). Hitting Enter without a label runs the scan as a
+  // one-time audit with no history. Mirrors POI/Conflict/Blast behaviour.
+  const projectLabel = await promptProjectLabel();
+  console.log('');
+
   // ── Scan ────────────────────────────────────────────────────────────────
   const allFindings = [];
   const scannedFilePaths = [];
@@ -190,6 +245,54 @@ export async function runPromptTriageMode(options = {}) {
     console.log(chalk.gray('Report saved to: ') + reportPath);
   } catch (err) {
     console.log(chalk.red('  ✗ Could not save report: ' + err.message));
+  }
+
+  // ── Project intelligence ──────────────────────────────────────────────
+  // When the user gave a project label, save this scan into project history
+  // and (for subsequent scans) print a baseline comparison. We pass the
+  // already-extracted findings via meta.findings so saveProjectIntelligence
+  // doesn't try to re-parse our markdown shape (which differs from POI's).
+  if (projectLabel) {
+    const piFindings = allFindings.map(f => ({
+      title: f.title || f.detector || 'Untitled finding',
+      severity: f.severity || 'UNKNOWN',
+      // Prompt Triage findings don't carry effort hours; the project
+      // intelligence layer reads this for velocity rollups but treats 0
+      // gracefully — it just won't show effort-based velocity.
+      effortHours: 0,
+    }));
+    const piMeta = {
+      findings: piFindings,
+      filesAnalyzed: loaded.files.length + ' prompt' + (loaded.files.length === 1 ? '' : 's'),
+      targetModel: targetModel || null,
+      detectorsRun: detectors.length,
+    };
+    try {
+      await handleProjectIntelligence(projectLabel, markdown, piMeta);
+    } catch (err) {
+      // Project intelligence is non-fatal; the scan and report are already
+      // saved. Log and continue rather than tank the user's main result.
+      console.log(chalk.gray('  (Project intelligence unavailable: ' + (err.message || err) + ')'));
+    }
+  }
+
+  // ── Actual cost ────────────────────────────────────────────────────
+  // If a target model was set, the session usage accumulator now holds the
+  // sum of every Tier 2 API call made during this scan. Print the actual
+  // cost so the user can compare against the pre-flight estimate. Cached
+  // results don't pass through callOnce, so the totals reflect new charges
+  // only — a re-run on the same prompts can show a much lower number, which
+  // is correct (no money was spent re-fetching cached audits).
+  if (targetModel) {
+    const usage = getSessionUsage();
+    if (usage.calls > 0) {
+      const actual = calcActualCost(usage.input_tokens, usage.output_tokens, targetModel);
+      console.log(chalk.gray('Actual cost: ')
+        + chalk.bold(formatCost(actual.totalCost))
+        + chalk.gray(' (' + usage.calls + ' API call' + (usage.calls === 1 ? '' : 's')
+        + ', ' + usage.input_tokens.toLocaleString() + ' in / '
+        + usage.output_tokens.toLocaleString() + ' out tokens)'));
+    }
   }
 
   return {

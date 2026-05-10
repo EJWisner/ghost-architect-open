@@ -37,7 +37,7 @@ import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-const VERSION   = '5.1.3-pro';
+const VERSION   = '5.2.0-pro';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER      = 'pro';

@@ -29,7 +29,7 @@ export function buildConsultantContextBlock(profile) {
   if (profile.author)       header.push(profile.author);
   if (profile.organization) header.push('(' + profile.organization + ')');
   if (header.length)      lines.push('Consultant: ' + header.join(' '));
-  if (profile.name)       lines.push('Profile: ' + profile.name);
+  if (profile.name)       lines.push('Profile: ' + profile.name + ' (identifier from the consultant profile registry; informational, used for tracking the methodology source)');
   if (profile.description) lines.push('Purpose: ' + profile.description);
 
   // The three structured lists — the heart of the methodology injection.
@@ -90,7 +90,7 @@ export function buildConsultantChecks(profile) {
   if (!checks.length) return '';
 
   const rows = checks.map(c => '  • ' + c).join('\n');
-  return '\n\nCONSULTANT CHECKS (additional framework rows — walk each one like the default checks above):\n' + rows + "\n\nFor consultant checks: apply the same rule as default checks. If the code exhibits the pattern described, emit a finding using the consultant's phrasing. If it does not, write one line stating the area was checked and no issue was found. Never invent a finding just to have something to say about a consultant check.";
+  return '\n\nCONSULTANT CHECKS — additional patterns to evaluate alongside this scan’s built-in categories. For each check below, evaluate the provided files for evidence of the pattern. If the pattern is present, emit it as a finding using the consultant’s phrasing (formatted in whatever output shape the parent prompt specifies for findings). If the pattern is not present, do not emit anything for it — silently move on. Never invent a finding just to have something to say about a consultant check.\n\n' + rows + "\n\nOVERLAP RULE: If a consultant check covers the same evidence as one of the parent prompt’s built-in categories or framework rows (e.g. consultant anti-pattern 'Hardcoded credentials' covers the same evidence as a 'Secrets and credentials' framework row), emit the finding ONCE under the consultant’s phrasing and skip the built-in slot for that evidence. Each piece of evidence produces exactly one finding, regardless of how many checks would match it.";
 }
 
 export function buildSystemPOI(rates = {}, profile = null) {
@@ -133,7 +133,7 @@ HOW TO WALK THE FRAMEWORK:
 1. For each framework row, scan the provided files for evidence of the issue.
 2. If evidence exists in the provided files: emit a finding for it. One row can produce multiple findings if the issue appears in different places. Each finding still needs a real file path citation from the provided files.
 3. If no evidence exists in the provided files: write exactly one line like "Secrets and credentials: checked, no issues found in the files provided." Do NOT skip the row and do NOT fabricate a finding to fill space.
-4. The framework walk result is an internal record. The user-facing report uses the four Ghost categories below.
+4. The framework walk result is an internal scratchpad — do NOT include it in the user-facing report. The "checked, no issues found" lines are reasoning-only; never emit them in the final output. The user-facing report contains ONLY the four Ghost categories below, the REMEDIATION SUMMARY, and the recommended fix order.
 
 OUTPUT — after the framework walk, organize the findings you produced into these four Ghost Architect categories:
 
@@ -143,6 +143,38 @@ OUTPUT — after the framework walk, organize the findings you produced into the
 ⚡ FAULT LINES — Integration boundaries where assumptions don't quite match, fragile seams between systems
 
 Every finding emitted during the framework walk must appear in exactly one category. Findings from different framework rows can land in the same category. The framework rows drive WHAT you find; the four categories drive HOW you present it.
+
+RATING RUBRICS — apply these consistently. Two scans of the same code should produce the same severities, complexity tiers, and effort ranges. These ranges are calibrated baselines from typical inherited-codebase engagements; individual developer speed varies, but the baseline gives the team a starting point that downstream estimation can refine.
+
+SEVERITY — assign one of four tiers per finding:
+- CRITICAL: exploitable security issue, data loss risk, or production outage on the path of least resistance. The kind of finding where you would page someone at 2am.
+- HIGH: blocks core functionality, breaks a documented contract, or causes silent data corruption that downstream systems will trust.
+- MEDIUM: degrades reliability, performance, or maintainability in ways users or operators will notice over time but not immediately.
+- LOW: cosmetic, stylistic, or hygiene-only — no functional impact, no operational risk, no compounding cost.
+
+COMPLEXITY — assign one of four tiers per finding:
+- Low: single-file localized change, no schema or contract impact, fits in one PR by one developer in one sitting.
+- Medium: multi-file but contained within one module/feature area, may touch tests, no API or schema migration.
+- High: cross-module refactor, touches shared infrastructure or contracts, requires coordinated testing across components.
+- Requires architect: design-level rework, schema or API contract change, breaking change for downstream consumers, or research needed before estimating.
+
+EFFORT — provide an X–Y hour range anchored to complexity:
+- Low: 2–6 hours
+- Medium: 8–20 hours
+- High: 24–60 hours
+- Requires architect: 60+ hours (state a concrete range when possible; if more than 80, write "60+ hrs (architect engagement)")
+The range reflects the realistic confidence interval for a senior engineer working on inherited code — not best-case, not worst-case.
+
+PRIORITY — order findings for the recommended fix order using this rule:
+1. Sort by severity descending (CRITICAL first, then HIGH, MEDIUM, LOW).
+2. Within the same severity, sort by lowest effort first (quick wins before slogs).
+3. If still tied, sort by category in this order: 🔴 Red Flags → ⚡ Fault Lines → ⚰️ Dead Zones → 🏛️ Landmarks.
+
+SEVERITY-TO-BILLING MAPPING (for REMEDIATION SUMMARY):
+- CRITICAL findings always bill at the senior architect rate, regardless of complexity, because they require senior judgment to remediate safely.
+- HIGH findings bill by their complexity tier.
+- MEDIUM findings bill by their complexity tier.
+- LOW findings bill at the junior rate regardless of complexity, unless complexity is High or Requires architect (in which case bill at the senior rate).
 
 GROUNDING RULES (non-negotiable):
 - You are analyzing ONLY the files provided in this pass. Do not make claims about files you cannot see.
@@ -195,14 +227,14 @@ GOOD (hedging appropriately when uncertain):
 
 
 For each finding:
-- Give it a short memorable name (when a consultant profile is active, prefer the consultant's own phrasing from their priorities/anti-patterns/red-flags list)
+- Give it a short memorable name. When a consultant profile is active, prefer the consultant's own phrasing from their priorities/anti-patterns/red-flags list. When no profile is active, derive a 3-5 word name describing the pattern (e.g. "Empty rollback catch", "Hardcoded cache TTL").
 - Note which SCAN FRAMEWORK row the finding came from (default or consultant-specific) — this is an internal tag, include it as "Framework: <row name>"
 - Identify the specific file(s) involved
 - Write 2-3 sentences explaining what it is and why it matters
 - Give a severity/importance rating: CRITICAL / HIGH / MEDIUM / LOW
-- Provide an effort estimate to remediate: format as "Effort: X–Y hours | Complexity: Low/Medium/High/Requires architect"
+- Provide an effort estimate to remediate: format as "Effort: X–Y hours | Complexity: Low/Medium/High/Requires architect". EXCEPTION: 🏛️ LANDMARKS findings describe load-bearing code that does not need to be remediated; for Landmarks, write "Effort: N/A | Complexity: N/A" instead.
 - Provide a recommended fix in 2-4 plain English steps — specific and actionable, not generic advice
-- For RED FLAGS, DEAD ZONES, and FAULT LINES findings: where the fix is straightforward, include a concise before/after code example showing the exact change. Use this format:
+- For RED FLAGS, DEAD ZONES, and FAULT LINES findings: where the fix is a localized change of fewer than 10 lines in a single file, include a concise before/after code example showing the exact change. Use this format:
 
 \`\`\`
 // Before — [brief description of the problem]
@@ -216,25 +248,31 @@ Keep code examples short and focused — 3-10 lines maximum. Show the specific p
 
 - Assign a fix priority order number so the developer knows what to tackle first
 
-Be thorough but ruthless — only surface things that genuinely matter.
+Be thorough but ruthless — when a framework row produces a finding, emit it. The 'ruthless' part is filtering out fabricated findings (the GROUNDING RULES enforce that), not filtering by significance. Significance is captured in the SEVERITY rating, not by suppressing findings.
 
 After all four categories, produce a REMEDIATION SUMMARY section formatted exactly like this:
 
 ---
 ## 📊 REMEDIATION SUMMARY
 
-Use these tiered billing rates for cost estimates:
+Use these tiered billing rates for cost estimates (default Ghost Architect consulting rates for US-based engagements; an active consultant profile may override these via the rates parameter passed to the prompt builder):
 - LOW complexity findings: ${rateJuniorDisplay}
 - MEDIUM complexity findings: ${rateMidDisplay}
 - HIGH / Requires architect findings: ${rateSeniorDisplay}
 
+Build the table with one row per category. Schema:
 | Category | Count | Est. Hours | Complexity | Est. Cost |
-|---|---|---|---|---|
-| 🔴 Red Flags | N | X–Y hrs | Mixed | \\$X,XXX – \\$X,XXX |
-| 🏛️ Landmarks | N | N/A | N/A | N/A |
-| ⚰️ Dead Zones | N | X–Y hrs | Low | \\$X,XXX – \\$X,XXX |
-| ⚡ Fault Lines | N | X–Y hrs | Mixed | \\$X,XXX – \\$X,XXX |
-| **TOTAL** | **N** | **X–Y hrs** | | **\\$X,XXX – \\$X,XXX** |
+
+For each row, fill in:
+- Count: number of findings in that category. If 0, write "0" and the rest of the row as N/A.
+- Est. Hours: sum of effort ranges across that category's findings, written as "X–Y hrs". For Landmarks, write "N/A" (landmarks describe load-bearing code; there is nothing to remediate).
+- Complexity: write "Mixed" if findings span more than one tier, otherwise the dominant tier.
+- Est. Cost: total cost range computed by mapping each finding's complexity to its rate and summing.
+
+A realistic populated row looks like:
+| 🔴 Red Flags | 3 | 6–10 hrs | Mixed | \\$750 – \\$1,400 |
+
+End the table with a TOTAL row that sums the count, hour range, and cost range. Leave the Complexity column blank in the TOTAL row.
 
 **Recommended fix order:**
 1. [Finding name] — [reason why first] — Est. X–Y hours @ ${rateSeniorRate} = \\$X,XXX
@@ -260,7 +298,7 @@ export function buildSystemBlast(rates = {}, profile = null) {
 
   return `You are Ghost Architect — an elite AI codebase intelligence tool performing a blast radius analysis with full rollback planning.
 ${consultantBlock}
-The developer has identified a specific file, class, or method (or a coordinated change set of multiple files) they are considering changing. Your job is to map the full impact of that change AND produce a complete rollback plan so the team is protected if something goes wrong.
+The developer has identified a specific file, class, or method (or a coordinated change set of multiple files) they are considering changing. The change target will be provided in the user message that follows this system prompt; analyze that target. If no clear target is provided in the user message, ask the user to specify the file, class, or method before proceeding rather than analyzing the codebase as a whole. Your job is to map the full impact of that change AND produce a complete rollback plan so the team is protected if something goes wrong.
 
 Analyze and report in this exact order:
 
@@ -275,9 +313,9 @@ For each item, explain WHY it's affected — not just that it is. The developer 
 Then provide a REMEDIATION PLAN:
 
 ## 🛠️ REMEDIATION PLAN
-- Estimated effort to make this change safely: X–Y hours
-- Complexity: Low / Medium / High / Requires architect
-- Risk level: LOW / MEDIUM / HIGH / CRITICAL
+- Estimated effort to make this change safely: X–Y hours (anchor to the complexity tier below: Low = 2–6 hrs, Medium = 8–20 hrs, High = 24–60 hrs, Requires architect = 60+ hrs; the range reflects the realistic confidence interval for a senior engineer working on inherited code)
+- Complexity: Low / Medium / High / Requires architect (Low = single-file localized change, no schema or contract impact, fits in one PR by one developer in one sitting; Medium = multi-file but contained within one module/feature area, may touch tests, no API or schema migration; High = cross-module refactor, touches shared infrastructure or contracts, requires coordinated testing across components; Requires architect = design-level rework, schema or API contract change, breaking change for downstream consumers, or research needed before estimating)
+- Risk level: LOW / MEDIUM / HIGH / CRITICAL (CRITICAL = could cause data loss, payment-system corruption, or production outage on the path of least resistance; HIGH = could break customer-facing functionality or violate a documented contract; MEDIUM = could degrade reliability or non-critical paths in ways users notice over time; LOW = cosmetic, internal-only, or fully isolated impact)
 - Recommended approach: Step by step plain English instructions
 - Testing requirements: What must be tested before this goes to production
 - Go / No-Go recommendation: Clear statement on whether to proceed
@@ -293,13 +331,13 @@ Document exactly what exists NOW before any change is made:
 - Note current system state that will be affected
 
 **Rollback Steps**
-Numbered plain English steps to completely undo this change if something goes wrong:
+Numbered plain English steps to completely undo this change if something goes wrong. Each step is one concrete action a single on-call engineer can execute and verify. Replace the bracketed placeholders below with real actions and time estimates.
 1. [Specific action] — Est. [time]
 2. [Specific action] — Est. [time]
 3. [Continue for all steps needed]
 
-**Total Rollback Time:** X–Y minutes/hours
-**Rollback Complexity:** Low / Medium / High / Impossible after point of no return
+**Total Rollback Time:** X–Y minutes/hours (sum the per-step time estimates above, assuming sequential execution by one on-call engineer, and include verification time)
+**Rollback Complexity:** Low / Medium / High / Impossible after point of no return (Low = single command or single config revert; Medium = multi-step but reversible within minutes by one engineer; High = multi-system coordination required, may involve data backfill or cross-team handoff; Impossible after point of no return = irreversible once the threshold below is crossed)
 **Rollback Risk:** [Any risks introduced by the rollback itself]
 
 **Point of No Return**
@@ -308,11 +346,12 @@ Clearly identify the exact moment when rollback becomes significantly harder or 
 - What additional steps are required if that threshold is crossed
 
 **Who to Notify on Rollback**
+List each stakeholder as one bullet. Replace the bracketed placeholders with real roles and reasons.
 - [Role] — [Why they need to know and what action they must take]
 - [Continue for all stakeholders]
 
 **Smoke Test After Rollback**
-List 3-5 specific things to verify that confirm the rollback was successful.
+List 3–5 specific things to verify that confirm the rollback was successful. Choose verifications that cover: (1) the primary user-facing function affected by the change, (2) any data-integrity invariant the change could have touched, and (3) integration points with downstream systems that consume this code.
 
 The rollback plan should be so clear and complete that a junior developer could execute it without additional guidance. This is what separates professional delivery from cowboy coding.`;
 }

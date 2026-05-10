@@ -34,6 +34,27 @@
 import { getModel } from './models.js';
 import { resolveApiKey } from '../config.js';
 
+// Session-scoped usage accumulator. Reset by the mode file before a scan,
+// read after. Tracks token totals across all Tier 2 detector calls in the
+// current scan so the mode file can report actual cost without threading
+// usage through every detector signature.
+let sessionUsage = { input_tokens: 0, output_tokens: 0, calls: 0 };
+
+export function resetSessionUsage() {
+  sessionUsage = { input_tokens: 0, output_tokens: 0, calls: 0 };
+}
+
+export function getSessionUsage() {
+  return { ...sessionUsage };
+}
+
+function recordSessionUsage(usage) {
+  if (!usage) return;
+  sessionUsage.input_tokens  += usage.input_tokens  || 0;
+  sessionUsage.output_tokens += usage.output_tokens || 0;
+  sessionUsage.calls += 1;
+}
+
 let anthropicClient = null;
 let anthropicClientLoadFailed = false;
 
@@ -240,6 +261,12 @@ async function callOnce(client, modelId, envelope) {
   }
 
   const parsed = parseAuditResponse(rawText);
+  // Record usage from this call into the session-scoped accumulator so the
+  // mode file can report actual cost after the scan. We record on every API
+  // call (including ones that fail to parse, since those still cost money).
+  // Cached returns don't pass through callOnce, so they correctly don't add
+  // to the session totals.
+  if (response.usage) recordSessionUsage(response.usage);
   return { parsed, rawText, usage: response.usage };
 }
 
