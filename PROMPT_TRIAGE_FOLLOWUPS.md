@@ -958,3 +958,57 @@ fire prevention) followups, not here.
   unrelated to this ship). All MEDIUM positive findings on prior
   fixtures retained. Variance on fixtures 26, 29, 32, 35, 38
   within F-18 wobble band.
+
+### F-26 — Generic count-noun bounding requires semantic judgment
+**Status:** OPEN — Tier 2 architectural follow-up
+**Source:** v5.3.1 audit (May 11 2026) during F-03 investigation
+**Priority:** MEDIUM (real coverage gap, partial mitigation shipped)
+**Why:** The CONSTRAINT_MARKERS regex array in unboundedOutput.js uses
+an enumerated allowlist of nouns to recognize "count + noun"
+constraint patterns ("5 items", "3 paragraphs"). v5.3.1 extended the
+allowlist from ~20 nouns to ~100 nouns covering common domain output
+vocabulary (issues, bugs, errors, recommendations, features, etc.).
+Sweep against a 200-noun adversarial corpus showed coverage rose
+from 10% to ~50%. Real prompts use thousands of distinct output
+nouns.
+
+The fundamental approach cannot scale: enumerating English plural
+output nouns is an open-ended task. Attempted alternative —
+"generic plural noun" regex (\\d+\\s+[a-z]+s) with a negative
+exclusion list for comparative/temporal/idiomatic trailing words —
+produced false positives on common prose ("5 dollars cheaper",
+"2 minds about it", "5 sides of the same coin"). The exclusion
+list approach is fragile in the opposite direction from the
+allowlist.
+
+**Why this is Tier 2 territory:** Distinguishing "5 issues that
+need review" (constraint) from "5 minds about it" (idiom) from
+"5 weeks ago" (temporal) requires semantic understanding of
+whether the noun is the object of a counting request vs an
+incidental count in surrounding prose. Regex-only approaches
+cannot make this distinction reliably. A Tier 2 detector can
+ask the LLM "is this a count-bounded output request?" and get
+the right answer.
+
+**Possible v5.4 directions:**
+  1. Move generic count-noun bounding into a Tier 2 detector
+     pass that runs only on prompts where Tier 1 unboundedOutput
+     would fire AND the prompt contains "N + plural-shaped word"
+     somewhere in the window. LLM call gates the suppression.
+  2. Train a small classifier specifically on prompt-engineering
+     "is this bounded" judgments using the corpus from the v5.3.0
+     calibration work as seed data.
+  3. Continue expanding the allowlist incrementally as new domain
+     vocabulary surfaces in user-submitted prompts. Cheap, lossy,
+     accumulates noun debt over time.
+
+Track concrete examples here as they surface from dogfood scans
+so the v5.4 ticket has signal:
+  - (none yet — opened in this commit; populate as v5.3.1 reports
+    surface false negatives in real prompts)
+
+Not blocking v5.3.1 ship. The vocabulary extension covers the
+highest-value gaps; remaining false negatives stay LOW-severity
+unbounded-output advisories that users can manually mark as
+intentional.
+
