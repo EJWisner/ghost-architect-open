@@ -226,8 +226,15 @@ const STANDARD_SCHEMA_DESCRIPTION = (
   + '  "findings": [\n'
   + '    {\n'
   + '      "title": string (short label, under 80 chars),\n'
-  + '      "location_hint": string or null (free-form hint like '
-  + '"line ~12" or "the second bullet" or "middle of the prompt"; null if not localizable),\n'
+  + '      "location_hint": string or null (terse pointer to WHERE in '
+  + 'the prompt the defect is — "line ~12", "the second bullet", '
+  + '"the rules section", "middle of the prompt". Maximum 8 words. '
+  + 'This field is for LOCATION, not description: do NOT use it to '
+  + 'summarize the defect, list affected items, or describe content. '
+  + 'If you cannot localize tersely, return null. Examples of what NOT '
+  + 'to put here: "the conflicting severity scales between rating and '
+  + 'billing" (that is a description, not a location). Examples of '
+  + 'what TO put here: "the rating scale", "section 3", null.),\n'
   + '      "detail": string (1-3 sentences explaining the defect),\n'
   + '      "severity": "LOW" | "MEDIUM" | "HIGH" (apply the SEVERITY '
   + 'FRAMEWORK from the top of this prompt — do NOT default to MEDIUM),\n'
@@ -290,6 +297,15 @@ function parseAuditResponse(rawText) {
     // location_hint is allowed to be null or string
     if (f.location_hint != null && typeof f.location_hint !== 'string') {
       return { ok: false, error: 'Finding.location_hint must be string or null' };
+    }
+    // F-14: Cap hint length. Soft target is 8 words via envelope; if the
+    // LLM still returns a long hint, truncate to first 8 words plus
+    // ellipsis. This protects report layout and keeps hints scannable.
+    if (typeof f.location_hint === 'string') {
+      const words = f.location_hint.trim().split(/\s+/);
+      if (words.length > 12) {
+        f.location_hint = words.slice(0, 8).join(' ') + '...';
+      }
     }
   }
 
