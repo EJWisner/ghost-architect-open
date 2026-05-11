@@ -15,6 +15,7 @@ import { runReconMode } from '../src/modes/recon.js';
 import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
+import { checkFirstRun } from '../src/onboarding/firstRun.js';
 import { listPresets } from '../src/loader/excludes.js';
 import fs from 'fs';
 import path from 'path';
@@ -296,6 +297,11 @@ async function main() {
   });
 
   printBanner();
+
+  // First-run email capture (Open only). Runs once per machine on
+  // initial CLI invocation. Fully optional, graceful failure.
+  // See src/onboarding/firstRun.js for the full design.
+  await checkFirstRun(VERSION);
 
   if (!isConfigured()) {
     console.log(boxen(
