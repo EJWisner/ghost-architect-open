@@ -386,12 +386,63 @@ guidance. Real API smoke is required for Tier 2 envelope work.
 Sonnet 4.6 is cheap enough that 6-10 calls per ticket is fine.
 
 ### F-14 — Cap hint length at ~8 words
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 6 review
 **Why:** Some hints are 3 words ("second paragraph"), others are 15+
 ("Per-finding requirements (severity rating CRITICAL/HIGH/MEDIUM/LOW)
 vs. Remediation Summary billing tiers (LOW/MEDIUM/HIGH)"). Add
 schema constraint or envelope instruction to keep hints terse.
+
+**Resolution (v5.3.1):** Two coordinated edits to llmAuditClient.js
+(the shared Tier 2 envelope and validator):
+
+1. STANDARD_SCHEMA_DESCRIPTION updated. The location_hint field
+   instruction now explicitly states:
+     - Purpose: terse pointer to WHERE in the prompt the defect is
+     - Length: Maximum 8 words
+     - Not for: description, summary, listing affected items
+     - Examples of what NOT to put (description-shaped hints)
+     - Examples of what TO put (location-shaped hints)
+     - Fallback: null if cannot localize tersely
+
+2. parseAuditResponse() validator updated with soft truncation.
+   If location_hint comes back over 12 words, truncate to first
+   8 words + "..." ellipsis. The 12-word threshold gives the LLM
+   a 4-word margin over the 8-word target before the safety net
+   kicks in — short enough to keep report layout clean, generous
+   enough that natural 9-10 word hints survive intact.
+
+Why these two edits work together: the envelope instruction is
+the primary mechanism (cheap, no compute cost, LLMs follow it).
+The truncation is the safety net for cases the envelope misses.
+Both apply to all 10 Tier 2 detectors uniformly because the
+schema is shared infrastructure.
+
+Verified via real API smoke against claude-sonnet-4-6 using a
+prompt with the exact conflicting-scale shape from the ticket
+("severity rating CRITICAL/HIGH/MEDIUM/LOW" plus "billing tier
+LOW/MEDIUM/HIGH"):
+
+  Finding: "Severity scale and billing priority scale use
+    overlapping labels differently"
+  Hint: "second and third bullet lists"
+  Hint word count: 5
+  Status: PASS (under 8-word target, no truncation needed)
+
+The envelope instruction alone produced a 5-word hint on the exact
+ticket scenario. Truncation was not exercised in this run because
+it wasn't needed — that is the desired outcome. The truncation code
+path remains as backstop for cases where the LLM produces verbose
+hints despite the envelope guidance.
+
+Total API cost: ~$0.01 (1 prompt). Cache layer means re-runs cost
+zero.
+
+Process note: This is the second Tier 2 fix in v5.3.1 (after F-13).
+Both shipped envelope-only changes with API smoke validation. The
+pattern is: change envelope text, run 1-6 real-API smoke prompts,
+verify behavior, commit. The cache layer in llmAuditClient.js keeps
+re-runs free.
 
 ### F-15 — Cross-detector dedup at report layer
 **Status:** PARTIAL (envelope-level carve-outs DONE; report-layer dedup deferred)
