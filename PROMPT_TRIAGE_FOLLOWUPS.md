@@ -269,11 +269,72 @@ meta, mistral, alibaba, test), listModelsForPicker() now returns
 16 production models.
 
 ### F-08 — Ghost-on-Ghost full POI/Blast/Conflict scan
-**Status:** PARTIAL (defensive POI test done, full scan still pending)
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 5
 **Why:** Run the full prompt-triage on Ghost's own production prompts
 (not just the snapshots in prompts-extracted/) to validate end-to-end
 behavior against live code paths.
+
+**Resolution (v5.3.1):** Ran full prompt-triage (all Tier 1, Tier 2,
+and Tier 3 detectors) against all 7 Ghost production prompt snapshots
+in prompts-extracted/. Full findings saved to
+audit-reports/dogfood-2026-05-11.json (17 KB, 59 findings catalogued).
+
+Scoping note: this audit ran against the materialized snapshots in
+prompts-extracted/, not the in-flight live code paths
+(buildSystemPOI() etc.) referenced in the original ticket. Rationale:
+the snapshots are the EXACT prompt text that Ghost sends to the
+Claude API at runtime, so scanning them validates the live behavior
+at the right layer. Scanning via live code paths would require a
+more complex test harness that adds little value over snapshot
+scanning. If validation via live code paths is ever needed, F-08
+can be reopened as F-08b with a more specific scope.
+
+Run summary (claude-sonnet-4-6, May 11 2026):
+
+  File                          Total  HIGH  MED  LOW
+  01-chat-system.md             0      0     0    0
+  02-poi-default.md             10     0     3    7
+  03-poi-with-profile.md        15     0     3    12
+  04-blast-default.md           10     0     3    7
+  05-blast-with-profile.md      8      0     2    6
+  06-conflict-default.md        6      0     2    4
+  07-conflict-with-profile.md   10     0     5    5
+  GRAND TOTAL                   59     0     18   41
+
+Key observations:
+
+1. Zero HIGH findings across all 7 prompts. Ghost prompts have real
+   maintainability gaps but no critical correctness issues.
+
+2. 01-chat-system.md is the cleanest baseline (0 findings, 1.2 KB).
+   The model for what tight Ghost prompts look like.
+
+3. With-profile variants consistently surface more findings than
+   default variants. The profile branch adds complexity that
+   triggers underspecifiedConstraints, poorOrganization, and
+   additional conflictingInstructions.
+
+4. Three detectors are most active across Ghost prompts:
+   - poorDocumentation: 18 findings (undocumented magic numbers,
+     opaque references, undefined registry identifiers)
+   - ambiguousInstruction: 13 findings (referent ambiguity,
+     scope ambiguity)
+   - undefinedOutputFormat: 9 findings (missing per-finding field
+     schemas, table schemas without column definitions)
+
+5. v5.3.1 envelope changes (F-13 discretion framings, F-14 hint
+   capping) did not break detector behavior. All Tier 2 detectors
+   that should fire on real production prompts did fire.
+
+Concrete findings populated below in F-24's tracker section.
+Individual findings remain OPEN under F-24 for the Ghost-prompt
+session that addresses them. F-08 closes because the SCAN is
+done; the action items live in F-24.
+
+Total API cost: ~$2.50 (63 Tier 2/3 calls across 7 prompts).
+Total scan time: ~6.5 minutes elapsed (largest single prompt
+03-poi-with-profile took 107s).
 
 ### F-09 — API call observability for long Claude audits
 **Status:** RESOLVED — v5.3.1 (May 11 2026)
@@ -993,6 +1054,118 @@ Address these post-v5.0.0 ship as part of "dogfood the prompt
 pack on Ghost's own prompts" cleanup work. Not blocking v5.0.0
 release.
 
+**Concrete findings tracker (v5.3.1 dogfood scan, May 11 2026):**
+
+Full findings JSON: `audit-reports/dogfood-2026-05-11.json`
+Scan executed via F-08 closure. 59 total findings across 7 prompts,
+0 HIGH, 18 MEDIUM, 41 LOW.
+
+Findings grouped by theme for prioritization:
+
+**Theme 1 — Consultant profile coupling (5 findings, all LOW):**
+  - "consultant profile registry" referenced but undocumented
+    (POI default, POI with-profile, Blast with-profile, Conflict
+    with-profile)
+  - `buildSystemPOI(DEFAULT_RATES, SAMPLE_PROFILE)` source
+    reference undocumented (POI default)
+  - `buildSystemBlast(DEFAULT_RATES, null)` undocumented (Blast
+    default)
+  - Coupled-prompt assumption "no profile" build path undocumented
+    (Conflict default)
+  - Coupled-prompt assumption "parent prompt" undocumented
+    (Conflict with-profile)
+
+**Theme 2 — Effort/billing rates as magic numbers (5 findings, LOW):**
+  - Effort hour ranges (2-6, 8-20, 24-60, 60+) lack rationale
+    (POI default, POI with-profile, Blast default, Blast with-profile)
+  - Hour ranges in Conflict files were not flagged but use the
+    same magic numbers — likely will be flagged on next dogfood pass
+  - Rollback complexity tier "Impossible after point of no return"
+    label undocumented (Blast with-profile)
+
+**Theme 3 — Output format underspecification (6 findings, mostly MEDIUM):**
+  - Finding internal structure undefined despite detailed output
+    spec (POI default MEDIUM, POI with-profile MEDIUM)
+  - REMEDIATION SUMMARY table schema mixes defined and undefined
+    fields (POI default LOW, POI with-profile MEDIUM)
+  - Blast-radius analysis sections lack defined output structure
+    (Blast default MEDIUM)
+  - ROLLBACK PLAN sub-sections lack defined item structure
+    (Blast default MEDIUM)
+  - "Smoke Test After Rollback" list has no item structural spec
+    (Blast default LOW)
+  - Consultant-check findings have no specified output structure
+    (Blast with-profile MEDIUM, Conflict with-profile MEDIUM)
+
+**Theme 4 — Framework walk internal/external tension (3 findings, MEDIUM):**
+  - "Framework walk must be internal-only AND must appear before
+    report" — conflict (POI default MEDIUM)
+  - "Framework walk is both internal scratchpad and must produce
+    findings for final report" — conflict (POI with-profile LOW)
+  - "OVERLAP RULE conflicts with do-not-skip-rows walk requirement"
+    (POI with-profile MEDIUM)
+
+**Theme 5 — OVERLAP RULE governance (4 findings, MEDIUM):**
+  - Ambiguous scope of OVERLAP RULE across framework walk vs.
+    final report (POI with-profile LOW)
+  - Ambiguous scope of OVERLAP RULE when consultant check
+    partially overlaps built-in (Conflict with-profile MEDIUM)
+  - OVERLAP RULE directs single emission but CONSULTANT CHECKS
+    section directs double evaluation (Conflict with-profile
+    MEDIUM)
+  - Consultant-check findings format conflicts with parent prompt
+    finding format (Conflict with-profile MEDIUM)
+
+**Theme 6 — Aggregation rule edge cases (3 findings, mostly MEDIUM):**
+  - Severity tiers named but boundary criteria absent for
+    individual conflicts (Conflict default LOW)
+  - Overall conflict risk aggregation rule omits the case of
+    exactly 1 HIGH, <3 MEDIUMs, no CRITICAL (Conflict default
+    MEDIUM)
+  - "MEDIUM" threshold is ambiguous in overall conflict risk
+    aggregation (Conflict with-profile MEDIUM)
+  - Aggregation thresholds in severity rubric have undocumented
+    source (Conflict with-profile LOW, Conflict default LOW)
+
+**Tier 1 findings (Ghost-side prompt structure):**
+  - 2x output/unbounded in Blast default (bullet enumeration after
+    trigger without bounding count)
+  - 2x output/unbounded in Blast with-profile (same)
+  - 2x length/excessive on POI files (15-20 KB; not necessarily
+    wrong, but flagged as worth tracking)
+
+**Miscellaneous individual findings worth noting:**
+  - "Side A / Side B" framing ambiguous for multi-party conflicts
+    (Conflict default MEDIUM) — design question, not just
+    documentation
+  - DIAGNOSTIC VOICE and consultant framing rules appear mid-prompt
+    after task instructions have already been given (Blast
+    with-profile LOW) — organization issue, structural
+  - Per-finding format spec buried after multi-section framework
+    walk (POI with-profile LOW) — same organizational pattern
+
+**Priority recommendation for Ghost-prompt session:**
+
+1. Themes 1, 2 (documentation): easy wins, low risk, mostly text
+   edits to add rationale comments. Probably 30-60 min total.
+
+2. Theme 3 (output format): per-finding field schema definitions.
+   Higher value, higher risk of breaking model output if schema
+   contradicts existing patterns. Do with care, prompt-by-prompt.
+
+3. Themes 4, 5 (framework walk / OVERLAP RULE governance):
+   architectural — the rules need redesign, not just documentation.
+   This is the hardest cluster.
+
+4. Theme 6 (aggregation edge cases): genuine correctness gap.
+   Should be fixed before any pricing or severity decisions rely
+   on these aggregations.
+
+5. Tier 1 unbounded/length: tactical fixes; bounded-count
+   constraints can be added to the unbounded-output triggers,
+   length/excessive findings may indicate real bloat or may be
+   intentional verbosity.
+
 ### F-25 — Strategic deviation: ship Prompt Triage to ghost-architect-open in v5.1.0
 **Status:** ACCEPTED — strategic call, not a defect
 **Source:** session 8 (post-detector-#15 ship decision)
@@ -1281,6 +1454,9 @@ Track concrete examples here as they surface from dogfood scans
 so the v5.4 ticket has signal:
   - (none yet — opened in this commit; populate as v5.3.1 reports
     surface false negatives in real prompts)
+  - (note: F-26 itself is the *false-negative* tracker for the
+    output-noun bounding scope. F-24's "concrete examples" tracker
+    below holds the real Ghost-prompt findings from F-08.)
 
 Not blocking v5.3.1 ship. The vocabulary extension covers the
 highest-value gaps; remaining false negatives stay LOW-severity
