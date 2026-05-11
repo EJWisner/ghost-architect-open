@@ -223,7 +223,26 @@ const DEFECT_DESCRIPTION =
   + 'justification). That is poorDocumentation (different detector), '
   + 'NOT inefficient few-shot. The examples themselves may be fine; '
   + 'the defect is undocumented choices in the surrounding prompt. '
-  + 'Skip it here.';
+  + 'Skip it here.\n\n'
+  + 'SEVERITY GUIDANCE FOR THIS DETECTOR:\n'
+  + 'Few-shot defects split between LOW and MEDIUM depending on the '
+  + 'specific shape. Use these rules:\n'
+  + '  MEDIUM — examples that contradict the instruction text (e.g. '
+  + 'instruction says JSON, example shows prose), placeholder content '
+  + '(e.g. "<example_input>describe issue</example_input>"), or '
+  + 'counter-examples not marked as counter-examples (the model will '
+  + 'imitate them as positives). These do change model behavior and '
+  + 'are correctly MEDIUM.\n'
+  + '  LOW — single illustrative example presented as a pattern (the '
+  + 'model can usually generalize from one), examples that demonstrate '
+  + 'the right pattern but are stylistically narrow (all positive '
+  + 'sentiment, all same length), or examples that work but could be '
+  + 'more diverse. The model still produces correct output; the issue '
+  + 'is example coverage, not example correctness.\n'
+  + 'When in doubt between LOW and MEDIUM, ask: "will this cause the '
+  + 'model to produce a structurally wrong output (MEDIUM) or just a '
+  + 'narrower one (LOW)?" NEVER mark an inefficient-few-shot finding '
+  + 'HIGH.';
 
 const POSITIVE_EXAMPLES =
   '  - A prompt that says "Respond in JSON with keys severity, '
@@ -359,13 +378,15 @@ export async function detect(promptText, filePath, opts = {}) {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Cap LLM-returned severity at MEDIUM. Tier 2 advisories should not
- * emit HIGH; HIGH is reserved for load-bearing structural problems
- * caught by Tier 1.
+ * Validate LLM-returned severity. v5.3 removed the cap-at-MEDIUM
+ * limit — with proper severity calibration in the envelope (see
+ * llmAuditClient.js), the LLM now correctly reserves HIGH for
+ * prompts that are genuinely broken (impossible joint satisfaction,
+ * context overflow, injection patterns disabling safety). Suppressing
+ * HIGH was hiding load-bearing signal from users.
  */
 function capSeverity(s) {
-  if (s === 'HIGH') return 'MEDIUM';
-  if (s === 'MEDIUM' || s === 'LOW') return s;
+  if (s === 'HIGH' || s === 'MEDIUM' || s === 'LOW') return s;
   // Defensive: client validated this already, but fall back to LOW
   // if something slipped through.
   return 'LOW';

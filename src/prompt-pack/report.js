@@ -172,6 +172,16 @@ export function renderReport({ findings, scannedFiles, detectors, scanDate, fold
           lines.push('**Fix:** ' + f.remediation);
           lines.push('');
         }
+        // Surface dedup cross-detector signal. When the dedup pass
+        // suppressed other detectors that fired on the same range,
+        // the keeper carries an `alsoFlaggedBy` array of those
+        // detector IDs. Render it as a single italic line so the
+        // user sees which other angles converged on this defect
+        // without having to read the suppressed findings.
+        if (Array.isArray(f.alsoFlaggedBy) && f.alsoFlaggedBy.length > 0) {
+          lines.push('_Also flagged by: ' + f.alsoFlaggedBy.join(', ') + '_');
+          lines.push('');
+        }
         if (typeof f.confidence === 'number') {
           lines.push('_Confidence: ' + f.confidence + '%_');
           lines.push('');
