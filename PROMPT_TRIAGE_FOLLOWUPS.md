@@ -276,11 +276,75 @@ meta, mistral, alibaba, test), listModelsForPicker() now returns
 behavior against live code paths.
 
 ### F-09 — API call observability for long Claude audits
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 6
 **Why:** Tier 2 audits in the live CLI have no progress indicator.
 Long batches (10+ prompts) feel hung. Add a per-detector or
 per-prompt progress line.
+
+**Resolution (v5.3.1):** Added env-var-gated progress logging in
+src/prompt-pack/index.js (the runAll orchestrator). When
+GHOST_PROGRESS=1 is set in the environment, the orchestrator
+emits stderr lines as Tier 2 and Tier 3 detectors run.
+
+Format and shape:
+  [Tier 2/3 audit] starting 9 detectors on test.md
+  [Tier 2/3 audit] 1/9 ambiguousInstruction...
+  [Tier 2/3 audit] 1/9 ambiguousInstruction done (5340ms, 1 findings)
+  [Tier 2/3 audit] 2/9 underspecifiedConstraints...
+  ...
+  [Tier 2/3 audit] complete: 9 detectors, 28.8s total
+
+Design decisions:
+  - Tier 1 detectors stay silent. They run in microseconds —
+    progress noise would clutter without value. User pain is the
+    Tier 2/3 wait, so that is what gets visible progress.
+  - Per-detector before/after lines (not just after). The "before"
+    line tells the user what is currently running when a detector
+    hangs for many seconds; without it, the user sees the slow
+    period as just dead air.
+  - Cumulative time and finding count in the after line. Helps
+    diagnose which detector is slow (real data from validation:
+    poorDocumentation took 14.8s while most others were 1-2s).
+  - Completion line with total time. Closes the audit cleanly and
+    gives the user a "you can stop watching now" signal.
+
+Production behavior unchanged. Users without GHOST_PROGRESS=1 get
+the same silent execution as before. Setting the env var during
+demos, smoke tests, or large-codebase scans surfaces real progress.
+
+Implementation: single new helper maybeLogProgress() near the top
+of index.js. Three call sites in runAll: before-loop counter,
+inside-loop per-detector start and end, after-loop completion.
+Computes active-Tier-2/3-detector count up front by filtering
+REGISTRY against opts.skipTiers. Tier 3 (integrationMismatch)
+included because it does optional LLM verification when its regex
+flag fires.
+
+Verified end-to-end (May 11 2026) against a realistic prompt
+that triggered 9 Tier 2/3 detectors with a real API:
+
+  Test 1: GHOST_PROGRESS not set
+    -> 4 findings emitted, no stderr output (production preserved)
+  Test 2: GHOST_PROGRESS=1
+    -> 5 findings emitted (one extra due to cache-bypass variant)
+    -> full progress trace visible:
+       * "starting 9 detectors" line
+       * 9 detector start lines (1/9 through 9/9)
+       * 9 detector done lines with per-call ms and finding count
+       * completion line "9 detectors, 28.8s total"
+
+Total API cost: ~$0.40 across 18 calls (9 detectors x 2 cache-
+distinct prompts). Cache layer keeps repeat runs at zero.
+
+Demo value: this is the kind of feature visible in a live demo.
+A sales-call walkthrough of a real codebase scan with progress
+visible reduces buyer anxiety about scan duration.
+
+Future direction (not in scope for v5.3.1): a Ghost CLI flag
+(--progress) that sets GHOST_PROGRESS=1 automatically so users
+do not need to know the env var. Worth a small follow-up ticket
+when the next CLI surface change happens.
 
 ---
 

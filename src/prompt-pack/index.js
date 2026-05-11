@@ -69,6 +69,16 @@ import { dedupFindings } from './dedup.js';
  * tier, order does not matter for correctness, but we keep them in the
  * order chosen for the v1 prompt-pack so output is stable across runs.
  */
+// F-09: optional progress logging for long Tier 2/3 audit batches.
+// Production behavior unchanged — stays silent unless GHOST_PROGRESS=1
+// is set in the environment. Helps users running large scans see that
+// progress is being made rather than wondering if Ghost has hung.
+function maybeLogProgress(message) {
+  if (process.env.GHOST_PROGRESS === '1') {
+    process.stderr.write(message + '\n');
+  }
+}
+
 const REGISTRY = [
   // Tier 1: no LLM judgment about prompt content. Includes pure-regex
   // detectors and token-counting detectors. May still require a target
@@ -136,12 +146,38 @@ export async function runAll(promptText, filePath, opts = {}) {
   const allFindings = [];
   const skipTiers = Array.isArray(opts.skipTiers) ? opts.skipTiers : [];
 
+  // F-09: count active Tier 2/3 detectors for progress reporting.
+  // Tier 1 stays silent because it's fast enough that progress noise
+  // would clutter the output. The user wants to know "is the slow
+  // part progressing", which is Tier 2/3.
+  const slowDetectors = REGISTRY.filter(
+    e => (e.tier === 2 || e.tier === 3) && !skipTiers.includes(e.tier)
+  );
+  const totalSlow = slowDetectors.length;
+  let slowIndex = 0;
+  const auditStartMs = Date.now();
+  if (totalSlow > 0) {
+    maybeLogProgress('[Tier 2/3 audit] starting ' + totalSlow + ' detectors on ' + filePath);
+  }
+
   for (const entry of REGISTRY) {
     if (skipTiers.includes(entry.tier)) continue;
+    const isSlow = (entry.tier === 2 || entry.tier === 3);
+    if (isSlow) {
+      slowIndex++;
+      maybeLogProgress('[Tier 2/3 audit] ' + slowIndex + '/' + totalSlow + ' ' + entry.id + '...');
+    }
+    const callStartMs = Date.now();
     try {
       const findings = await entry.module.detect(promptText, filePath, opts);
       if (Array.isArray(findings)) {
         for (const f of findings) allFindings.push(f);
+      }
+      if (isSlow) {
+        const callMs = Date.now() - callStartMs;
+        const findCount = Array.isArray(findings) ? findings.length : 0;
+        maybeLogProgress('[Tier 2/3 audit] ' + slowIndex + '/' + totalSlow + ' ' + entry.id
+          + ' done (' + callMs + 'ms, ' + findCount + ' findings)');
       }
     } catch (err) {
       allFindings.push({
@@ -156,6 +192,13 @@ export async function runAll(promptText, filePath, opts = {}) {
         confidence: 100,
       });
     }
+  }
+
+  // F-09: emit completion summary if we logged any progress.
+  if (totalSlow > 0) {
+    const totalMs = Date.now() - auditStartMs;
+    const totalSec = (totalMs / 1000).toFixed(1);
+    maybeLogProgress('[Tier 2/3 audit] complete: ' + totalSlow + ' detectors, ' + totalSec + 's total');
   }
 
   // Dedup pass: enforce the documented detector taxonomy. When two
