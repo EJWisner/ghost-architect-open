@@ -219,6 +219,22 @@ function buildEnvelope({ defectName, defectDescription, positiveExamples, negati
   );
 }
 
+
+// F-11: optional debug logging for Tier 2 failures. Production behavior
+// (fail-open silent) is unchanged. When GHOST_DEBUG_TIER2=1 is set in
+// the environment, write a single-line warning to stderr describing what
+// went wrong (parse failure, API error, auth, rate limit, etc.). Useful
+// during development and smoke testing — silent zero-findings can hide
+// real bugs (auth misconfigure, rate-limit, etc.) for hours otherwise.
+function maybeLogTier2Failure(detectorName, modelId, errorText) {
+  if (process.env.GHOST_DEBUG_TIER2 === '1') {
+    process.stderr.write(
+      'Ghost Tier 2 failure [' + detectorName + ' / ' + modelId + ']: '
+      + errorText + '\n'
+    );
+  }
+}
+
 // Standard schema description appended to every detector's envelope.
 const STANDARD_SCHEMA_DESCRIPTION = (
   'Return a JSON object exactly matching this schema:\n'
@@ -432,26 +448,22 @@ export async function auditPromptForDefect(params) {
     }
 
     if (!result.parsed.ok) {
-      // Fail open: log nothing, return zero findings, do not cache.
-      // The user gets no false-positive findings from a broken parse.
-      return {
-        ok: false,
-        findings: [],
-        error: 'Audit response could not be parsed after retry: '
-          + result.parsed.error,
-        usage,
-      };
+      // Fail open: do not cache, return zero findings to the user.
+      // F-11: optionally log to stderr if GHOST_DEBUG_TIER2 is set.
+      const errMsg = 'Audit response could not be parsed after retry: '
+        + result.parsed.error;
+      maybeLogTier2Failure(detectorName, modelId, errMsg);
+      return { ok: false, findings: [], error: errMsg, usage };
     }
 
     const findings = result.parsed.value.findings;
     RESULT_CACHE.set(key, { findings });
     return { ok: true, findings, cached: false, usage };
   } catch (err) {
-    return {
-      ok: false,
-      findings: [],
-      error: 'Audit API call failed: ' + (err.message || String(err)),
-    };
+    // F-11: optionally log to stderr if GHOST_DEBUG_TIER2 is set.
+    const errMsg = 'Audit API call failed: ' + (err.message || String(err));
+    maybeLogTier2Failure(detectorName, modelId, errMsg);
+    return { ok: false, findings: [], error: errMsg };
   } finally {
     release();
   }
