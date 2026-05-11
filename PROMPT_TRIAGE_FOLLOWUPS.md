@@ -296,12 +296,56 @@ Verified end-to-end: fixtures 22 (2 findings) and 23 (3 findings) fire
 as designed; fixture 24 produces zero findings as the clear-control.
 
 ### F-11 — Tier 2 fail-open is too quiet during development
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 6 (auth bug discovery)
 **Why:** Silent zero-findings hid the auth bug for ~3 hours. Consider
 surfacing API errors as synthetic LOW-severity findings or stderr
 warnings in smoke mode. Production behavior (fail-open silent)
 should remain unchanged for end users.
+
+**Resolution (v5.3.1):** Added env-var-gated stderr logging in
+src/prompt-pack/llmAuditClient.js. Two changes:
+
+1. New helper maybeLogTier2Failure(detectorName, modelId, errorText)
+   that writes a single-line warning to stderr ONLY when
+   GHOST_DEBUG_TIER2=1 is set in the environment. Format:
+     "Ghost Tier 2 failure [detector / model]: error-text"
+
+2. Helper called from both Tier 2 failure paths in auditPromptForDefect:
+     - Parse-failure path (JSON parse failed after retry)
+     - Catch-failure path (network error, auth, 404, rate limit, etc.)
+
+The synthetic-finding alternative considered but rejected: emitting
+findings from the detector path pollutes the report layer, conflates
+infrastructure failures with prompt defects, and breaks the "fail
+open silent" guarantee in production. Stderr is the natural channel
+for infrastructure diagnostics — visible during development, easily
+ignored or redirected in production.
+
+Single source of truth: all 9 Tier 2 detectors share llmAuditClient.js,
+so the env-var gate hits everywhere uniformly with no per-detector edits.
+
+Production behavior unchanged. End-user runs without GHOST_DEBUG_TIER2
+get the same silent fail-open as before. Setting the env var during
+smoke testing or development surfaces real infrastructure problems
+(auth misconfig, rate limits, 404s on bad model IDs, parse errors
+indicating prompt schema drift).
+
+Verified end-to-end (May 11 2026):
+  Test 1: invalid model, GHOST_DEBUG_TIER2 NOT set
+    -> 0 findings, no stderr output (production preserved)
+  Test 2: invalid model, GHOST_DEBUG_TIER2=1
+    -> 0 findings (fail-open preserved for user)
+    -> stderr warning visible:
+       "Ghost Tier 2 failure [ambiguousInstruction / nonexistent-
+        model-xyz-9001]: Audit API call failed: 404 {"type":"error",
+        "error":{"type":"not_found_error",...}}"
+
+Total API cost: ~$0.02 (2 prompts to nonexistent models; both return
+404 fast and cheap).
+
+The 3-hour debug session that triggered F-11 would have shown the
+auth error in the first few seconds with this enabled.
 
 ### F-12 — Detector should consolidate findings sharing a root cause
 **Status:** OPEN
