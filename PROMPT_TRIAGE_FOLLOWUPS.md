@@ -35,11 +35,41 @@ prompt fixes identified.
 the bullet list that follows defines the list. Tier 2 fix territory.
 
 ### F-04 — Constraint regex with intervening adjectives
-**Status:** OPEN
+**Status:** RESOLVED — discovered closed during v5.3.1 audit (May 11 2026)
 **Source:** session 5
 **Why:** "in 2-4 plain English steps" doesn't match the constraint anchor
 because of "plain English" between the count and the noun. Tighten regex
 or move to lookahead.
+
+**Resolution (date unknown, pre-v5.3.1):** Two additional regexes in
+unboundedOutput.js CONSTRAINT_MARKERS array (lines ~87-91) handle
+both the range and bare-count cases with intervening adjectives:
+
+  // Range with adjectives between number and unit
+  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+\S+(?:\s+\S+){0,4}\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?)\b/i,
+  // Bare-count with adjectives between number and unit
+  /\b\d+\s+\S+(?:\s+\S+){0,4}\s+(items?|paragraphs?|words?|sentences?|lines?|bullets?|points?|examples?|steps?|sections?|entries|results?|rows?|reasons?|tips?|ideas?|options?|choices?|things?)\b/i,
+
+The \S+(?:\s+\S+){0,4} slot allows 1-5 intervening tokens between
+count and noun. Comments in the regex array explicitly cite F-04's
+example ("2-4 plain English steps") as the case being handled, so the
+fix was deliberate even though the followups doc was never updated.
+
+Verified end-to-end (May 11 2026 audit):
+  - "in 2-4 plain English steps" -> 0 findings (correctly suppressed)
+  - "in 2 steps" -> 0 findings (baseline, no regression)
+  - "5 plain English steps" -> 0 findings (bare-count + adjectives)
+  - "3-5 actionable bullets" -> 0 findings (range + 1 adjective)
+  - "5-10 detailed analytical sentences" -> 0 findings (range + 2 adj)
+  - "list the things you should know" -> 1 finding (unbounded control)
+  - "write me a long essay about cats" -> 1 finding ("long" is not a
+    constraining adjective; unbounded control)
+
+Negative controls confirm the regex changes did not over-suppress.
+
+Process note: F-04 joins F-07 and F-16 as tickets that were OPEN in
+the doc despite the code being fixed. Future followups discipline
+should close tickets in the same commit as the resolving fix.
 
 ### F-05 — Instruction-override regex gap on injection
 **Status:** OPEN
