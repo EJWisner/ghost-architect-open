@@ -68,7 +68,7 @@ const TRIGGERS = [
 // window around a trigger is enough to treat the request as bounded.
 const CONSTRAINT_MARKERS = [
   // Numbers with units: "5 items", "3 paragraphs", "200 words", "4 steps"
-  /\b\d+\s+(items?|paragraphs?|words?|sentences?|lines?|characters?|chars?|bullets?|points?|examples?|steps?|sections?|entries|results?|rows?|reasons?|tips?|ideas?|options?|choices?|things?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
+  /\b\d+\s+(items?|paragraphs?|words?|sentences?|lines?|characters?|chars?|bullets?|points?|examples?|steps?|sections?|entries|results?|rows?|reasons?|tips?|ideas?|options?|choices?|things?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
   // Length adjectives
   /\b(brief|briefly|short|shortly|concise|concisely|terse|tersely|one[- ]sentence|one[- ]line|single[- ]paragraph|single[- ]sentence|two[- ]sentence|few[- ]word)\b/i,
   // Format constraints
@@ -83,15 +83,15 @@ const CONSTRAINT_MARKERS = [
   // Comparative bounds
   /\b(no\s+more\s+than|at\s+most|at\s+least|fewer\s+than|less\s+than|up\s+to|limit\s+to|limited\s+to|maximum\s+of|max\s+of|minimum\s+of|min\s+of)\s+\d+\b/i,
   // Specific format anchors with explicit count
-  /\bin\s+\d+\s+(words?|sentences?|paragraphs?|lines?|characters?|chars?|bullets?|points?|steps?|items?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
-  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
+  /\bin\s+\d+\s+(words?|sentences?|paragraphs?|lines?|characters?|chars?|bullets?|points?|steps?|items?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
+  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
   // Range with adjectives between number and unit: '2-4 plain English steps',
   // '3-5 actionable bullets', '5-10 detailed sentences'. The range and unit may
   // be separated by up to ~30 chars of adjectives/qualifiers.
-  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+\S+(?:\s+\S+){0,4}\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
+  /\b\d+(\s*[-\u2013]\s*|\s+to\s+)\d+\s+\S+(?:\s+\S+){0,4}\s+(words?|sentences?|paragraphs?|lines?|steps?|items?|bullets?|points?|examples?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
   // Bare-count with adjectives between number and unit: '5 plain English steps',
   // '3 actionable bullets'.
-  /\b\d+\s+\S+(?:\s+\S+){0,4}\s+(items?|paragraphs?|words?|sentences?|lines?|bullets?|points?|examples?|steps?|sections?|entries|results?|rows?|reasons?|tips?|ideas?|options?|choices?|things?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
+  /\b\d+\s+\S+(?:\s+\S+){0,4}\s+(items?|paragraphs?|words?|sentences?|lines?|bullets?|points?|examples?|steps?|sections?|entries|results?|rows?|reasons?|tips?|ideas?|options?|choices?|things?|issues?|bugs?|errors?|warnings?|concerns?|risks?|findings?|recommendations?|suggestions?|questions?|features?|requirements?|tasks?|actions?|methods?|functions?|files?|classes|tests?|users?|customers?|products?|rules?|queries?|comments?|processes|services?|endpoints?|modules?|components?|parameters?|events?|jobs?|logs?|metrics?|orders?|payments?|transactions?|accounts?|subscriptions?|reports?|summaries|documents?|articles?|posts?|topics?|categories|labels?|keywords?|terms?|definitions?|insights?|patterns?|trends?|observations?|factors?|dimensions?|characteristics?|pros|cons|advantages?|disadvantages?|benefits?|drawbacks?|tradeoffs?|considerations?|caveats?|limitations?|assumptions?|constraints?|prerequisites?|chapters?|phases?|stages?|iterations?|instances?|cases|samples?|records?)\b/i,
 ];
 
 // How far around a trigger we look for a constraint marker.
@@ -180,6 +180,28 @@ function isBehavioralGuidelineBullet(lines, lineIndex) {
   return false;
 }
 
+/**
+ * Decide whether a trigger line is bounded by an enumeration immediately below it.
+ *
+ * F-03: A line like "List of valid statuses:" followed by a bullet or numbered
+ * list provides the bound — the bullets ARE the requested output, not a
+ * request for the model to generate more. The trigger line must end with a
+ * colon, and the next non-empty line must begin with a bullet or numbered
+ * marker. No scan-distance limit beyond "next non-empty line"; if there's
+ * substantive prose between the trigger and the bullets, the structural
+ * relationship is broken and we let the unbounded finding fire.
+ */
+function hasBoundingEnumerationBelow(lines, lineIndex) {
+  const triggerLine = lines[lineIndex].replace(/\s+$/, '');
+  if (!triggerLine.endsWith(':')) return false;
+  const BULLET_LINE = /^\s*(?:[-*>]\s+|\d+[.)]\s+)/;
+  for (let j = lineIndex + 1; j < lines.length; j++) {
+    if (lines[j].trim().length === 0) continue;
+    return BULLET_LINE.test(lines[j]);
+  }
+  return false;
+}
+
 // ── Public detect() ──────────────────────────────────────────────────────
 
 export async function detect(promptText, filePath, opts = {}) {
@@ -197,7 +219,8 @@ export async function detect(promptText, filePath, opts = {}) {
       const triggerCharIndex = lineOffset + (result.columnInLine - 1);
       const bounded = hasNearbyConstraint(promptText, triggerCharIndex);
       const isBehavioralGuideline = result.isBullet && isBehavioralGuidelineBullet(lines, i);
-      if (!bounded && !isBehavioralGuideline) {
+      const hasBoundingEnum = hasBoundingEnumerationBelow(lines, i);
+      if (!bounded && !isBehavioralGuideline && !hasBoundingEnum) {
         findings.push({
           detector: 'output/unbounded',
           severity: 'LOW',
