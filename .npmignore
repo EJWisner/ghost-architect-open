@@ -17,6 +17,9 @@ tests/
 extract-prompts.mjs
 prompts-extracted/
 
+# Internal calibration / dogfood scan results — not for end users
+audit-reports/
+
 # Internal / Claude Code
 .claude/
 CLAUDE.md

@@ -5,6 +5,47 @@ All notable changes to Ghost Architect Open are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.3.1] - 2026-05-11
+
+### Added
+
+- **First-run email capture.** On the initial CLI invocation, Ghost
+  Architect Open prompts once for an optional email signup. Fully
+  optional: press N to decline, S to skip, or just enter Y and provide
+  an email to opt in. The prompt never re-fires on subsequent runs.
+  This is how we stay in touch with users since npm does not share
+  install data.
+
+  Data collected (only if you opt in): email, anonymous install ID,
+  version. Stored at signup.ghostarchitect.dev and synced to a private
+  Airtable. Never sold, never shared. Opt-out anytime by emailing
+  support@ghostarchitect.dev.
+
+  All failures are silent. Network errors, signal interrupts, or
+  endpoint outages never block the CLI. Local config at
+  `~/.ghost-architect/config.json` records the choice and retries
+  failed syncs on the next run.
+
+## [5.3.0] - 2026-05-11
+
+### Added
+
+- **Prompt Triage free in Open.** The full Prompt Triage detector
+  pack is now available at the Open tier with no gating. Same 16
+  detectors, same accuracy as paid tiers. Only Project Intelligence
+  features (baseline comparison, velocity tracking) remain Pro-only.
+
+### Improved
+
+- **Report clarity.** Deduplication now annotates findings with
+  "Also flagged by:" so you can see which detectors corroborate
+  each issue. Severity recalibration cut MEDIUM noise by 63%
+  (76 → 28) across the calibration corpus while surfacing one new
+  verified HIGH (poi-with-profile.md FILE CITATION RULES conflict).
+  Total findings dropped 52% (116 → 56) with no loss of true
+  positives. Cost per scan rose slightly ($0.41 → $0.43) due to
+  the added cross-detector dedup pass.
+
 ## [5.2.0] - 2026-05-10
 
 ### Added
