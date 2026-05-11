@@ -1526,3 +1526,243 @@ highest-value gaps; remaining false negatives stay LOW-severity
 unbounded-output advisories that users can manually mark as
 intentional.
 
+---
+
+## v5.4 architectural scope: F-12 + F-20 + F-22 cluster
+
+**Scoped in v5.3.1 audit (May 11 2026) as the next-major-version
+architectural work. NOT in scope for v5.3.1 patch release.**
+
+This section consolidates three paired tickets that close together
+when the structural fix lands:
+
+  - **F-12** — Detector should consolidate findings sharing a root cause
+  - **F-20** — Standardize trip-wire vocabulary across Tier 2 detectors
+  - **F-22** — Ad-hoc trip-wire tightening on existing detectors is unsafe
+
+These three are not three independent fixes. They are three
+manifestations of one underlying problem: **Tier 2 detector envelopes
+are owned per-detector with no shared infrastructure, so additions,
+fixes, and cross-fire suppression are local edits that diverge from
+sibling detectors and create regressions when retrofitted ad-hoc.**
+
+### Problem statement (consolidated)
+
+Ghost has 9 Tier 2 LLM-evaluation detectors (8 Tier 2 + 1 Tier 3).
+Each one constructs its own envelope by string-concatenating:
+  - DEFECT_DESCRIPTION (definition prose + "Do NOT flag" bullets)
+  - POSITIVE_EXAMPLES
+  - NEGATIVE_EXAMPLES
+  - STANDARD_SCHEMA_DESCRIPTION (the only shared piece)
+
+Each envelope was written by hand. The "Do NOT flag" bullets that
+delineate detector boundaries drifted from each other across ships.
+The trip-wire vocabulary that prevents cross-fire (F-20) drifted
+even more. F-22 documented what happens when someone tries to fix
+one detector's cross-fire with a local edit: the fix shifts the
+defect to a different fixture rather than eliminating it.
+
+Three concrete symptoms in the wild:
+
+1. **Same-root-cause duplicates (F-12 main symptom).** A prompt
+   defect can trigger multiple detectors that each catch a different
+   surface manifestation. Example from F-12: a missing target
+   specification can fire as ambiguousInstruction ("which target?")
+   AND as underspecifiedConstraints ("target criteria absent") AND
+   as poorDocumentation ("target reference undocumented"). The user
+   sees 3 findings for one defect.
+
+2. **Cross-fire on overlapping territory (F-22 symptom).** When a
+   new detector ships, it sometimes fires on fixtures already
+   handled by an existing detector. The instinct is to suppress the
+   cross-fire by tightening the existing detector's envelope. F-22
+   documents two cases where this caused regression cycles — the
+   edits did not stay local because LLM envelope semantics are
+   global.
+
+3. **Vocabulary drift (F-20 symptom).** Trip-wire vocabulary lists
+   (the marker phrases each detector uses to decide "this finding
+   belongs to a sibling, drop it") are inconsistent across detectors.
+   overloadedPrompt has the most-complete list. underspecifiedConstraints
+   and conflictingInstructions have no trip-wire vocabulary yet (only
+   older "Do NOT flag" bullets that work less reliably).
+
+### Design principles for the fix
+
+**Shared envelope template.** Move envelope construction out of
+per-detector files into llmAuditClient.js. Each detector module
+contributes ONLY:
+  - Its detector-specific defect definition (1-3 sentences)
+  - Its POSITIVE_EXAMPLES (what to flag, with annotations)
+  - Its NEGATIVE_EXAMPLES (what NOT to flag, with annotations)
+  - Its OWNED_SIGNALS list (marker phrases that indicate this
+    detector's territory)
+
+The shared template combines these with:
+  - Standardized "Do NOT flag" rules (one canonical list, parameterized
+    on which detector is asking)
+  - Canonical trip-wire vocabulary table (each detector enumerates
+    which sibling territory it should drop into)
+  - STANDARD_SCHEMA_DESCRIPTION (already shared)
+  - Same-root-cause consolidation instruction (the F-12 win)
+
+**Canonical vocabulary table.** A single source of truth in
+llmAuditClient.js mapping:
+  - Detector ID → own-territory marker phrases
+  - Detector ID → sibling-territory marker phrases (drop-territory)
+
+Adding detector N+1 to the system means adding one row to this
+table, not N edits to existing detectors' envelopes.
+
+**Same-root-cause consolidation instruction (F-12 main win).** A
+new envelope rule that the shared template injects into every
+detector:
+
+  "If multiple ambiguities in this prompt trace to the same
+  authorial mistake (e.g., the same undefined term, the same
+  missing target, the same unspecified scope), emit ONE finding
+  that names the root cause and lists the manifestations. Do not
+  emit one finding per manifestation."
+
+This single rule, applied consistently across all Tier 2 detectors,
+addresses ~40% of dogfood duplicates per F-12's original estimate.
+
+**No ad-hoc retrofit (F-22 rule, codified).** Once the shared
+template lands, the F-22 rule becomes structural rather than
+aspirational: per-detector envelope edits are no longer possible
+because the envelope no longer lives in per-detector files. Cross-
+fire fixes happen by editing the canonical vocabulary table, which
+applies uniformly across all detectors at once.
+
+### Touch points
+
+Files that get modified:
+
+  - `src/prompt-pack/llmAuditClient.js` — add shared envelope
+    template, canonical vocabulary table, same-root-cause
+    consolidation rule
+  - `src/prompt-pack/ambiguousInstruction.js` — strip
+    DEFECT_DESCRIPTION, POSITIVE_EXAMPLES, NEGATIVE_EXAMPLES;
+    contribute only defect definition + examples + OWNED_SIGNALS
+  - `src/prompt-pack/underspecifiedConstraints.js` — same
+  - `src/prompt-pack/conflictingInstructions.js` — same
+  - `src/prompt-pack/undefinedOutputFormat.js` — same
+  - `src/prompt-pack/overloadedPrompt.js` — same
+  - `src/prompt-pack/poorOrganization.js` — same
+  - `src/prompt-pack/inefficientFewShot.js` — same
+  - `src/prompt-pack/poorDocumentation.js` — same
+  - `src/prompt-pack/integrationMismatch.js` — Tier 3 hybrid,
+    same envelope work for the LLM-verify phase
+
+Files that DO NOT change:
+
+  - The actual `detect()` function signature in each detector
+    stays identical. Callers (index.js orchestrator, mode files,
+    smoke harness) see no change.
+  - STANDARD_SCHEMA_DESCRIPTION stays as it is post-F-14.
+  - parseAuditResponse() stays as it is post-F-11/F-14.
+
+Estimated scope: 9 detector files refactored, llmAuditClient.js
+expanded ~300 lines, comprehensive fixture re-run to validate no
+regressions.
+
+### Falsification criteria
+
+The fix is correct when:
+
+  1. **F-12 main test.** A prompt with one authorial mistake produces
+     ONE finding even when multiple Tier 2 detectors would have
+     historically fired on it. Validated against the F-08 dogfood
+     corpus: the 59-finding scan should drop substantially under
+     the consolidation rule (estimate: down to ~35-40 findings).
+
+  2. **F-20 vocabulary consistency.** Each detector's declared
+     OWNED_SIGNALS appears in exactly one detector's table entry.
+     No vocabulary drift across detectors.
+
+  3. **F-22 cross-fire stability.** After the shared template lands,
+     shipping detector #16+ should produce zero cross-fire incidents
+     on existing detectors. (Detector #12 ship achieved this; the
+     shared template should make it the durable steady-state.)
+
+  4. **No false negative regression.** Existing fixtures that fire
+     correctly today must continue to fire correctly after the
+     refactor. Smoke harness must pass 100% on the regression
+     fixtures.
+
+  5. **No false positive regression.** Existing fixtures that stay
+     silent today must continue to stay silent. The shared template
+     must not be more aggressive than the sum of its per-detector
+     parts.
+
+If F-12 lands and cross-fires still recur, the issue is deeper than
+envelope architecture — likely the LLM-augmented detector pattern
+itself needs revisiting. Track this when v5.4 work begins.
+
+### Sequencing
+
+This is a multi-day refactor. Suggested phases:
+
+**Phase 1 — Canonical vocabulary table only.** Build the table in
+llmAuditClient.js. Each detector reads its OWNED_SIGNALS and
+SIBLING_SIGNALS from the table but keeps its existing envelope.
+No behavior change yet. ~2-3 hours work, validates the table
+design before committing to envelope refactor.
+
+**Phase 2 — Shared envelope template.** Build the template in
+llmAuditClient.js. One detector (probably ambiguousInstruction
+because it has the most envelope-test coverage) gets refactored
+to consume the template. Validate with full smoke + dogfood. If
+clean, proceed.
+
+**Phase 3 — Refactor remaining 8 detectors.** Each detector's
+envelope work gets converted to template-consumption pattern.
+One commit per detector for clean revert paths. Smoke + dogfood
+after each.
+
+**Phase 4 — Same-root-cause consolidation rule.** Add the
+consolidation instruction to the shared template. This is the F-12
+main win. Validate by re-running F-08 dogfood and confirming
+substantial finding-count reduction. Smoke for regression.
+
+**Phase 5 — Close F-12, F-20, F-22 together.** Update
+PROMPT_TRIAGE_FOLLOWUPS.md to mark all three RESOLVED with
+references to the v5.4 commits.
+
+### Open questions to resolve before phase 1
+
+  - Where does OWNED_SIGNALS live syntactically? A constant in
+    llmAuditClient.js? A getter exported from each detector? The
+    decision affects how clean the per-detector files become.
+
+  - Same-root-cause consolidation: how does the LLM decide what
+    counts as "same root cause"? Pure prompt instruction, or
+    structural support (e.g., consolidation happens post-detection
+    in dedup.js)? F-12's original ticket leans toward prompt
+    instruction; dedup-layer consolidation is an alternative worth
+    considering.
+
+  - How to handle detectors that legitimately should co-fire?
+    Per F-21 ("Legitimate detector co-firing is intentional, not
+    a defect"), some prompt defects genuinely benefit from
+    multiple detector perspectives. The consolidation rule must
+    not over-suppress.
+
+Resolving these takes ~30 minutes of design conversation before
+phase 1 begins.
+
+### Why this is the v5.3.1 stopping point
+
+Three paired tickets, ~9 file refactor, multi-day scope, design
+decisions still open. This is the wrong work to do in flow at the
+end of a multi-hour quality-fix audit session. It needs:
+
+  - Fresh focus on the design questions above
+  - Methodical phase-by-phase execution
+  - Regression validation between phases
+  - Dedicated time for the dogfood re-run that validates the F-12
+    main win
+
+v5.3.1 ships with F-12, F-20, F-22 properly scoped as this v5.4
+section. Tomorrow-morning-you starts the architectural work with a
+real spec instead of cold context.
