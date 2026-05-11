@@ -88,6 +88,7 @@ const SPECIFIC_DETECTORS = new Set([
   'inefficientFewShot',
   'tokenLimitContextOverflow',
   'tokenLimitExcessive',
+  'integrationMismatch',       // v5.3: Tier 3 hybrid, narrowly-scoped to declared integration contracts
 ]);
 
 // Detectors that get suppressed when a SPECIFIC detector fires on the
@@ -148,6 +149,109 @@ function ordinalToInt(word) {
     sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
   };
   return map[String(word || '').toLowerCase()] || null;
+}
+
+/**
+ * Normalize a section-name candidate string into a comparable key.
+ *
+ * Two section references should hash to the same key when they refer
+ * to the same logical section even if cased/spaced/punctuated differently:
+ *
+ *   "RATING RUBRICS section"           → RATING_RUBRICS
+ *   "the RATING RUBRICS"               → RATING_RUBRICS
+ *   "Rating Rubrics section"           → RATING_RUBRICS
+ *   "RATING RUBRICS section, SEVERITY" → RATING_RUBRICS  (we key on outer section name)
+ *
+ * Strips: leading articles ("the", "a"), trailing comma-clauses, trailing
+ * quoted snippets, trailing parentheticals.
+ *
+ * Returns null if the candidate doesn't look like a section name (too
+ * short, has lowercase-only words that aren't proper sections, etc.).
+ */
+function normalizeSectionName(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  let s = raw.trim();
+  // Strip surrounding quotes if any.
+  s = s.replace(/^['"‘“]|['"’”]$/g, '').trim();
+  // Drop leading article.
+  s = s.replace(/^(?:the|a|an)\s+/i, '').trim();
+  // Truncate at first comma or parenthesis — we want only the outer name.
+  s = s.split(/[,(]/)[0].trim();
+  // Drop a trailing "section" / "subsection" / "block" word.
+  s = s.replace(/\s+(?:section|subsection|sub-section|block)$/i, '').trim();
+  // If nothing left, bail.
+  if (s.length < 3) return null;
+  // Words → uppercase + underscores. Strip non-word chars.
+  const key = s.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!key || key.length < 3) return null;
+  return key;
+}
+
+/**
+ * Try to extract a section-anchored location from a free-form hint
+ * string. Returns one of:
+ *
+ *   { kind: 'section', name: 'NORMALIZED_NAME' }
+ *   { kind: 'section-pair', names: ['A', 'B'] }
+ *   null
+ *
+ * Patterns it recognizes (case-insensitive on the trigger word, but
+ * the section NAME is preserved for normalization):
+ *
+ *   "X section vs Y section"                       → section-pair
+ *   "X section vs. Y section"                      → section-pair
+ *   "X section and Y section"                      → section-pair (cross-ref)
+ *   "X section, under Y"                           → section (X)
+ *   "X section"                                    → section
+ *   "the X section"                                → section
+ *   "opening paragraph" / "opening sentence"       → section (OPENING)
+ *   "top of (the )?prompt" / "top comment block"   → section (TOP)
+ *   "end of (the )?prompt"                         → section (END)
+ *
+ * Used as a fallback inside normalizeLocation when no line/sentence/
+ * instruction range is found.
+ */
+function extractSectionLocation(haystack) {
+  if (!haystack) return null;
+
+  // "X section vs Y section" / "X section vs. Y section" / "X section and Y section"
+  // The section names are runs of capitalized words and may include spaces, hyphens, ampersands.
+  // Be conservative: only match when both sides have an ALL-CAPS-ish chunk to avoid
+  // grabbing arbitrary prose.
+  const pairM = haystack.match(
+    /([A-Z][A-Z0-9 &\-_/.’']{2,}?)\s+section\s+(?:vs\.?|and)\s+([A-Z][A-Z0-9 &\-_/.’']{2,}?)\s+section/i
+  );
+  if (pairM) {
+    const a = normalizeSectionName(pairM[1]);
+    const b = normalizeSectionName(pairM[2]);
+    if (a && b && a !== b) return { kind: 'section-pair', names: [a, b].sort() };
+    if (a && b && a === b) return { kind: 'section', name: a };
+  }
+
+  // Anchor phrases that mean "the start of the prompt":
+  //   "opening paragraph", "opening sentence", "first sentence of the prompt",
+  //   "top of the prompt", "top comment block", "preamble".
+  if (/\b(?:opening\s+(?:paragraph|sentence|line)|top\s+(?:of\s+(?:the\s+)?prompt|comment\s+block)|preamble)\b/i.test(haystack)) {
+    return { kind: 'section', name: 'OPENING' };
+  }
+
+  // Anchor phrases that mean "the end of the prompt":
+  if (/\bend\s+of\s+(?:the\s+)?prompt\b|\bclosing\s+(?:paragraph|sentence|line)\b/i.test(haystack)) {
+    return { kind: 'section', name: 'END' };
+  }
+
+  // "X section" / "the X section" / "X section, ..." / "X subsection".
+  // Same conservatism: only match ALL-CAPS-ish section names so we don't
+  // grab lowercase prose like "the next section".
+  const sectionM = haystack.match(
+    /\b([A-Z][A-Z0-9 &\-_/.’']{2,}?)\s+(?:section|subsection|sub-section|block)\b/
+  );
+  if (sectionM) {
+    const name = normalizeSectionName(sectionM[1]);
+    if (name) return { kind: 'section', name };
+  }
+
+  return null;
 }
 
 /**
@@ -245,6 +349,17 @@ function normalizeLocation(finding) {
     if (n) return { kind: 'range', start: n, end: n };
   }
 
+  // Section-anchored fallback. Tier 2 LLM detectors emit hints like
+  // "RATING RUBRICS section", "SEVERITY section, under RATING RUBRICS",
+  // "GROUNDING RULES section vs. FILE CITATION RULES section". The
+  // range/sentence/ordinal regexes above don't match these. Without
+  // this fallback, dedup gives up on most Tier 2 findings (they all
+  // return 'unknown' and never group). This anchors them to a
+  // normalized section name so two findings on the same section can
+  // group together.
+  const sectionLoc = extractSectionLocation(haystack);
+  if (sectionLoc) return sectionLoc;
+
   return { kind: 'unknown' };
 }
 
@@ -252,16 +367,45 @@ function normalizeLocation(finding) {
  * Return true if two normalized locations overlap.
  *
  * Two ranges overlap if they intersect numerically. A 'whole'-prompt
- * location overlaps with anything that has a known range. 'unknown'
- * locations don't overlap with anything (we err on the side of
- * keeping findings rather than incorrectly grouping them).
+ * location overlaps with anything that has a known range (or section).
+ * 'unknown' locations don't overlap with anything (we err on the side
+ * of keeping findings rather than incorrectly grouping them).
+ *
+ * Section-anchored locations (kind: 'section' or 'section-pair')
+ * overlap with each other when they share a normalized section name.
+ * They do NOT overlap with 'range' locations — different dimensions
+ * (line numbers vs section names), no safe way to compare. This
+ * means a Tier 1 line-anchored finding and a Tier 2 section-anchored
+ * finding on the same conceptual region won't dedup, which is the
+ * conservative choice (keep both rather than risk wrong merge).
  */
 export function locationsOverlap(a, b) {
   if (!a || !b) return false;
   if (a.kind === 'unknown' || b.kind === 'unknown') return false;
+
+  // Whole-prompt locations overlap with anything that has a definite
+  // anchor (range, section, section-pair, or another 'whole').
   if (a.kind === 'whole' || b.kind === 'whole') return true;
-  // Both 'range': numeric intersection.
-  return a.start <= b.end && b.start <= a.end;
+
+  // Same dimension: both ranges — numeric intersection.
+  if (a.kind === 'range' && b.kind === 'range') {
+    return a.start <= b.end && b.start <= a.end;
+  }
+
+  // Same dimension: both section-anchored. Build the set of section
+  // names each one covers, then check intersection.
+  if ((a.kind === 'section' || a.kind === 'section-pair')
+      && (b.kind === 'section' || b.kind === 'section-pair')) {
+    const aNames = a.kind === 'section' ? [a.name] : a.names;
+    const bNames = b.kind === 'section' ? [b.name] : b.names;
+    for (const an of aNames) {
+      if (bNames.includes(an)) return true;
+    }
+    return false;
+  }
+
+  // Mixed dimensions (range vs section). No safe comparison. Keep both.
+  return false;
 }
 
 /**
@@ -423,6 +567,8 @@ export function dedupFindings(allFindings) {
 export {
   classifyDetector,
   normalizeLocation,
+  normalizeSectionName,
+  extractSectionLocation,
   groupByLocation,
   selectKeepers,
   ordinalToInt,

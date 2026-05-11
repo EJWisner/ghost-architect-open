@@ -235,7 +235,27 @@ const DEFECT_DESCRIPTION =
   + 'A short, focused production prompt that has been tightened '
   + 'for token efficiency is not poorly documented if its choices '
   + 'are self-evident. Documentation should match the maintenance '
-  + 'risk; a stable, simple prompt does not need a verbose header.';
+  + 'risk; a stable, simple prompt does not need a verbose header.\n\n'
+  + 'SEVERITY SKEW FOR THIS DETECTOR:\n'
+  + 'Poor-documentation defects almost always score LOW. The whole '
+  + 'category is about how a human maintainer reads the prompt, NOT '
+  + 'about how the model executes it. An undefined identifier '
+  + '("the consultant profile registry," "Tier 3 partner," '
+  + '"Bumblebee tier") does not stop the model from producing '
+  + 'correct output — the model treats the identifier as data and '
+  + 'works with whatever surrounding context it has. The defect is '
+  + 'that a future maintainer cannot safely modify the prompt '
+  + 'because the rationale for the choice is missing. That is a '
+  + 'human-side maintenance burden, not a model-behavior problem. '
+  + 'Default every poor-documentation finding to LOW. The ONLY case '
+  + 'for MEDIUM here is when the undocumented choice creates an '
+  + 'observable model-behavior gap: a magic threshold that the '
+  + 'model will apply inconsistently across runs because the prompt '
+  + 'gives no decision criteria (in which case the finding is '
+  + 'really underspecifiedConstraints, not poorDocumentation — '
+  + 'drop it here and let that detector catch it). If you cannot '
+  + 'articulate a model-behavior consequence, the finding is LOW. '
+  + 'NEVER mark a poor-documentation finding HIGH.';
 
 const POSITIVE_EXAMPLES =
   '  - A customer-support triage prompt with rules like "escalate '
@@ -371,13 +391,15 @@ export async function detect(promptText, filePath, opts = {}) {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Cap LLM-returned severity at MEDIUM. Tier 2 advisories should not
- * emit HIGH; HIGH is reserved for load-bearing structural problems
- * caught by Tier 1.
+ * Validate LLM-returned severity. v5.3 removed the cap-at-MEDIUM
+ * limit — with proper severity calibration in the envelope (see
+ * llmAuditClient.js), the LLM now correctly reserves HIGH for
+ * prompts that are genuinely broken (impossible joint satisfaction,
+ * context overflow, injection patterns disabling safety). Suppressing
+ * HIGH was hiding load-bearing signal from users.
  */
 function capSeverity(s) {
-  if (s === 'HIGH') return 'MEDIUM';
-  if (s === 'MEDIUM' || s === 'LOW') return s;
+  if (s === 'HIGH' || s === 'MEDIUM' || s === 'LOW') return s;
   // Defensive: client validated this already, but fall back to LOW
   // if something slipped through.
   return 'LOW';

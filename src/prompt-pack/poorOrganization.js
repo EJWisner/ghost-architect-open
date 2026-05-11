@@ -183,7 +183,23 @@ const DEFECT_DESCRIPTION =
   + '(different detector), NOT poor organization. This detector '
   + 'cares about WHERE content sits; poorDocumentation cares '
   + 'whether non-obvious choices have stated rationale. Skip the '
-  + 'latter here.';
+  + 'latter here.\n\n'
+  + 'SEVERITY SKEW FOR THIS DETECTOR:\n'
+  + 'Poor-organization defects almost always score LOW. The whole '
+  + 'category is about content arrangement, not content correctness. '
+  + 'Modern LLMs absorb the full prompt before generating output — '
+  + 'they do not read top-to-bottom and forget what came earlier. So '
+  + '"the role is defined at the end" or "the rules are scattered" '
+  + 'almost never changes what the model produces; it changes what a '
+  + 'human maintainer experiences when reading the prompt. Default '
+  + 'every poor-organization finding to LOW. The ONLY case for MEDIUM '
+  + 'here is when you can name a SPECIFIC behavioral consequence: an '
+  + 'inverted dependency that uses a term BEFORE the prompt defines '
+  + 'it (the model may produce inconsistent output until it sees the '
+  + 'definition); examples shown without framing that the model may '
+  + 'imitate as positive even when the prompt later says "do not do '
+  + 'this." If you cannot articulate a model-behavior consequence, '
+  + 'the finding is LOW. NEVER mark a poor-organization finding HIGH.';
 
 const POSITIVE_EXAMPLES =
   '  - A 2,000-token prompt where lines 1-50 give detailed task '
@@ -315,13 +331,15 @@ export async function detect(promptText, filePath, opts = {}) {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Cap LLM-returned severity at MEDIUM. Tier 2 advisories should not
- * emit HIGH; HIGH is reserved for load-bearing structural problems
- * caught by Tier 1.
+ * Validate LLM-returned severity. v5.3 removed the cap-at-MEDIUM
+ * limit — with proper severity calibration in the envelope (see
+ * llmAuditClient.js), the LLM now correctly reserves HIGH for
+ * prompts that are genuinely broken (impossible joint satisfaction,
+ * context overflow, injection patterns disabling safety). Suppressing
+ * HIGH was hiding load-bearing signal from users.
  */
 function capSeverity(s) {
-  if (s === 'HIGH') return 'MEDIUM';
-  if (s === 'MEDIUM' || s === 'LOW') return s;
+  if (s === 'HIGH' || s === 'MEDIUM' || s === 'LOW') return s;
   // Defensive: client validated this already, but fall back to LOW
   // if something slipped through.
   return 'LOW';
