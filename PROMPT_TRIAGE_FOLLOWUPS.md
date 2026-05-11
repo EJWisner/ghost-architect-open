@@ -55,12 +55,38 @@ suppress strayLineMarker findings even though they signal example
 framing. Extend the suppression keyword list.
 
 ### F-07 — Open models in registry (Llama, Mistral, Qwen)
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 3
 **Why:** Currently only Anthropic, OpenAI, and Gemini are in the
 model registry. Open-weight model entries would broaden detector
 coverage without needing API integration (heuristic strategy is
 fine for these).
+
+**Resolution (v5.3.1):** Added 6 open-weight model entries spanning
+Meta Llama (llama-4-maverick 256K, llama-3-3-70b 128K), Mistral
+(mistral-large-3 256K, mistral-small-3 32K), and Alibaba Qwen
+(qwen-3-5 256K, qwen-2-5 128K). All use the heuristic tokenizer
+strategy.
+
+The file header comment that previously stated open models were
+"intentionally omitted" was rewritten. The original concern was
+that heuristic counts would imply deceptive precision. The two
+tokenLimit detectors (tokenLimitExcessive, tokenLimitContextOverflow)
+have since implemented heuristic severity downgrade (MEDIUM→LOW for
+excessive, HIGH→MEDIUM for overflow) plus explicit "estimated via
+heuristic" disclosure in user-facing finding text. With those in
+place, heuristic-based open-model entries no longer imply false
+precision — the user sees both a softer severity and an explicit
+uncertainty disclosure.
+
+Validated end-to-end against both detectors with controlled
+prompts: heuristic-downgraded severity fires correctly on the
+smallest open-model window (mistral-small-3 32K), silent on
+windows where prompts are under threshold (128K-256K). Registry
+public API verified — getModel() resolves all 6 IDs,
+getModelsByFamily() returns 7 families (anthropic, openai, google,
+meta, mistral, alibaba, test), listModelsForPicker() now returns
+16 production models.
 
 ### F-08 — Ghost-on-Ghost full POI/Blast/Conflict scan
 **Status:** PARTIAL (defensive POI test done, full scan still pending)
@@ -168,13 +194,30 @@ concern, diagnose what's actually noisy before reaching for
 consolidation.
 
 ### F-16 — Reconsider MEDIUM severity cap on ambiguousInstruction
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.0 (commit eb875d0, May 11 2026)
 **Source:** session 6 review
 **Why:** Several findings (POI severity-vs-complexity mapping, Blast
 walk-each-one mismatch, Conflict consultant-checks-vs-format mismatch)
 warrant HIGH. The cap was a defensive choice for a brand-new Tier 2
 detector. Lift once we trust accuracy on a wider sample (~50+ findings
 across diverse prompts).
+
+**Resolution (v5.3.0):** Removed the HIGH→MEDIUM cap across all 9 Tier 2
+detectors (ambiguousInstruction, conflictingInstructions, inefficientFewShot,
+integrationMismatch, overloadedPrompt, poorDocumentation, poorOrganization,
+undefinedOutputFormat, underspecifiedConstraints). The capSeverity
+function in each detector was rewritten to pass HIGH through unchanged
+rather than downgrade it. The accompanying envelope-level severity
+calibration in llmAuditClient.js (+68 lines) ensures the LLM reserves
+HIGH for genuinely-broken prompts: impossible joint satisfaction,
+context overflow, injection patterns disabling safety. Suppressing HIGH
+was hiding load-bearing signal from users.
+
+Evidence base satisfied F-16's "~50+ findings across diverse prompts"
+criterion: v5.3.0 production corpus run surfaced 56 findings across 7+
+prompt files, with 1 verified HIGH (poi-with-profile.md FILE CITATION
+RULES conflict — exactly the kind of broken-prompt signal the original
+F-16 examples described).
 
 ### F-17 — Substantive Ghost prompt fixes (NOT detector work)
 **Status:** OPEN — separate prompt-quality session

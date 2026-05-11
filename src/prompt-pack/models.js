@@ -7,11 +7,11 @@
  * length/excessive; eventually tokenLimitContextOverflow and
  * tokenLimitExcessive).
  *
- * Scope (v1): Claude, GPT, and Gemini families. Open models (Llama,
- * Mistral, Qwen, etc.) are intentionally omitted. Without an accurate
- * offline tokenizer for each open-model family, listing them in this
- * registry would imply a precision the heuristic cannot deliver.
- * Revisit when a unified open-model tokenizer story is viable.
+ * Scope: Claude, GPT, Gemini, plus open-weight families (Llama, Mistral,
+ * Qwen). Open-weight families use the heuristic tokenizer strategy. The
+ * tokenLimit detectors handle heuristic uncertainty by downgrading severity
+ * and explicitly disclosing "estimated via heuristic" in finding text, so
+ * the user is never shown deceptive precision. F-07 closed in v5.3.1.
  *
  * Tokenizer strategies:
  *   'tiktoken'   - use gpt-tokenizer for accurate BPE counts (OpenAI)
@@ -46,6 +46,22 @@ const MODELS = [
   // Google Gemini family. No mature offline tokenizer; heuristic only.
   { id: 'gemini-2-5-pro',        family: 'google',    displayName: 'Gemini 2.5 Pro',        contextWindow: 2000000, tokenizerStrategy: 'heuristic' },
   { id: 'gemini-2-5-flash',      family: 'google',    displayName: 'Gemini 2.5 Flash',      contextWindow: 1000000, tokenizerStrategy: 'heuristic' },
+
+  // Meta Llama family. Heuristic only. Maverick window picked at 256K to
+  // reflect the reliable working range; Scout's nominal 10M is gated by
+  // "lost in the middle" effects and is intentionally not the chosen
+  // threshold here. Falsely warning is safer than falsely clearing.
+  { id: 'llama-4-maverick',      family: 'meta',      displayName: 'Llama 4 Maverick',      contextWindow: 256000,  tokenizerStrategy: 'heuristic' },
+  { id: 'llama-3-3-70b',         family: 'meta',      displayName: 'Llama 3.3 70B',         contextWindow: 128000,  tokenizerStrategy: 'heuristic' },
+
+  // Mistral AI family. Heuristic only.
+  { id: 'mistral-large-3',       family: 'mistral',   displayName: 'Mistral Large 3',       contextWindow: 256000,  tokenizerStrategy: 'heuristic' },
+  { id: 'mistral-small-3',       family: 'mistral',   displayName: 'Mistral Small 3',       contextWindow: 32000,   tokenizerStrategy: 'heuristic' },
+
+  // Alibaba Qwen family. Heuristic only. Qwen 3.5 native window is 256K
+  // (extendable to 1M via YaRN); 256K used here as the unmodified default.
+  { id: 'qwen-3-5',              family: 'alibaba',   displayName: 'Qwen 3.5',              contextWindow: 256000,  tokenizerStrategy: 'heuristic' },
+  { id: 'qwen-2-5',              family: 'alibaba',   displayName: 'Qwen 2.5',              contextWindow: 128000,  tokenizerStrategy: 'heuristic' },
 
   // Test-only entries. Marked testOnly: true so listModelsForPicker()
   // hides them from the end-user CLI prompt. Smoke tests and the
