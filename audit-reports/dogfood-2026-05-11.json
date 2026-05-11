@@ -1,0 +1,586 @@
+[
+  {
+    "file": "01-chat-system.md",
+    "chars": 1188,
+    "total": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "detectors": {},
+    "findings": []
+  },
+  {
+    "file": "02-poi-default.md",
+    "chars": 15546,
+    "total": 10,
+    "high": 0,
+    "medium": 3,
+    "low": 7,
+    "detectors": {
+      "ambiguousInstruction": 3,
+      "conflictingInstructions": 1,
+      "undefinedOutputFormat": 2,
+      "poorDocumentation": 3,
+      "length/excessive": 1
+    },
+    "findings": [
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "MEDIUM",
+        "title": "Ambiguous scope of 'findings emitted during the framework walk'",
+        "location": {
+          "hint": "paragraph beginning 'Every finding emitted'"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "Ambiguous referent in 'prefer the consultant's own phrasing'",
+        "location": {
+          "hint": "finding name instruction near 'Give it a short memorable name'"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "Ambiguous scope of 'files provided in this pass'",
+        "location": {
+          "hint": "GROUNDING RULES, first bullet"
+        }
+      },
+      {
+        "detector": "conflictingInstructions",
+        "severity": "MEDIUM",
+        "title": "Framework walk must be internal-only AND must appear before report",
+        "location": {
+          "hint": "HOW TO WALK THE FRAMEWORK, rule 4"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "Finding body has no field schema — model invents internal structure",
+        "location": {
+          "hint": "finding format instructions section"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "LOW",
+        "title": "REMEDIATION SUMMARY table schema mixes defined and undefined fields",
+        "location": {
+          "hint": "REMEDIATION SUMMARY section"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented effort-hour ranges (2–6, 8–20, 24–60, 60+)",
+        "location": {
+          "hint": "EFFORT section under RATING RUBRICS"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Opaque consultant profile registry reference",
+        "location": {
+          "hint": "finding naming paragraph, near end"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented priority tiebreak category ordering",
+        "location": {
+          "hint": "PRIORITY section under RATING RUBRICS"
+        }
+      },
+      {
+        "detector": "length/excessive",
+        "severity": "LOW",
+        "title": "Excessive prompt length",
+        "location": null
+      }
+    ]
+  },
+  {
+    "file": "03-poi-with-profile.md",
+    "chars": 19805,
+    "total": 15,
+    "high": 0,
+    "medium": 3,
+    "low": 12,
+    "detectors": {
+      "ambiguousInstruction": 3,
+      "underspecifiedConstraints": 1,
+      "conflictingInstructions": 2,
+      "undefinedOutputFormat": 2,
+      "poorOrganization": 3,
+      "poorDocumentation": 3,
+      "length/excessive": 1
+    },
+    "findings": [
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "Ambiguous scope of OVERLAP RULE across framework walk vs. final report",
+        "location": {
+          "hint": "OVERLAP RULE section"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "Ambiguous referent of 'it' in before/after code block instruction",
+        "location": {
+          "hint": "code block format instruction"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "Ambiguous instruction: 'name findings in the consultant's vocabulary'",
+        "location": {
+          "hint": "CONSULTANT CONTEXT section, second sentence"
+        }
+      },
+      {
+        "detector": "underspecifiedConstraints",
+        "severity": "LOW",
+        "title": "Severity-to-billing mapping has unresolved ambiguity for LOW+High complexity",
+        "location": {
+          "hint": "SEVERITY-TO-BILLING MAPPING section"
+        }
+      },
+      {
+        "detector": "conflictingInstructions",
+        "severity": "LOW",
+        "title": "Framework walk is both internal scratchpad and must produce findings for final report",
+        "location": {
+          "hint": "HOW TO WALK THE FRAMEWORK, step 4"
+        }
+      },
+      {
+        "detector": "conflictingInstructions",
+        "severity": "MEDIUM",
+        "title": "OVERLAP RULE conflicts with 'do not skip rows' walk requirement",
+        "location": {
+          "hint": "OVERLAP RULE paragraph"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "Finding internal structure undefined despite detailed output spec",
+        "location": {
+          "hint": "\"For each finding:\" section"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "REMEDIATION SUMMARY table schema partially undefined for cost calculation",
+        "location": {
+          "hint": "REMEDIATION SUMMARY section"
+        }
+      },
+      {
+        "detector": "poorOrganization",
+        "severity": "LOW",
+        "title": "Consultant checks duplicate earlier PRIORITIES/ANTI-PATTERNS/RED FLAGS sections",
+        "location": {
+          "hint": "CONSULTANT CHECKS section"
+        }
+      },
+      {
+        "detector": "poorOrganization",
+        "severity": "LOW",
+        "title": "GROUNDING RULES and ALREADY-FIXED-CODE RULE split from FILE CITATION RULES with GROUNDING EXAMPLES between them",
+        "location": {
+          "hint": "GROUNDING RULES through GROUNDING EXAMPLES block"
+        }
+      },
+      {
+        "detector": "poorOrganization",
+        "severity": "LOW",
+        "title": "Per-finding format spec buried after multi-section framework walk and output instructions",
+        "location": {
+          "hint": "final prose block before REMEDIATION SUMMARY"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented effort hour ranges (2–6, 8–20, 24–60, 60+)",
+        "location": {
+          "hint": "EFFORT section under RATING RUBRICS"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "'consultant profile registry' identifier undocumented",
+        "location": {
+          "hint": "Profile line in CONSULTANT CONTEXT"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "PRIORITY sort tiebreaker category order undocumented",
+        "location": {
+          "hint": "PRIORITY section under RATING RUBRICS"
+        }
+      },
+      {
+        "detector": "length/excessive",
+        "severity": "LOW",
+        "title": "Excessive prompt length",
+        "location": null
+      }
+    ]
+  },
+  {
+    "file": "04-blast-default.md",
+    "chars": 5392,
+    "total": 10,
+    "high": 0,
+    "medium": 3,
+    "low": 7,
+    "detectors": {
+      "ambiguousInstruction": 2,
+      "undefinedOutputFormat": 3,
+      "poorDocumentation": 3,
+      "output/unbounded": 2
+    },
+    "findings": [
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "MEDIUM",
+        "title": "\"analyze that target\" — scope of analysis is ambiguous",
+        "location": {
+          "hint": "second sentence of second paragraph"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "\"explain WHY it's affected\" — scope of causal chain is unclear",
+        "location": {
+          "hint": "paragraph after the five analysis sections"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "Blast-radius analysis sections lack defined output structure",
+        "location": {
+          "hint": "\"Analyze and report in this exact order\" section"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "ROLLBACK PLAN sub-sections lack defined item structure",
+        "location": {
+          "hint": "\"Pre-Change Snapshot\" and \"Who to Notify\" sub-sections"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "LOW",
+        "title": "\"Smoke Test After Rollback\" list has no structural spec for each item",
+        "location": {
+          "hint": "\"Smoke Test After Rollback\" sub-section"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Complexity tier hour ranges have no documented origin",
+        "location": {
+          "hint": "REMEDIATION PLAN, effort/complexity bullet"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Smoke test selection criteria are partially opaque",
+        "location": {
+          "hint": "Smoke Test After Rollback section"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Source reference 'buildSystemBlast(DEFAULT_RATES, null)' undocumented",
+        "location": {
+          "hint": "header comment, Source line"
+        }
+      },
+      {
+        "detector": "output/unbounded",
+        "severity": "LOW",
+        "title": "Unbounded output request",
+        "location": {
+          "line": 41,
+          "column": 3
+        }
+      },
+      {
+        "detector": "output/unbounded",
+        "severity": "LOW",
+        "title": "Unbounded output request",
+        "location": {
+          "line": 61,
+          "column": 1
+        }
+      }
+    ]
+  },
+  {
+    "file": "05-blast-with-profile.md",
+    "chars": 9651,
+    "total": 8,
+    "high": 0,
+    "medium": 2,
+    "low": 6,
+    "detectors": {
+      "undefinedOutputFormat": 1,
+      "ambiguousInstruction": 1,
+      "poorOrganization": 1,
+      "poorDocumentation": 3,
+      "output/unbounded": 2
+    },
+    "findings": [
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "Consultant check findings have no specified output structure",
+        "location": {
+          "hint": "CONSULTANT CHECKS section"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "MEDIUM",
+        "title": "Ambiguous scope of 'analyze that target' when target is a change set",
+        "location": {
+          "hint": "paragraph beginning 'The developer has identified'"
+        }
+      },
+      {
+        "detector": "poorOrganization",
+        "severity": "LOW",
+        "title": "DIAGNOSTIC VOICE and consultant framing rules appear mid-prompt after task instructions have already been given",
+        "location": {
+          "hint": "DIAGNOSTIC VOICE paragraph"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Consultant profile registry identifier undocumented",
+        "location": {
+          "hint": "Profile/identifier line in CONSULTANT CONTEXT"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Complexity tier hour ranges are magic numbers with no stated basis",
+        "location": {
+          "hint": "REMEDIATION PLAN effort/complexity section"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Rollback complexity tier 'Impossible after point of no return' label undocumented",
+        "location": {
+          "hint": "ROLLBACK PLAN Rollback Complexity line"
+        }
+      },
+      {
+        "detector": "output/unbounded",
+        "severity": "LOW",
+        "title": "Unbounded output request",
+        "location": {
+          "line": 87,
+          "column": 3
+        }
+      },
+      {
+        "detector": "output/unbounded",
+        "severity": "LOW",
+        "title": "Unbounded output request",
+        "location": {
+          "line": 107,
+          "column": 1
+        }
+      }
+    ]
+  },
+  {
+    "file": "06-conflict-default.md",
+    "chars": 4152,
+    "total": 6,
+    "high": 0,
+    "medium": 2,
+    "low": 4,
+    "detectors": {
+      "ambiguousInstruction": 2,
+      "underspecifiedConstraints": 2,
+      "poorDocumentation": 2
+    },
+    "findings": [
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "MEDIUM",
+        "title": "\"Side A / Side B\" framing ambiguous for multi-party conflicts",
+        "location": {
+          "hint": "conflict format block, Side A/B fields"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "\"Quote the specific lines\" instruction scope unclear",
+        "location": {
+          "hint": "Conflicting Values field description"
+        }
+      },
+      {
+        "detector": "underspecifiedConstraints",
+        "severity": "LOW",
+        "title": "Severity tiers named but boundary criteria absent for individual conflicts",
+        "location": {
+          "hint": "\"Severity rubric:\" section"
+        }
+      },
+      {
+        "detector": "underspecifiedConstraints",
+        "severity": "MEDIUM",
+        "title": "Overall conflict risk aggregation rule omits the case of exactly 1 HIGH, <3 MEDIUMs, no CRITICAL",
+        "location": {
+          "hint": "aggregation rule block, end of prompt"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented aggregation rule thresholds for overall risk level",
+        "location": {
+          "hint": "aggregation rule block near end"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented coupled-prompt assumption: 'no profile' build path",
+        "location": {
+          "hint": "header comment, line ~5"
+        }
+      }
+    ]
+  },
+  {
+    "file": "07-conflict-with-profile.md",
+    "chars": 8411,
+    "total": 10,
+    "high": 0,
+    "medium": 5,
+    "low": 5,
+    "detectors": {
+      "ambiguousInstruction": 2,
+      "conflictingInstructions": 2,
+      "undefinedOutputFormat": 1,
+      "underspecifiedConstraints": 1,
+      "poorOrganization": 1,
+      "poorDocumentation": 3
+    },
+    "findings": [
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "MEDIUM",
+        "title": "Ambiguous scope of OVERLAP RULE when consultant check partially overlaps built-in",
+        "location": {
+          "hint": "OVERLAP RULE paragraph"
+        }
+      },
+      {
+        "detector": "ambiguousInstruction",
+        "severity": "LOW",
+        "title": "Ambiguous referent for 'name findings in the consultant's vocabulary'",
+        "location": {
+          "hint": "CONSULTANT CONTEXT section, second sentence"
+        }
+      },
+      {
+        "detector": "conflictingInstructions",
+        "severity": "MEDIUM",
+        "title": "Consultant-check findings format conflicts with parent prompt finding format",
+        "location": {
+          "hint": "CONSULTANT CHECKS section vs findings format block"
+        }
+      },
+      {
+        "detector": "undefinedOutputFormat",
+        "severity": "MEDIUM",
+        "title": "Consultant-check findings lack defined output structure",
+        "location": {
+          "hint": "CONSULTANT CHECKS section"
+        }
+      },
+      {
+        "detector": "underspecifiedConstraints",
+        "severity": "MEDIUM",
+        "title": "Overall conflict risk aggregation: 'MEDIUM' threshold is ambiguous",
+        "location": {
+          "hint": "CONFLICT SUMMARY aggregation rule"
+        }
+      },
+      {
+        "detector": "conflictingInstructions",
+        "severity": "MEDIUM",
+        "title": "OVERLAP RULE directs single emission but CONSULTANT CHECKS section directs double evaluation",
+        "location": {
+          "hint": "OVERLAP RULE paragraph"
+        }
+      },
+      {
+        "detector": "poorOrganization",
+        "severity": "LOW",
+        "title": "Output format spec appears after task description and conflict categories",
+        "location": {
+          "hint": "markdown shape block, after CONSULTANT CHECKS"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented 'consultant profile registry' identifier",
+        "location": {
+          "hint": "Consultant Context section, Profile line"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented coupled-prompt assumption: 'parent prompt'",
+        "location": {
+          "hint": "OVERLAP RULE section"
+        }
+      },
+      {
+        "detector": "poorDocumentation",
+        "severity": "LOW",
+        "title": "Undocumented source of the aggregation thresholds in the severity rubric",
+        "location": {
+          "hint": "Overall conflict risk aggregation rule"
+        }
+      }
+    ]
+  }
+]
