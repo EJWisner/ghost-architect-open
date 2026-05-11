@@ -185,9 +185,22 @@ Ghost Open is the full scan engine. Pro, Team, Enterprise, and Partner add track
 
 ## Privacy
 
-Ghost Architect™ runs locally on your machine. Your codebase is never uploaded, never stored, and never transmitted to Ghost servers — because there are no Ghost servers. Analysis calls go directly from your machine to Anthropic's API using your own key, under your own data agreement. Your client's code stays yours.
+Ghost Architect™ scans run locally on your machine. Your codebase is never uploaded, never stored on Ghost infrastructure, and never transmitted anywhere except directly to Anthropic's API using your own key. Analysis happens under your own data agreement with Anthropic. Your client's code stays yours.
 
-Ghost Architect does not collect telemetry. It does not phone home.
+The Ghost CLI itself does not transmit any code, scan results, or system information.
+
+### First-run prompt
+
+On first run, Ghost Architect Open asks once whether you'd like to receive occasional product updates. This is how we stay in touch with users — npm gives us no visibility into who installs the package.
+
+The first-run prompt is fully optional. Pick "No" or "Skip" and Ghost saves a local config so it never asks again.
+
+If you opt in:
+- We collect: your email address, an anonymous install ID (UUID), the Ghost version, and a timestamp.
+- We do not collect: anything about the codebases you scan, scan results, IP addresses, system info, or browsing behavior.
+- Storage: Cloudflare Worker + Airtable. Never sold, never shared with third parties.
+
+Opt out anytime by emailing support@ghostarchitect.dev. To reset your local config (which re-triggers the prompt), delete `~/.ghost-architect/config.json`.
 
 ---
 
