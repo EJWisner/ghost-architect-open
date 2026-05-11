@@ -29,10 +29,64 @@ development. See F-15 for the specific list of substantive Ghost
 prompt fixes identified.
 
 ### F-03 — Bullet-list semantics false positive on unboundedOutput
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 5
 **Why:** Tier 1 output detector fires on every "List …" verb even when
 the bullet list that follows defines the list. Tier 2 fix territory.
+
+**Resolution (v5.3.1):** Added hasBoundingEnumerationBelow() helper in
+src/prompt-pack/unboundedOutput.js. The helper checks two conditions:
+
+  1. The trigger line ends with a colon (after stripping trailing
+     whitespace)
+  2. The next non-empty line begins with a bullet (`-`, `*`, `>`) or
+     numbered marker (`1.`, `2)`)
+
+When both conditions hold, the bullets ARE the requested output bound,
+so the unbounded finding is suppressed. The check is wired into the
+detect loop alongside the existing isBehavioralGuidelineBullet() check.
+
+Tight scope chosen for v1:
+  - Requires the colon AND the immediately-following enumeration.
+    Prose between trigger and bullets breaks the structural relationship
+    and the finding fires as expected.
+  - No scan-distance limit beyond "next non-empty line." Either the
+    bullets follow directly or the relationship is too weak to suppress.
+  - Numbered enumeration (1., 2)) accepted alongside bullet markers.
+
+Resolution turned out to be regex-level work after all, not Tier 2
+semantic judgment. The trick was recognizing that the colon-and-bullets
+structural signal is unambiguous — humans read it the same way
+regardless of context. Tier 2 semantic judgment becomes necessary only
+for cases without the structural signal ("List the colors\nThey are red,
+blue, and green" — no colon, no bullets, but the prose answer bounds
+the output). That ambiguous class stays in F-26's scope.
+
+Same-commit cosmetic cleanup: `queries|queries?` redundant duplicate
+in all 5 CONSTRAINT_MARKERS regexes collapsed to single `queries?`.
+Functionally a no-op (the redundancy matched the same word twice in
+an alternation) but cleaner regex source.
+
+Verified end-to-end (May 11 2026):
+  4 F-03 bullet-list cases now suppress (0 findings each):
+    - "List of valid statuses:\n- pending\n- approved\n- rejected"
+    - "List the supported colors:\n- red\n- blue\n- green"
+    - "List the steps:\n1. Initialize\n2. Configure\n3. Deploy"
+    - "Provide the available options:\n* Option A\n* Option B"
+  2 boundary controls fire correctly:
+    - "List the things:\nThis is prose." (colon but no bullets) -> 1
+    - "List the things\n- red\n- blue" (bullets but no colon) -> 1
+  2 regression checks pass:
+    - "List 5 issues" (count-bounded, vocab extension) -> 0
+    - "List the top 5 bugs" (count + new noun) -> 0
+  2 baseline controls fire:
+    - "List everything you know" -> 1
+    - "Describe the system" -> 1
+
+10 pass / 0 fail on end-to-end detector smoke. Combined with the
+previous commit's vocabulary extension, F-03 ships as the
+structural piece of the bullet-list bounding work; F-26 stays
+open for prose-based bounding that requires semantic judgment.
 
 ### F-04 — Constraint regex with intervening adjectives
 **Status:** RESOLVED — discovered closed during v5.3.1 audit (May 11 2026)
