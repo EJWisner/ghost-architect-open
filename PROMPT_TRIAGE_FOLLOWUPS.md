@@ -315,13 +315,75 @@ finding that names both manifestations." This is the single biggest
 tuning win available.
 
 ### F-13 — Recognize intentional-discretion framings
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 6 review
 **Why:** Phrases like "where appropriate," "if straightforward,"
 "use your judgment" are deliberate model discretion, not author
 error. Detector currently flags them as ambiguity. Add envelope
 guidance to distinguish author-error softness from author-intent
 softness.
+
+**Resolution (v5.3.1):** Two coordinated edits to the
+ambiguousInstruction.js envelope (the LLM evaluation prompt):
+
+1. New "Do NOT flag" bullet in the definition prose teaching the
+   intentional-discretion distinction explicitly. Names the
+   common framings ("where appropriate", "if straightforward",
+   "use your judgment", "as needed", "at your discretion",
+   "when relevant"). Contrasts "handle edge cases appropriately"
+   (lazy ambiguity, still flagged) with "where appropriate,
+   escalate to a human reviewer" (intentional discretion, skipped).
+   The defining test: when the discretion framing has scaffolding
+   around it (conditional, fallback, named criterion), the
+   discretion IS the rule content and should be skipped.
+
+2. Three new NEGATIVE_EXAMPLES showing intentional discretion
+   patterns:
+     - "Where appropriate, escalate to a human reviewer."
+       (discretion is the trigger condition; action is specified)
+     - "Use your best judgment to balance brevity with accuracy."
+       (criteria are named; discretion is the weighing)
+     - "If straightforward, answer in one line; otherwise, expand."
+       (both branches specified; discretion is the classification)
+
+The contrast between POSITIVE_EXAMPLES "Handle edge cases
+appropriately" (still flagged) and the new NEGATIVE_EXAMPLES gives
+the LLM concrete grounding for the distinction. POSITIVE_EXAMPLES
+itself was not modified.
+
+Verified via real API smoke against claude-sonnet-4-6 (May 11 2026):
+
+  2 lazy-ambiguity cases correctly fire:
+    - "Handle edge cases appropriately." -> 1 MEDIUM
+    - "Process the data correctly." -> 1 HIGH
+
+  3 intentional-discretion cases correctly stay silent:
+    - "Where appropriate, escalate to a human reviewer."
+    - "Use your judgment to balance brevity with accuracy."
+    - "If straightforward, answer in one line; otherwise, expand."
+
+  Boundary case that exposed the right interpretation:
+    - "Handle complex queries with discretion; simple ones answer
+      directly." -> 1 MEDIUM (LLM correctly flagged as ambiguous)
+
+The boundary case revealed that the envelope correctly distinguishes
+*intentional discretion with scaffolding* (specified action paths)
+from *lazy vagueness disguised with discretion words* (still no
+specified action). "Handle X with discretion" without specifying
+the action mirrors the "handle X appropriately" lazy pattern that
+should fire. The LLM made the right call. Initial smoke labeled
+this case "expectFire: false" — incorrect test expectation; the
+envelope behavior was correct. Confidence in the F-13 fix is
+HIGHER because the LLM held the line on lazy-vagueness even with
+"discretion" in the phrasing.
+
+Total cost of API smoke: ~$0.05 across 6 prompts.
+
+Process note: F-13 is the first Tier 2 fix in this v5.3.1 audit
+series. The pattern is different from Tier 1 regex tickets —
+no deterministic test, validation is the LLM following envelope
+guidance. Real API smoke is required for Tier 2 envelope work.
+Sonnet 4.6 is cheap enough that 6-10 calls per ticket is fine.
 
 ### F-14 — Cap hint length at ~8 words
 **Status:** OPEN
