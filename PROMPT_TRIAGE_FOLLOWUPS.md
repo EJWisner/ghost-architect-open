@@ -125,11 +125,60 @@ Verified end-to-end (May 11 2026):
 10 pass / 0 fail on end-to-end detector smoke.
 
 ### F-06 — Few-shot suppression keyword gap
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 5
 **Why:** "typical conversation," "transcript:," "dialogue:" don't
 suppress strayLineMarker findings even though they signal example
 framing. Extend the suppression keyword list.
+
+**Resolution (v5.3.1):** Extended the FEWSHOT_SIGNAL regex in
+src/prompt-pack/roleSeparation.js (line 72) to add three new
+framing keywords:
+
+  - typical\s+conversation
+  - transcript
+  - dialogue
+
+The original keyword list (example/examples, for instance,
+demonstration, few-shot/few shot, sample exchange/interaction/
+conversation) is preserved unchanged.
+
+Coordinated edits in same commit:
+  - Comment block (lines 45-52): rewritten from "known limitation"
+    framing to "implemented in F-06" with the full keyword list
+    enumerated.
+  - User-facing detail text: extended the framing word examples
+    in the finding message to include "transcript" and "dialogue"
+    so users see the same vocabulary the suppressor uses.
+
+False-positive risk considered: bare "transcript" and "dialogue"
+might over-suppress on prompts that mention these words for
+non-framing reasons (e.g., "Generate a transcript of this
+meeting"). Risk is bounded by the existing 20-line upward scan
+window in hasFewshotSignalAbove() — a non-framing mention only
+suppresses markers within 20 lines below it. Combined with the
+detector's stated LOW severity and acceptance of false negatives
+(line 70 comment: "we accept that some legitimate few-shot
+contexts will be missed"), erring toward suppression is preferred
+over false-positive LOW findings.
+
+Verified end-to-end (May 11 2026):
+  5 F-06 framings now correctly suppress (0 stray findings):
+    - "typical conversation:" (with colon)
+    - "transcript:" (with colon)
+    - "dialogue:" (with colon)
+    - "Here is a transcript of the call." (in prose)
+    - "Sample dialogue for your reference:" (combined sample+dialogue)
+  6 original framings still suppress (no regression):
+    - "Examples:", "Here is an example:", "For instance, consider:",
+      "Demonstration of the format:", "Few-shot examples below:",
+      "Sample exchange:"
+  2 negative controls (no framing word) correctly fire 3 stray
+    findings each:
+    - "Continue the conversation appropriately."
+    - "Process the following input carefully."
+
+13 pass / 0 fail on end-to-end detector smoke.
 
 ### F-07 — Open models in registry (Llama, Mistral, Qwen)
 **Status:** RESOLVED — v5.3.1 (May 11 2026)

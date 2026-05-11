@@ -42,12 +42,14 @@
  * which is too noisy at the regex level. Inconsistent <user> /
  * <assistant> ordering is also out of scope for v1.
  *
- * Known limitation: the few-shot suppression heuristic looks for
- * literal keywords ("example", "examples", "for instance",
- * "demonstration", "few-shot", "few shot"). A prompt that uses
- * other framing words ("sample exchange:", "transcript:", "dialogue:")
- * will fire false positives on (c). Tier 2 LLM-assisted variant
- * could read context; for v1, document and accept.
+ * Few-shot suppression heuristic looks for literal framing keywords:
+ * "example(s)", "for instance", "demonstration", "few-shot", "few shot",
+ * "sample exchange/interaction/conversation", "typical conversation",
+ * "transcript", "dialogue". F-06 (v5.3.1) extended the original list
+ * to cover transcript/dialogue/typical-conversation framings that were
+ * missed in v1. Tier 2 LLM-assisted variant could read context to
+ * distinguish framing usage from incidental mention; the bounded
+ * 20-line upward scan keeps false suppression cost low.
  */
 
 // ── Regex configuration ──────────────────────────────────────────────────
@@ -67,7 +69,7 @@ const LINE_MARKER = /^(\s*(?:[-*>]\s+)?)(User|Assistant|Human)\s*:\s+/i;
 // Case-insensitive. The list is intentionally short; we accept that
 // some legitimate few-shot contexts will be missed and fire a LOW
 // finding (documented as known limitation).
-const FEWSHOT_SIGNAL = /\b(example|examples|for\s+instance|demonstration|few[- ]shot|sample\s+(exchange|interaction|conversation))\b/i;
+const FEWSHOT_SIGNAL = /\b(example|examples|for\s+instance|demonstration|few[- ]shot|sample\s+(exchange|interaction|conversation)|typical\s+conversation|transcript|dialogue)\b/i;
 
 // How far to scan upward from a line-marker line when checking for
 // few-shot framing. 20 lines is wide enough to catch "Examples:" at
@@ -213,7 +215,8 @@ export async function detect(promptText, filePath, opts = {}) {
         'Line ' + (i + 1) + ' begins with "' + role + ':", a line marker '
         + 'commonly used inside few-shot example blocks. No few-shot '
         + 'framing word (such as "example", "demonstration", "for '
-        + 'instance") was found in the preceding lines. The marker '
+        + 'instance", "transcript", "dialogue") was found in the '
+        + 'preceding lines. The marker '
         + 'may be copy-paste residue, a confused authoring style, or '
         + 'an attempt to embed a fake conversation turn into the '
         + 'instruction text.',
