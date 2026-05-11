@@ -1,0 +1,112 @@
+{
+  "date": "2026-05-11",
+  "reference_heuristic": "claude-sonnet-4-6",
+  "reference_tiktoken": "gpt-4o",
+  "thresholds": [
+    {
+      "name": "LOW",
+      "tokens": 3000
+    },
+    {
+      "name": "MEDIUM",
+      "tokens": 6000
+    },
+    {
+      "name": "HIGH",
+      "tokens": 12000
+    }
+  ],
+  "results": [
+    {
+      "file": "01-chat-system.md",
+      "chars": 1188,
+      "heuristic": 297,
+      "heurStrategy": "heuristic",
+      "tiktoken": 249,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 48,
+      "driftPct": "19.3",
+      "heurTier": "(under LOW)",
+      "tiktokenTier": "(under LOW)",
+      "tierChange": "same"
+    },
+    {
+      "file": "02-poi-default.md",
+      "chars": 15546,
+      "heuristic": 3887,
+      "heurStrategy": "heuristic",
+      "tiktoken": 3377,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 510,
+      "driftPct": "15.1",
+      "heurTier": "LOW",
+      "tiktokenTier": "LOW",
+      "tierChange": "same"
+    },
+    {
+      "file": "03-poi-with-profile.md",
+      "chars": 19805,
+      "heuristic": 4951,
+      "heurStrategy": "heuristic",
+      "tiktoken": 4220,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 731,
+      "driftPct": "17.3",
+      "heurTier": "LOW",
+      "tiktokenTier": "LOW",
+      "tierChange": "same"
+    },
+    {
+      "file": "04-blast-default.md",
+      "chars": 5392,
+      "heuristic": 1348,
+      "heurStrategy": "heuristic",
+      "tiktoken": 1112,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 236,
+      "driftPct": "21.2",
+      "heurTier": "(under LOW)",
+      "tiktokenTier": "(under LOW)",
+      "tierChange": "same"
+    },
+    {
+      "file": "05-blast-with-profile.md",
+      "chars": 9651,
+      "heuristic": 2413,
+      "heurStrategy": "heuristic",
+      "tiktoken": 1955,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 458,
+      "driftPct": "23.4",
+      "heurTier": "(under LOW)",
+      "tiktokenTier": "(under LOW)",
+      "tierChange": "same"
+    },
+    {
+      "file": "06-conflict-default.md",
+      "chars": 4152,
+      "heuristic": 1038,
+      "heurStrategy": "heuristic",
+      "tiktoken": 943,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 95,
+      "driftPct": "10.1",
+      "heurTier": "(under LOW)",
+      "tiktokenTier": "(under LOW)",
+      "tierChange": "same"
+    },
+    {
+      "file": "07-conflict-with-profile.md",
+      "chars": 8411,
+      "heuristic": 2103,
+      "heurStrategy": "heuristic",
+      "tiktoken": 1787,
+      "tiktokenStrategy": "tiktoken",
+      "drift": 316,
+      "driftPct": "17.7",
+      "heurTier": "(under LOW)",
+      "tiktokenTier": "(under LOW)",
+      "tierChange": "same"
+    }
+  ]
+}

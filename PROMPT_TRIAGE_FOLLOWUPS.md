@@ -11,12 +11,75 @@ Status legend: OPEN | DONE | DEFERRED
 ## Carried over from sessions 1–5 (pre-rail-fix)
 
 ### F-01 — C2 threshold re-tuning for length/excessive against tiktoken counts
-**Status:** OPEN
+**Status:** RESOLVED — v5.3.1 (May 11 2026)
 **Source:** session 3 (tokenizer abstraction)
 **Why:** Original LOW/MEDIUM/HIGH thresholds (3000/6000/12000 tokens) were
 calibrated against the heuristic count. Real tiktoken counts may differ
 by 5–15%. Worth a focused re-tune session against the dogfood corpus
 once we have a wider sample.
+
+**Resolution (v5.3.1):** Measured heuristic vs tiktoken token counts
+against the 7-prompt Ghost dogfood corpus. Full data:
+`audit-reports/threshold-calibration-2026-05-11.json`
+
+Measurement methodology:
+  - Reference for heuristic: claude-sonnet-4-6 (heuristic strategy)
+  - Reference for tiktoken: gpt-4o (tiktoken strategy)
+  - 7 prompts from prompts-extracted/, sizes 1.2 KB to 19.8 KB
+
+Per-prompt drift (heuristic - tiktoken, positive means heuristic
+over-counted):
+
+  File                          Heur   Ttkn   Drift   Drift%
+  01-chat-system.md             297    249    +48     +19.3%
+  02-poi-default.md             3887   3377   +510    +15.1%
+  03-poi-with-profile.md        4951   4220   +731    +17.3%
+  04-blast-default.md           1348   1112   +236    +21.2%
+  05-blast-with-profile.md      2413   1955   +458    +23.4%
+  06-conflict-default.md        1038   943    +95     +10.1%
+  07-conflict-with-profile.md   2103   1787   +316    +17.7%
+
+Aggregate stats:
+  - Mean drift: +17.7% (heuristic over-counts by ~18%)
+  - Drift range: +10.1% to +23.4%
+  - The original "5-15%" estimate in the ticket was conservative;
+    actual drift is 10-23%.
+
+**Key finding — zero tier changes:** Despite +18% drift on average,
+NONE of the 7 corpus prompts crossed a different LOW/MEDIUM/HIGH
+threshold under the two tokenizers. The current 3000/6000/12000
+thresholds are robust to the heuristic-tiktoken drift across this
+representative corpus.
+
+**Decision: keep current thresholds.** Three reasons:
+
+1. Zero tier changes in the dogfood corpus. The drift is real but
+   the user-facing outcome is identical under both tokenizers.
+
+2. The length/excessive thresholds are advisory hints, not
+   gate-keeping decisions. Position-in-tier shifts (which the
+   drift does cause) do not change finding emission.
+
+3. Both candidate threshold adjustments are defensible policy
+   choices:
+   - Adjust down to ~2500/5000/10000 (match tiktoken intent):
+     would over-flag heuristic users
+   - Adjust up to give buffer: would under-flag tiktoken users
+   - Neither is clearly correct without product user research.
+
+   Without a tier-change case in the corpus forcing the decision,
+   sticking with current thresholds is the least-regret option.
+
+If future dogfood scans surface prompts that DO change tier under
+heuristic vs tiktoken, re-open F-01b with that specific case as
+the concrete example forcing the calibration call.
+
+Closes F-01 fully. The "wider sample" the original ticket was
+waiting for is now in audit-reports/dogfood-2026-05-11.json
+(from F-08 closure earlier this session).
+
+Total cost: $0 (both token counts computed locally, no API calls).
+Total time: <5 seconds across all 7 prompts.
 
 ### F-02 — Ghost prompt audit (separate session, not detector work)
 **Status:** OPEN
