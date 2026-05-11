@@ -60,6 +60,25 @@ const PATTERNS = [
     regex: /\b(ignore|disregard|forget|skip|override|bypass)\s+(the\s+|all\s+|any\s+)?(above|prior|preceding|previous|earlier|original|initial|former)\s+(instructions?|prompts?|rules?|directives?|context|messages?|guidelines?|constraints?)\b/i,
   },
   {
+    // F-05: instruction override via possessive determiner. Matches
+    // "ignore your safety rules", "forget your guidelines", "override
+    // your constraints". Disjoint from the position-word entry above
+    // because the possessive slot does not overlap that pattern.
+    category: 'instruction-override',
+    name: 'Override of safety/system instructions (possessive form)',
+    regex: /\b(ignore|disregard|forget|skip|override|bypass)\s+(your|my|its|their)\s+([a-z]+\s+){0,2}(instructions?|prompts?|rules?|directives?|guidelines?|constraints?|safeguards?|restrictions?|filters?|limits?|limitations?|context|messages?)\b/i,
+  },
+  {
+    // F-05: instruction override via generic article + non-position-word.
+    // Matches "override the system prompt", "bypass any restrictions",
+    // "ignore all rules". Negative lookahead on position words prevents
+    // double-firing with the entry above when phrasing includes "above",
+    // "prior", "preceding", etc.
+    category: 'instruction-override',
+    name: 'Override of system instructions (generic article form)',
+    regex: /\b(ignore|disregard|forget|skip|override|bypass)\s+(the|all|any)\s+(?!above\b|prior\b|preceding\b|previous\b|earlier\b|original\b|initial\b|former\b)([a-z]+\s+){0,2}(instructions?|prompts?|rules?|directives?|guidelines?|constraints?|safeguards?|restrictions?|filters?|limits?|limitations?|context|messages?|system\s+prompt)\b/i,
+  },
+  {
     category: 'instruction-override',
     name: 'Override of prior instructions (reversed phrasing)',
     regex: /\b(the\s+|all\s+|any\s+)?(above|prior|preceding|previous|earlier|original|initial)\s+(instructions?|prompts?|rules?|directives?|guidelines?)\s+(are|were)\s+(wrong|incorrect|invalid|outdated|cancelled|canceled|superseded|replaced)\b/i,
