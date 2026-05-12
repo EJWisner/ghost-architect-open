@@ -285,6 +285,47 @@ function stripVersionPrefix(versionString) {
   return versionString.replace(/^[\^~><=\s!]+/, '').trim();
 }
 
+// Composer (and some others) accept multi-version constraint syntax like
+// "8.1.0||~8.2.0||~8.3.0||~8.4.0" meaning "any of these versions."
+// Raw, that's noise in a deal-grade report. Normalize to a clean form:
+//   - Strip per-segment semver prefixes (~, ^, >=, etc.)
+//   - Take the lowest version as the floor
+//   - Take the highest version as the ceiling
+//   - If floor === ceiling, just show that version
+//   - If multiple distinct versions, show "floor – ceiling" or "floor+" if no ceiling
+// Returns a tuple { displayVersion, floorVersion } so EOL classification
+// can still match against the floor (most conservative reading).
+function normalizeVersionConstraint(versionString) {
+  if (!versionString || typeof versionString !== 'string') {
+    return { displayVersion: '', floorVersion: '' };
+  }
+  // Split on || (Composer/npm OR syntax) or , (and-constraint), then strip
+  // each segment.
+  const segments = versionString.split(/\|\||,/).map(s => stripVersionPrefix(s)).filter(Boolean);
+  if (segments.length === 0) return { displayVersion: versionString, floorVersion: versionString };
+  if (segments.length === 1) return { displayVersion: segments[0], floorVersion: segments[0] };
+  // Sort by semver-ish numeric comparison (major.minor.patch)
+  const parsed = segments.map(s => {
+    const m = s.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+    return {
+      raw: s,
+      key: m ? [parseInt(m[1] || '0', 10), parseInt(m[2] || '0', 10), parseInt(m[3] || '0', 10)] : [0, 0, 0],
+    };
+  });
+  parsed.sort((a, b) => {
+    for (let i = 0; i < 3; i++) {
+      if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
+    }
+    return 0;
+  });
+  const floor = parsed[0].raw;
+  const ceiling = parsed[parsed.length - 1].raw;
+  return {
+    displayVersion: floor === ceiling ? floor : `${floor} – ${ceiling}`,
+    floorVersion: floor,
+  };
+}
+
 function classifyEol(frameworkKey, version, eolData) {
   const entry = eolData[frameworkKey];
   if (!entry || !version) return null;
@@ -381,7 +422,7 @@ export async function runStackRealityCheck(codebaseContext, options = {}) {
     });
 
   // 2. Framework detection from manifests ──────────────────────────────
-  const detectedFrameworks = [];
+  const rawFrameworks = [];
 
   for (const filePath of filePaths) {
     const basename = path.basename(filePath);
@@ -395,11 +436,17 @@ export async function runStackRealityCheck(codebaseContext, options = {}) {
       if (!matches) continue;
       const detections = parser.parse(fileMap[filePath]);
       for (const d of detections) {
-        const classification = classifyEol(d.name, d.version, eolData);
-        detectedFrameworks.push({
+        // Normalize multi-version constraint syntax before EOL classification.
+        // The floor version is what we match against the EOL dataset — most
+        // conservative reading. The display version is what appears in the
+        // report (clean prose, no Composer/npm OR syntax leaking through).
+        const { displayVersion, floorVersion } = normalizeVersionConstraint(d.version);
+        const classification = classifyEol(d.name, floorVersion, eolData);
+        rawFrameworks.push({
           name: d.name,
           displayName: classification?.displayName || d.name,
-          version: d.version,
+          version: displayVersion,
+          floorVersion,
           manifest: d.manifest,
           manifestPath: filePath,
           eolFlag: classification?.eolFlag || false,
@@ -409,6 +456,24 @@ export async function runStackRealityCheck(codebaseContext, options = {}) {
       }
     }
   }
+
+  // Dedup: the same framework + version combination can be detected across
+  // many manifest files (e.g. a Magento extension repo with one composer.json
+  // per module, all declaring the same PHP version requirement). Roll those
+  // up to one entry per (name, version) pair, with a manifestCount field
+  // so the renderer can show "PHP 8.1 (declared in 5 manifests)" if useful.
+  const dedupMap = new Map();
+  for (const f of rawFrameworks) {
+    const key = `${f.name}|${f.version}`;
+    if (!dedupMap.has(key)) {
+      dedupMap.set(key, { ...f, manifestCount: 1, manifestPaths: [f.manifestPath] });
+    } else {
+      const existing = dedupMap.get(key);
+      existing.manifestCount++;
+      existing.manifestPaths.push(f.manifestPath);
+    }
+  }
+  const detectedFrameworks = Array.from(dedupMap.values());
 
   // 3. Surprise findings — heuristic prose callouts ────────────────────
   const surprises = [];

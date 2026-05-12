@@ -62,11 +62,29 @@ export async function runAuditMode(codebaseContext, options = {}) {
   const label = await promptProjectLabel();
   console.log('');
 
+  // Model picker — per-run choice for the Modernization Roadmap LLM call.
+  // Defaults to whatever the user has set in `defaultModel` config so
+  // pressing Enter respects their global preference. Audit is a high-stakes
+  // deliverable; users may want Opus for an important deal even if they
+  // run POI on Sonnet day-to-day. Same two choices the config picker offers.
+  const configuredModel = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  const modelChoices = [
+    { name: 'claude-sonnet-4-5 (recommended — best balance)', value: 'claude-sonnet-4-5' },
+    { name: 'claude-opus-4-5 (most powerful — slower/costlier)', value: 'claude-opus-4-5' },
+  ];
+  const defaultChoiceIdx = modelChoices.findIndex(c => c.value === configuredModel);
+  const { model } = await inquirer.prompt([{
+    type: 'list', name: 'model',
+    message: chalk.cyan('Which model for the Modernization Roadmap synthesis?'),
+    choices: modelChoices,
+    default: defaultChoiceIdx >= 0 ? defaultChoiceIdx : 0,
+  }]);
+  console.log('');
+
   // Cost estimate + confirmation — same protective convention as POI/Blast.
   // The Modernization Roadmap step makes an LLM API call. Other three
   // analyzers run locally and incur no charges. Show the user an honest
   // preview before any spending happens.
-  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
   showAuditCostEstimate(model);
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
@@ -118,7 +136,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
       stackReality: results.stackReality,
       keyPersonRisk: results.keyPersonRisk,
       dependencyMap: results.dependencyMap,
-    }, { profile });
+    }, { profile, model });
     const tag = results.roadmap._stub ? chalk.gray(' (stub)') : '';
     spinner.succeed(chalk.green(`  ${SYM.check} Modernization Roadmap${tag}`));
   } catch (err) {
@@ -136,8 +154,10 @@ export async function runAuditMode(codebaseContext, options = {}) {
   renderRoadmapFindings(results.roadmap);
 
   // ── Save report ────────────────────────────────────────
-  // Audit Mode always saves — deal-grade reports are the deliverable.
-  // No save prompt; this is a one-shot audit, not an exploratory scan.
+  // Audit Mode prompts before saving — same convention as POI/Blast.
+  // Default is Yes since the audit is the deliverable, but the user can
+  // bail if the synthesis came back weak or they want to re-run with
+  // different inputs first.
   const reportContent = buildAuditReport(results, {
     label,
     profile,
@@ -145,17 +165,24 @@ export async function runAuditMode(codebaseContext, options = {}) {
     totalFiles: codebaseContext.totalFiles || 0,
   });
 
+  const { doSave } = await inquirer.prompt([{
+    type: 'confirm', name: 'doSave',
+    message: chalk.cyan('Save this audit to ~/Ghost Architect Reports/?'), default: true
+  }]);
+
   let saved = null;
-  const saveSpinner = ora({ text: chalk.cyan('Saving deal-grade report (TXT / MD / PDF)...'), color: 'cyan' }).start();
-  try {
-    saved = await saveReport(reportContent, 'ghost-audit', label, {
-      filesAnalyzed: `${codebaseContext.loadedFiles || 0} of ${codebaseContext.totalFiles || 0}`,
-      totalFiles: codebaseContext.totalFiles || 0,
-      profile,
-    });
-    saveSpinner.succeed(chalk.green(`  ${SYM.check} Reports saved`));
-  } catch (err) {
-    saveSpinner.fail(chalk.red(`  Save failed: ${err.message}`));
+  if (doSave) {
+    const saveSpinner = ora({ text: chalk.cyan('Saving deal-grade report (TXT / MD / PDF)...'), color: 'cyan' }).start();
+    try {
+      saved = await saveReport(reportContent, 'ghost-audit', label, {
+        filesAnalyzed: `${codebaseContext.loadedFiles || 0} of ${codebaseContext.totalFiles || 0}`,
+        totalFiles: codebaseContext.totalFiles || 0,
+        profile,
+      });
+      saveSpinner.succeed(chalk.green(`  ${SYM.check} Reports saved`));
+    } catch (err) {
+      saveSpinner.fail(chalk.red(`  Save failed: ${err.message}`));
+    }
   }
 
   if (saved) {
@@ -164,6 +191,10 @@ export async function runAuditMode(codebaseContext, options = {}) {
     console.log(chalk.gray(`  📄 ${saved.txtFile}`));
     console.log(chalk.gray(`  📋 ${saved.mdFile}`));
     if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← deal-committee-ready PDF`));
+    console.log('');
+  } else if (!doSave) {
+    console.log('');
+    console.log(chalk.gray('Audit not saved. Findings remain in this terminal session only.'));
     console.log('');
   }
 

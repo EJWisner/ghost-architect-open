@@ -300,7 +300,7 @@ export async function runAuditSynthesis(analyzerOutputs, options = {}) {
   let rawOutput = '';
   try {
     const response = await anthropic.messages.create({
-      model: getModel(),
+      model: options.model || getModel(),
       max_tokens: 3000,
       temperature: 0.2,
       system: AUDIT_ROADMAP_SYSTEM,
