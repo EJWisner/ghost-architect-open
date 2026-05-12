@@ -189,18 +189,20 @@ Ghost Architect™ scans run locally on your machine. Your codebase is never upl
 
 The Ghost CLI itself does not transmit any code, scan results, or system information.
 
-### First-run prompt
+### First-run prompt and anonymous heartbeat
 
 On first run, Ghost Architect Open asks once whether you'd like to receive occasional product updates. This is how we stay in touch with users — npm gives us no visibility into who installs the package.
 
 The first-run prompt is fully optional. Pick "No" or "Skip" and Ghost saves a local config so it never asks again.
 
+**Anonymous heartbeat (v5.3.2+).** Whether you opt in or not, Ghost sends an anonymous ping when you run the CLI — at most once per 24 hours per machine. The ping contains only a locally-generated random UUID, the Ghost version, a source tag (e.g. `cli-usage`, `cli-firstrun-no`), and a timestamp. No email, no code, no system info, no IP-level tracking beyond what any HTTP request inherently carries. This lets us see how many people are actively using Ghost over time so we know where to invest. Disable entirely with `GHOST_NO_PING=1` in your environment.
+
 If you opt in:
-- We collect: your email address, an anonymous install ID (UUID), the Ghost version, and a timestamp.
+- We collect: your email address, the anonymous install ID (UUID), the Ghost version, and a timestamp.
 - We do not collect: anything about the codebases you scan, scan results, IP addresses, system info, or browsing behavior.
 - Storage: Cloudflare Worker + Airtable. Never sold, never shared with third parties.
 
-Opt out anytime by emailing support@ghostarchitect.dev. To reset your local config (which re-triggers the prompt), delete `~/.ghost-architect/config.json`.
+Opt out anytime by emailing support@ghostarchitect.dev. To reset your local config (which re-triggers the prompt), delete `~/.ghost-architect/config.json`. To disable the anonymous heartbeat entirely, set `GHOST_NO_PING=1` in your shell environment.
 
 ---
 
