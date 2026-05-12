@@ -63,6 +63,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis + Rollback Plan'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
     : prefix === 'ghost-recon'    ? 'Recon Report — Sizing Only'
+    : prefix === 'ghost-audit'    ? 'Inheritance Audit Report'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
   const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION };
@@ -96,6 +97,7 @@ function convertToMarkdown(content, prefix, label, meta) {
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
     : prefix === 'ghost-recon'    ? 'Recon Report — Sizing Only'
+    : prefix === 'ghost-audit'    ? 'Inheritance Audit Report'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 

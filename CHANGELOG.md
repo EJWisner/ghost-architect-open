@@ -5,6 +5,34 @@ All notable changes to Ghost Architect Open are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.4.0] - 2026-05-12
+
+### Added
+
+- **Inheritance Audit Mode (Pro feature).** The Inheritance Audit menu
+  entry is now visible on Ghost Open, and selecting it shows a clean
+  paywall panel describing what the audit produces, who it's for, and
+  how to upgrade. The panel offers two actions: return to the mode menu
+  (default) or open the pricing page in your default browser. No
+  analyzers run on Open, no API charges, no degraded sample audit.
+
+  Inheritance Audit is a deal-grade codebase audit for buyers, PE
+  diligence teams, fractional CTOs, and modernization consultants. It
+  combines four analyzers (Stack Reality Check, Key-Person Risk, Hidden
+  Dependency Map, Modernization Roadmap) into a 5-page deal-committee
+  PDF in roughly 30 to 60 seconds at roughly $0.02 to $0.04 per audit
+  in API charges. Available on Ghost Pro ($99/mo), Ghost Team ($399/mo),
+  and Ghost Enterprise. Sign up at https://ghostarchitect.dev/pricing.
+
+- **GitHub loader file-count prompt for large repos.** When a selected
+  GitHub repo's folders contain more than 200 code files, the loader now
+  pauses and asks whether you want to fetch all of them or stay with the
+  default cap of 200. Senior users running deal-grade audits need the
+  full set; casual exploratory scans are fine with the sample. Either
+  way you choose, not us. An accurate cost estimate fires inside the
+  mode you pick afterward, before any cost is incurred, based on the
+  file count you just picked.
+
 ## [5.3.1] - 2026-05-11
 
 ### Added

@@ -13,6 +13,7 @@ import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { runReconMode } from '../src/modes/recon.js';
 import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
+import { runAuditMode } from '../src/modes/audit/index.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { checkFirstRun } from '../src/onboarding/firstRun.js';
@@ -35,7 +36,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.3.2';
+const VERSION      = '5.4.0';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -255,6 +256,7 @@ async function selectMode(codebaseContext) {
       { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
       { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
       { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
+      { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE, fractional CTOs (Pro)'), value: 'audit' },
       new inquirer.Separator(),
       { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
       { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
@@ -426,6 +428,7 @@ async function main() {
       case 'blast':     await runBlastMode(codebaseContext);    break;
       case 'conflict':  await runConflictMode(codebaseContext); break;
       case 'recon':     await runReconMode(codebaseContext);    break;
+      case 'audit':     await runAuditMode(codebaseContext, { tier: TIER }); break;
     }
   }
 }

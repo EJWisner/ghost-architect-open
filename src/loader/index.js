@@ -265,9 +265,40 @@ async function loadFromGitHub() {
       return selectedFolders.includes(root);
     });
 
-    spinner.start(`Fetching ${filteredFiles.length} files from ${selectedFolders.length} folder(s)...`);
+    // ── File-count prompt for large repos ──────────────────────────────
+    // Default cap is 200 files for fetch-time and rate-limit reasons.
+    // When the user's selected folders contain more than 200 files, give
+    // them an honest choice: continue with the sampled 200, or fetch all.
+    // Senior users running deal-grade audits will want the full set; casual
+    // exploratory users may be fine with the sample. Either way they choose,
+    // not us. Mode-level cost estimates (Audit shows ~$0.02 for synthesis,
+    // POI/Blast scale with input tokens) fire AFTER this, so the user
+    // gets a real number based on the file count they just picked.
+    const DEFAULT_FETCH_CAP = 200;
+    let fetchCap = DEFAULT_FETCH_CAP;
+    if (filteredFiles.length > DEFAULT_FETCH_CAP) {
+      console.log('');
+      console.log(chalk.yellow.bold(`  ⚠  Large repo: ${filteredFiles.length} code files in your selected folders.`));
+      console.log(chalk.gray(`     Default fetch cap is ${DEFAULT_FETCH_CAP} files. Fetching all ${filteredFiles.length} will`));
+      console.log(chalk.gray(`     take longer and use more GitHub API quota.`));
+      console.log(chalk.gray(`     You’ll see an accurate cost estimate inside the mode, before you run`));
+      console.log(chalk.gray(`     the report and incur the cost, based on what you pick.`));
+      console.log('');
+      const { fetchAll } = await inquirer.prompt([{
+        type: 'confirm', name: 'fetchAll',
+        message: chalk.cyan(`Fetch all ${filteredFiles.length} files?`),
+        default: true,
+      }]);
+      if (fetchAll) {
+        fetchCap = filteredFiles.length;
+      } else {
+        console.log(chalk.gray(`  Continuing with the first ${DEFAULT_FETCH_CAP} files.\n`));
+      }
+    }
 
-    const filesToFetch = filteredFiles.slice(0, 200);
+    spinner.start(`Fetching ${Math.min(filteredFiles.length, fetchCap)} files from ${selectedFolders.length} folder(s)...`);
+
+    const filesToFetch = filteredFiles.slice(0, fetchCap);
     let fetched = 0;
 
     for (const file of filesToFetch) {
@@ -287,8 +318,8 @@ async function loadFromGitHub() {
     }
 
     spinner.succeed(`Processed ${fetched} files from ${owner}/${repo}`);
-    if (codeFiles.length > 200) {
-      console.log(chalk.yellow(`  ⚠ Large repo — analyzed first 200 code files (${codeFiles.length} total)`));
+    if (filteredFiles.length > fetchCap) {
+      console.log(chalk.yellow(`  ⚠ Large repo — analyzed first ${fetchCap} code files (${filteredFiles.length} total)`));
     }
 
     return buildContext(fileMap);
