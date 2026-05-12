@@ -1,0 +1,208 @@
+{
+  "_meta": {
+    "description": "End-of-life / end-of-support dates for major frameworks and language runtimes. Used by audit-mode's Stack Reality Check to flag EOL technologies. Curated manually for v1; future versions may regenerate from endoflife.date.",
+    "generated": "2026-05-12",
+    "source": "Curated from endoflife.date, vendor announcements, and security advisories",
+    "matchSemantics": "Compare a parsed version against the 'versions' array. A version is EOL if its major.minor matches an entry with 'eol' in the past. 'past' is relative to the audit date."
+  },
+
+  "node": {
+    "displayName": "Node.js",
+    "versions": [
+      { "match": "^10\\.",   "eol": "2021-04-30", "note": "Node 10 reached EOL April 2021" },
+      { "match": "^12\\.",   "eol": "2022-04-30", "note": "Node 12 reached EOL April 2022" },
+      { "match": "^14\\.",   "eol": "2023-04-30", "note": "Node 14 reached EOL April 2023" },
+      { "match": "^16\\.",   "eol": "2023-09-11", "note": "Node 16 reached EOL September 2023" },
+      { "match": "^18\\.",   "eol": "2025-04-30", "note": "Node 18 reached EOL April 2025" },
+      { "match": "^20\\.",   "eol": "2026-04-30", "note": "Node 20 reaches EOL April 2026 (imminent)" },
+      { "match": "^22\\.",   "eol": "2027-04-30", "note": "Node 22 LTS through April 2027" }
+    ]
+  },
+
+  "php": {
+    "displayName": "PHP",
+    "versions": [
+      { "match": "^5\\.",    "eol": "2018-12-31", "note": "PHP 5.x EOL since end of 2018 — major security risk" },
+      { "match": "^7\\.0",   "eol": "2018-12-03", "note": "PHP 7.0 EOL" },
+      { "match": "^7\\.1",   "eol": "2019-12-01", "note": "PHP 7.1 EOL" },
+      { "match": "^7\\.2",   "eol": "2020-11-30", "note": "PHP 7.2 EOL" },
+      { "match": "^7\\.3",   "eol": "2021-12-06", "note": "PHP 7.3 EOL" },
+      { "match": "^7\\.4",   "eol": "2022-11-28", "note": "PHP 7.4 EOL" },
+      { "match": "^8\\.0",   "eol": "2023-11-26", "note": "PHP 8.0 EOL" },
+      { "match": "^8\\.1",   "eol": "2025-12-31", "note": "PHP 8.1 EOL end of 2025" },
+      { "match": "^8\\.2",   "eol": "2026-12-31", "note": "PHP 8.2 in active support" },
+      { "match": "^8\\.3",   "eol": "2027-12-31", "note": "PHP 8.3 in active support" },
+      { "match": "^8\\.4",   "eol": "2028-12-31", "note": "PHP 8.4 latest stable" }
+    ]
+  },
+
+  "python": {
+    "displayName": "Python",
+    "versions": [
+      { "match": "^2\\.",    "eol": "2020-01-01", "note": "Python 2 EOL since 2020 — major security risk" },
+      { "match": "^3\\.6",   "eol": "2021-12-23", "note": "Python 3.6 EOL" },
+      { "match": "^3\\.7",   "eol": "2023-06-27", "note": "Python 3.7 EOL" },
+      { "match": "^3\\.8",   "eol": "2024-10-07", "note": "Python 3.8 EOL" },
+      { "match": "^3\\.9",   "eol": "2025-10-31", "note": "Python 3.9 EOL October 2025" },
+      { "match": "^3\\.10",  "eol": "2026-10-31", "note": "Python 3.10 in security-only mode" },
+      { "match": "^3\\.11",  "eol": "2027-10-31", "note": "Python 3.11 in active support" },
+      { "match": "^3\\.12",  "eol": "2028-10-31", "note": "Python 3.12 in active support" },
+      { "match": "^3\\.13",  "eol": "2029-10-31", "note": "Python 3.13 latest stable" }
+    ]
+  },
+
+  "magento": {
+    "displayName": "Adobe Commerce / Magento Open Source",
+    "versions": [
+      { "match": "^1\\.",     "eol": "2020-06-30", "note": "Magento 1 EOL since June 2020 — no security updates" },
+      { "match": "^2\\.3",    "eol": "2022-09-08", "note": "Magento 2.3 EOL" },
+      { "match": "^2\\.4\\.0", "eol": "2022-11-30", "note": "Magento 2.4.0 EOL" },
+      { "match": "^2\\.4\\.1", "eol": "2022-11-30", "note": "Magento 2.4.1 EOL" },
+      { "match": "^2\\.4\\.2", "eol": "2023-08-31", "note": "Magento 2.4.2 EOL" },
+      { "match": "^2\\.4\\.3", "eol": "2024-08-31", "note": "Magento 2.4.3 EOL" },
+      { "match": "^2\\.4\\.4", "eol": "2025-11-30", "note": "Magento 2.4.4 EOL November 2025 — security patches ending" },
+      { "match": "^2\\.4\\.5", "eol": "2025-11-30", "note": "Magento 2.4.5 EOL" },
+      { "match": "^2\\.4\\.6", "eol": "2026-11-30", "note": "Magento 2.4.6 in active support" },
+      { "match": "^2\\.4\\.7", "eol": "2027-11-30", "note": "Magento 2.4.7 in active support" }
+    ]
+  },
+
+  "laravel": {
+    "displayName": "Laravel",
+    "versions": [
+      { "match": "^5\\.",     "eol": "2020-09-08", "note": "Laravel 5.x EOL" },
+      { "match": "^6\\.",     "eol": "2022-01-25", "note": "Laravel 6.x EOL" },
+      { "match": "^7\\.",     "eol": "2021-03-03", "note": "Laravel 7.x EOL" },
+      { "match": "^8\\.",     "eol": "2023-01-24", "note": "Laravel 8.x EOL" },
+      { "match": "^9\\.",     "eol": "2024-02-06", "note": "Laravel 9.x EOL" },
+      { "match": "^10\\.",    "eol": "2025-02-04", "note": "Laravel 10.x EOL February 2025" },
+      { "match": "^11\\.",    "eol": "2026-03-12", "note": "Laravel 11.x security fixes through March 2026" },
+      { "match": "^12\\.",    "eol": "2027-03-12", "note": "Laravel 12.x in active support" }
+    ]
+  },
+
+  "symfony": {
+    "displayName": "Symfony",
+    "versions": [
+      { "match": "^4\\.",     "eol": "2023-11-30", "note": "Symfony 4.x EOL" },
+      { "match": "^5\\.",     "eol": "2024-07-15", "note": "Symfony 5.x EOL" },
+      { "match": "^6\\.0",    "eol": "2023-01-29", "note": "Symfony 6.0 EOL" },
+      { "match": "^6\\.4",    "eol": "2027-11-30", "note": "Symfony 6.4 LTS through November 2027" },
+      { "match": "^7\\.0",    "eol": "2024-07-15", "note": "Symfony 7.0 EOL" },
+      { "match": "^7\\.1",    "eol": "2025-01-15", "note": "Symfony 7.1 EOL" }
+    ]
+  },
+
+  "django": {
+    "displayName": "Django",
+    "versions": [
+      { "match": "^2\\.",     "eol": "2022-04-01", "note": "Django 2.x EOL" },
+      { "match": "^3\\.",     "eol": "2024-04-01", "note": "Django 3.x EOL" },
+      { "match": "^4\\.0",    "eol": "2023-04-01", "note": "Django 4.0 EOL" },
+      { "match": "^4\\.1",    "eol": "2023-12-01", "note": "Django 4.1 EOL" },
+      { "match": "^4\\.2",    "eol": "2026-04-01", "note": "Django 4.2 LTS through April 2026 (imminent)" },
+      { "match": "^5\\.0",    "eol": "2025-04-01", "note": "Django 5.0 EOL April 2025" },
+      { "match": "^5\\.1",    "eol": "2025-12-01", "note": "Django 5.1 EOL December 2025" },
+      { "match": "^5\\.2",    "eol": "2028-04-01", "note": "Django 5.2 LTS through April 2028" }
+    ]
+  },
+
+  "rails": {
+    "displayName": "Ruby on Rails",
+    "versions": [
+      { "match": "^5\\.",     "eol": "2022-06-01", "note": "Rails 5.x EOL" },
+      { "match": "^6\\.",     "eol": "2023-06-01", "note": "Rails 6.x EOL" },
+      { "match": "^7\\.0",    "eol": "2024-10-01", "note": "Rails 7.0 EOL" },
+      { "match": "^7\\.1",    "eol": "2025-10-01", "note": "Rails 7.1 EOL October 2025" },
+      { "match": "^7\\.2",    "eol": "2026-08-01", "note": "Rails 7.2 in active support" },
+      { "match": "^8\\.",     "eol": "2028-08-01", "note": "Rails 8.x in active support" }
+    ]
+  },
+
+  "react": {
+    "displayName": "React",
+    "versions": [
+      { "match": "^15\\.",    "eol": "2018-09-01", "note": "React 15 effectively EOL — no security fixes" },
+      { "match": "^16\\.",    "eol": "2022-06-15", "note": "React 16 EOL — upgrade to 18+" },
+      { "match": "^17\\.",    "eol": "2024-09-01", "note": "React 17 effectively EOL — upgrade to 18+" }
+    ]
+  },
+
+  "vue": {
+    "displayName": "Vue.js",
+    "versions": [
+      { "match": "^2\\.",     "eol": "2023-12-31", "note": "Vue 2 EOL December 2023 — migrate to Vue 3" }
+    ]
+  },
+
+  "angular": {
+    "displayName": "Angular",
+    "versions": [
+      { "match": "^1\\.",     "eol": "2022-01-01", "note": "AngularJS 1.x EOL since 2022 — migrate to modern Angular" },
+      { "match": "^[2-9]\\.",  "eol": "2024-05-31", "note": "Angular 2-9 EOL — upgrade to recent major" },
+      { "match": "^1[0-3]\\.", "eol": "2024-12-01", "note": "Angular 10-13 EOL" }
+    ]
+  },
+
+  "dotnet": {
+    "displayName": ".NET Framework / .NET",
+    "versions": [
+      { "match": "^4\\.5", "eol": "2022-04-26", "note": ".NET Framework 4.5.x EOL" },
+      { "match": "^4\\.6\\.[01]", "eol": "2022-04-26", "note": ".NET Framework 4.6.0/4.6.1 EOL" },
+      { "match": "^net5", "eol": "2022-05-10", "note": ".NET 5 EOL" },
+      { "match": "^net6", "eol": "2024-11-12", "note": ".NET 6 EOL November 2024" },
+      { "match": "^net7", "eol": "2024-05-14", "note": ".NET 7 EOL May 2024" },
+      { "match": "^net8", "eol": "2026-11-10", "note": ".NET 8 LTS through November 2026" }
+    ]
+  },
+
+  "java": {
+    "displayName": "Java",
+    "versions": [
+      { "match": "^1\\.7", "eol": "2022-07-19", "note": "Java 7 EOL" },
+      { "match": "^1\\.8", "eol": "2030-12-01", "note": "Java 8 in extended support" },
+      { "match": "^11", "eol": "2026-09-30", "note": "Java 11 in extended support" },
+      { "match": "^17", "eol": "2029-09-30", "note": "Java 17 LTS in active support" },
+      { "match": "^21", "eol": "2031-09-30", "note": "Java 21 LTS in active support" }
+    ]
+  },
+
+  "spring-boot": {
+    "displayName": "Spring Boot",
+    "versions": [
+      { "match": "^2\\.[0-6]", "eol": "2023-11-24", "note": "Spring Boot 2.0-2.6 EOL" },
+      { "match": "^2\\.7", "eol": "2025-08-24", "note": "Spring Boot 2.7 EOL August 2025" },
+      { "match": "^3\\.0", "eol": "2023-11-24", "note": "Spring Boot 3.0 EOL" },
+      { "match": "^3\\.1", "eol": "2024-05-18", "note": "Spring Boot 3.1 EOL" },
+      { "match": "^3\\.2", "eol": "2025-08-23", "note": "Spring Boot 3.2 EOL August 2025" },
+      { "match": "^3\\.3", "eol": "2026-05-23", "note": "Spring Boot 3.3 in active support" },
+      { "match": "^3\\.4", "eol": "2027-05-23", "note": "Spring Boot 3.4 latest stable" }
+    ]
+  },
+
+  "ruby": {
+    "displayName": "Ruby",
+    "versions": [
+      { "match": "^2\\.", "eol": "2023-03-31", "note": "Ruby 2.x EOL — migrate to Ruby 3.x" },
+      { "match": "^3\\.0", "eol": "2024-03-31", "note": "Ruby 3.0 EOL" },
+      { "match": "^3\\.1", "eol": "2025-03-31", "note": "Ruby 3.1 EOL March 2025" },
+      { "match": "^3\\.2", "eol": "2026-03-31", "note": "Ruby 3.2 EOL March 2026 (imminent)" },
+      { "match": "^3\\.3", "eol": "2027-03-31", "note": "Ruby 3.3 in active support" },
+      { "match": "^3\\.4", "eol": "2028-03-31", "note": "Ruby 3.4 latest stable" }
+    ]
+  },
+
+  "go": {
+    "displayName": "Go",
+    "versions": [
+      { "match": "^1\\.1[0-7]", "eol": "2023-08-08", "note": "Go 1.10-1.17 EOL" },
+      { "match": "^1\\.1[89]", "eol": "2023-12-06", "note": "Go 1.18-1.19 EOL" },
+      { "match": "^1\\.20", "eol": "2024-02-06", "note": "Go 1.20 EOL" },
+      { "match": "^1\\.21", "eol": "2024-08-13", "note": "Go 1.21 EOL" },
+      { "match": "^1\\.22", "eol": "2025-02-11", "note": "Go 1.22 EOL February 2025" },
+      { "match": "^1\\.23", "eol": "2025-08-13", "note": "Go 1.23 EOL August 2025" },
+      { "match": "^1\\.24", "eol": "2026-02-12", "note": "Go 1.24 in active support" },
+      { "match": "^1\\.25", "eol": "2026-08-13", "note": "Go 1.25 latest stable" }
+    ]
+  }
+}

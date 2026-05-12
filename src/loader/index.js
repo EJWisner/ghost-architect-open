@@ -157,7 +157,11 @@ async function loadFromFiles() {
 
   spinner.succeed(`Found ${codeFiles.length} code files`);
 
-  return await readFiles(codeFiles, dirPath);
+  const result = await readFiles(codeFiles, dirPath);
+  // Attach basePath so downstream analyzers (e.g. audit-mode's keyPersonRisk)
+  // can shell out to git or read non-code files relative to the codebase root.
+  if (result) result.basePath = dirPath;
+  return result;
 }
 
 async function loadFromZip() {
