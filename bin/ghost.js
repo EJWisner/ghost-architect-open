@@ -11,6 +11,7 @@ import { runChatMode } from '../src/modes/chat.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { runReconMode } from '../src/modes/recon.js';
+import { runAuditMode } from '../src/modes/audit/index.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
 import { loadProfile } from '../src/profile/index.js';
@@ -37,7 +38,7 @@ import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
-const VERSION   = '5.3.0-pro';
+const VERSION   = '5.4.0-pro-dev';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER      = 'pro';
@@ -255,6 +256,7 @@ async function selectMode(codebaseContext) {
       { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
       { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
       { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
+      { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
       { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
       { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
       new inquirer.Separator(),
@@ -790,6 +792,7 @@ async function main() {
       case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
       case 'conflict':  await runConflictMode(codebaseContext, { profile });  break;
       case 'recon':     await runReconMode(codebaseContext, { profile });  break;
+      case 'audit':     await runAuditMode(codebaseContext, { profile });  break;
       case 'compare':   await runCompareMode();                         break;
       case 'dashboard': await showProjectDashboard();                   break;
     }
