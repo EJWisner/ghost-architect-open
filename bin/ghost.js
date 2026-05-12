@@ -792,7 +792,7 @@ async function main() {
       case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
       case 'conflict':  await runConflictMode(codebaseContext, { profile });  break;
       case 'recon':     await runReconMode(codebaseContext, { profile });  break;
-      case 'audit':     await runAuditMode(codebaseContext, { profile });  break;
+      case 'audit':     await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
       case 'compare':   await runCompareMode();                         break;
       case 'dashboard': await showProjectDashboard();                   break;
     }

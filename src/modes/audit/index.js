@@ -30,6 +30,7 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
+import { spawn } from 'child_process';
 import { runStackRealityCheck } from './stackReality.js';
 import { runKeyPersonRisk } from './keyPersonRisk.js';
 import { runDependencyMap } from './dependencyMap.js';
@@ -44,8 +45,101 @@ import { getConfig } from '../../config.js';
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', warn: IS_WINDOWS ? '[!]' : '⚠' };
 
+/**
+ * Open-tier paywall panel. Audit Mode is Pro+ entirely — no partial run on
+ * Open. The reasoning: a stripped-down free version misrepresents the
+ * product. The Open user either thinks "that's all it does" (damaging
+ * Ghost's reputation) or feels held hostage. Better to be honest about
+ * Audit Mode being a premium deliverable and tell them clearly what it
+ * produces, what it costs, and how to unlock it.
+ *
+ * Called from runAuditMode() when options.tier === 'open' (or undefined,
+ * which defaults to 'open' for fail-closed safety). Prints the panel and
+ * returns immediately. No analyzers run. No spinners. No API charges.
+ */
+async function runAuditOpenPaywall() {
+  console.log('\n' + boxen(
+    chalk.cyan.bold('📋  INHERITANCE AUDIT  (Pro feature)') + '\n\n' +
+    chalk.gray('Deal-grade codebase audit for buyers, PE diligence,') + '\n' +
+    chalk.gray('fractional CTOs, and modernization consultants.') + '\n\n' +
+    chalk.white('Inheritance Audit produces a 5-page deal-grade PDF combining') + '\n' +
+    chalk.white('four analyzers:') + '\n\n' +
+    chalk.green('  ✓  ') + chalk.white('Stack Reality Check: what the codebase actually contains,') + '\n' +
+    chalk.gray('     framework versions, end-of-life flags') + '\n' +
+    chalk.green('  ✓  ') + chalk.white('Key-Person Risk: who has been writing this code,') + '\n' +
+    chalk.gray('     bus-factor math, contributor concentration') + '\n' +
+    chalk.green('  ✓  ') + chalk.white('Hidden Dependency Map: license risk, EOL exposure,') + '\n' +
+    chalk.gray('     commercial encumbrances the buyer is inheriting') + '\n' +
+    chalk.green('  ✓  ') + chalk.white('Modernization Roadmap: LLM-synthesized stabilize-vs-rebuild') + '\n' +
+    chalk.gray('     recommendation with a 90-day plan and confidence rating') + '\n\n' +
+    chalk.white('The audit produces deal-committee-ready TXT, MD, and PDF reports') + '\n' +
+    chalk.white('in roughly 30 to 60 seconds at roughly $0.02 to $0.04 per audit') + '\n' +
+    chalk.white('in API charges, on top of your subscription.') + '\n\n' +
+    chalk.cyan.bold('Available on:') + '\n' +
+    chalk.white('  •  Ghost Pro  ($99/mo)   full audit, one engagement at a time') + '\n' +
+    chalk.white('  •  Ghost Team ($399/mo)  full audit + audit-over-time') + '\n' +
+    chalk.gray( '                          comparison for modernization') + '\n' +
+    chalk.gray( '                          engagements') + '\n' +
+    chalk.white('  •  Ghost Enterprise      custom branding + multi-engagement') + '\n' +
+    chalk.gray( '                          audit history') + '\n\n' +
+    chalk.cyan('Upgrade at:  ') + chalk.cyan.underline('https://ghostarchitect.dev/pricing'),
+    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+  ));
+  console.log('');
+
+  // Give the reader a clear next action. "Back to mode menu" is the default
+  // happy path (Enter accepts it). "Open pricing page in browser" turns a
+  // passive disclosure into an active conversion moment for senior buyers
+  // who finished the panel and thought "this looks interesting." No exit
+  // option — exiting Ghost from a paywall is hostile UX; they can exit from
+  // the next menu if they want to leave.
+  const { action } = await inquirer.prompt([{
+    type: 'list',
+    name: 'action',
+    message: chalk.cyan('What would you like to do?'),
+    choices: [
+      { name: '←  Back to mode menu', value: 'back' },
+      { name: '🌐  Open pricing page in browser', value: 'pricing' },
+    ],
+    default: 'back',
+  }]);
+
+  if (action === 'pricing') {
+    const url = 'https://ghostarchitect.dev/pricing';
+    // Cross-platform open: macOS uses 'open', Windows uses 'start' via
+    // shell, Linux uses 'xdg-open'. Detached so the user's terminal isn't
+    // blocked. If launching fails (e.g. xdg-open missing on a headless
+    // Linux box), fall back to printing the URL so they can copy it.
+    const platform = process.platform;
+    try {
+      let cmd, args;
+      if (platform === 'darwin')      { cmd = 'open';     args = [url]; }
+      else if (platform === 'win32')  { cmd = 'cmd';      args = ['/c', 'start', '', url]; }
+      else                            { cmd = 'xdg-open'; args = [url]; }
+      const proc = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      proc.unref();
+      proc.on('error', () => {
+        console.log(chalk.gray(`  Could not launch browser. Open this URL manually: ${url}\n`));
+      });
+      console.log(chalk.gray(`  Opening ${url} in your default browser...\n`));
+    } catch (err) {
+      console.log(chalk.gray(`  Could not launch browser. Open this URL manually: ${url}\n`));
+    }
+  }
+}
+
 export async function runAuditMode(codebaseContext, options = {}) {
   const profile = options.profile || null;
+
+  // Feature gating. Audit Mode is Pro+ only. Default to 'open' (fail-closed)
+  // so any caller that forgets to pass tier does not leak the paid feature.
+  // The bin/ghost.js for each branch is the source of truth for TIER and
+  // passes it through via { tier: TIER }.
+  const tier = options.tier || 'open';
+  if (tier === 'open') {
+    await runAuditOpenPaywall();
+    return;
+  }
 
   console.log('\n' + boxen(
     chalk.cyan.bold('📋  INHERITANCE AUDIT  —  PRE-CLOSE / POST-INHERITANCE') + '\n\n' +
