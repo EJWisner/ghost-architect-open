@@ -44,6 +44,7 @@ const MODE_OUTPUT_ESTIMATES = {
   chat:          { tokens: 600,  label: 'Chat (per exchange)'     },
   recon:         { tokens: 800,  label: 'Recon (sizing only)'     },
   'prompt-triage': { tokens: 400, label: 'Prompt Triage Audit'    },
+  audit:         { tokens: 1500, label: 'Inheritance Audit'       },
 };
 
 export function getPricing(model) {

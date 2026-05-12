@@ -29,11 +29,17 @@
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
+import inquirer from 'inquirer';
 import { runStackRealityCheck } from './stackReality.js';
 import { runKeyPersonRisk } from './keyPersonRisk.js';
 import { runDependencyMap } from './dependencyMap.js';
 import { runRoadmapStub } from './roadmapStub.js';
 import { DEAL_TIERS } from './severityRecast.js';
+import { buildAuditReport } from './reportBuilder.js';
+import { saveReport } from '../../reports.js';
+import { promptProjectLabel } from '../../projects.js';
+import { showAuditCostEstimate, showActualCost } from '../../estimator.js';
+import { getConfig } from '../../config.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', warn: IS_WINDOWS ? '[!]' : '⚠' };
@@ -45,10 +51,28 @@ export async function runAuditMode(codebaseContext, options = {}) {
     chalk.cyan.bold('📋  INHERITANCE AUDIT  —  PRE-CLOSE / POST-INHERITANCE') + '\n\n' +
     chalk.gray('Deal-grade codebase audit for buyers, PE diligence,') + '\n' +
     chalk.gray('fractional CTOs, and modernization consultants.') + '\n\n' +
-    chalk.yellow(`${SYM.warn}  v0.3.0 development — all four analyzers live; PDF template Day 4`) +
+    chalk.yellow(`${SYM.warn}  v0.4.0 development — all analyzers live; deal-grade reports saving`) +
     (profile ? '\n\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
+  console.log('');
+
+  // Project label — names the saved report files. Same UX as POI/Blast.
+  // The label is also used as the "project" line in the PDF cover card.
+  const label = await promptProjectLabel();
+  console.log('');
+
+  // Cost estimate + confirmation — same protective convention as POI/Blast.
+  // The Modernization Roadmap step makes an LLM API call. Other three
+  // analyzers run locally and incur no charges. Show the user an honest
+  // preview before any spending happens.
+  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  showAuditCostEstimate(model);
+  const { proceed } = await inquirer.prompt([{
+    type: 'confirm', name: 'proceed',
+    message: chalk.cyan('Proceed with audit?'), default: true
+  }]);
+  if (!proceed) { console.log(chalk.gray('\nAudit cancelled.\n')); return; }
   console.log('');
 
   const startedAt = Date.now();
@@ -111,6 +135,38 @@ export async function runAuditMode(codebaseContext, options = {}) {
   renderDependencyMapFindings(results.dependencyMap);
   renderRoadmapFindings(results.roadmap);
 
+  // ── Save report ────────────────────────────────────────
+  // Audit Mode always saves — deal-grade reports are the deliverable.
+  // No save prompt; this is a one-shot audit, not an exploratory scan.
+  const reportContent = buildAuditReport(results, {
+    label,
+    profile,
+    filesAnalyzed: codebaseContext.loadedFiles || 0,
+    totalFiles: codebaseContext.totalFiles || 0,
+  });
+
+  let saved = null;
+  const saveSpinner = ora({ text: chalk.cyan('Saving deal-grade report (TXT / MD / PDF)...'), color: 'cyan' }).start();
+  try {
+    saved = await saveReport(reportContent, 'ghost-audit', label, {
+      filesAnalyzed: `${codebaseContext.loadedFiles || 0} of ${codebaseContext.totalFiles || 0}`,
+      totalFiles: codebaseContext.totalFiles || 0,
+      profile,
+    });
+    saveSpinner.succeed(chalk.green(`  ${SYM.check} Reports saved`));
+  } catch (err) {
+    saveSpinner.fail(chalk.red(`  Save failed: ${err.message}`));
+  }
+
+  if (saved) {
+    console.log('');
+    console.log(chalk.green(`Reports saved to ~/Ghost Architect Reports/`));
+    console.log(chalk.gray(`  📄 ${saved.txtFile}`));
+    console.log(chalk.gray(`  📋 ${saved.mdFile}`));
+    if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← deal-committee-ready PDF`));
+    console.log('');
+  }
+
   // ── Development summary box ──────────────────────────────────────────
   console.log('');
   console.log(boxen(
@@ -120,9 +176,9 @@ export async function runAuditMode(codebaseContext, options = {}) {
     chalk.green('  ✓ Stack Reality Check') + '\n' +
     chalk.green('  ✓ Key-Person Risk') + '\n' +
     chalk.green('  ✓ Hidden Dependency Map') + '\n' +
-    chalk.green('  ✓ Modernization Roadmap (LLM synthesis)') + '\n\n' +
+    chalk.green('  ✓ Modernization Roadmap (LLM synthesis)') + '\n' +
+    chalk.green('  ✓ Deal-grade TXT / MD / PDF reports') + '\n\n' +
     chalk.white('Pending:') + '\n' +
-    chalk.gray('  • Deal-grade PDF template (Day 4)') + '\n' +
     chalk.gray('  • Sample-repo testing (Day 5)') + '\n\n' +
     chalk.gray('Severity recast tiers:') + '\n' +
     chalk.gray(`  ${DEAL_TIERS.DEAL_BLOCKER} / ${DEAL_TIERS.POST_CLOSE_RISK} /`) + '\n' +
@@ -305,10 +361,16 @@ function renderDependencyMapFindings(dependencyMap) {
 function renderRoadmapFindings(roadmap) {
   if (!roadmap || roadmap._error) return;
 
+  // Compact terminal summary only. Full prose (narratives, 90-day plan,
+  // rebuild scope ranges, caveats) lives in the saved TXT / MD / PDF
+  // deliverables. Dumping it to stdout is noise — the deal-committee
+  // reader sees the PDF, the consultant running the audit sees this
+  // summary and trusts that the saved files contain the full version.
+
   console.log('');
   console.log(boxen(
     chalk.cyan.bold('MODERNIZATION ROADMAP') + '\n' +
-    chalk.gray('Stabilize-and-keep vs rebuild scope'),
+    chalk.gray('Stabilize-and-keep vs rebuild scope — full prose in saved report'),
     { padding: { top: 0, bottom: 0, left: 1, right: 1 }, borderColor: 'cyan', borderStyle: 'round' }
   ));
 
@@ -323,45 +385,22 @@ function renderRoadmapFindings(roadmap) {
 
   if (roadmap.stabilizeAndKeep?.headline) {
     console.log('');
-    console.log(chalk.white.bold('  Stabilize and keep'));
-    console.log(`    ${chalk.cyan(roadmap.stabilizeAndKeep.headline)}`);
-    if (roadmap.stabilizeAndKeep.narrative) {
-      console.log('');
-      console.log(wrapAndIndent(roadmap.stabilizeAndKeep.narrative, '    ', 76));
-    }
-    if (roadmap.stabilizeAndKeep.sequencedSteps?.length > 0) {
-      console.log('');
-      for (const phase of roadmap.stabilizeAndKeep.sequencedSteps) {
-        console.log(`    ${chalk.cyan(phase.phase)}`);
-        for (const item of (phase.items || [])) {
-          console.log(`      • ${chalk.white(item)}`);
-        }
-      }
-    }
+    console.log(`  ${chalk.white.bold('Stabilize and keep:')} ${chalk.cyan(roadmap.stabilizeAndKeep.headline)}`);
   }
 
   if (roadmap.rebuildScope?.headline) {
-    console.log('');
-    console.log(chalk.white.bold('  Rebuild scope'));
-    console.log(`    ${chalk.cyan(roadmap.rebuildScope.headline)}`);
-    if (roadmap.rebuildScope.narrative) {
-      console.log('');
-      console.log(wrapAndIndent(roadmap.rebuildScope.narrative, '    ', 76));
-    }
-    if (roadmap.rebuildScope.scopeRanges?.length > 0) {
-      console.log('');
-      for (const range of roadmap.rebuildScope.scopeRanges) {
-        console.log(`    • ${chalk.white(range)}`);
-      }
-    }
+    console.log(`  ${chalk.white.bold('Rebuild scope:')}     ${chalk.cyan(roadmap.rebuildScope.headline)}`);
   }
 
-  if (roadmap.caveats?.length > 0) {
+  // Phase count summary instead of full bullets
+  const phaseCount = roadmap.stabilizeAndKeep?.sequencedSteps?.length || 0;
+  const caveatCount = roadmap.caveats?.length || 0;
+  if (phaseCount > 0 || caveatCount > 0) {
     console.log('');
-    console.log(chalk.white.bold('  Caveats'));
-    for (const caveat of roadmap.caveats) {
-      console.log(`    ${chalk.gray('•')} ${chalk.gray(caveat)}`);
-    }
+    const parts = [];
+    if (phaseCount > 0) parts.push(`${phaseCount} stabilization phase${phaseCount === 1 ? '' : 's'}`);
+    if (caveatCount > 0) parts.push(`${caveatCount} caveat${caveatCount === 1 ? '' : 's'}`);
+    console.log(chalk.gray(`  (${parts.join(', ')} captured in the saved report)`));
   }
 }
 

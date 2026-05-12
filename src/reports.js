@@ -45,6 +45,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis + Rollback Plan'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
     : prefix === 'ghost-recon'    ? 'Pre-Engagement Recon'
+    : prefix === 'ghost-audit'    ? 'Inheritance Audit Report'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
@@ -80,6 +81,7 @@ function convertToMarkdown(content, prefix, label, meta, timestamp, branding = n
     : prefix === 'ghost-blast'    ? 'Blast Radius Analysis'
     : prefix === 'ghost-conflict' ? 'Conflict Detection Report'
     : prefix === 'ghost-recon'    ? 'Pre-Engagement Recon'
+    : prefix === 'ghost-audit'    ? 'Inheritance Audit Report'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
