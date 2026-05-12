@@ -1,6 +1,6 @@
 // src/modes/audit/roadmapStub.js
 //
-// Modernization Roadmap Stub — Inheritance Audit analyzer #4
+// Modernization Roadmap — Inheritance Audit analyzer #4
 //
 // LLM-driven synthesis over the outputs of the three deterministic
 // analyzers (Stack Reality, Key-Person Risk, Dependency Map) plus the
@@ -13,53 +13,57 @@
 //
 //   - Rebuild scope: what the buyer is walking away from if they decide
 //     not to retain the codebase. Order-of-magnitude only — never specific
-//     dollar figures. (Per build-spec decision: dollar figures introduce
-//     false precision and legal exposure.)
+//     dollar figures.
 //
-// Implementation:
-//   - Single LLM call with all upstream analyzer output as context
-//   - Uses the audit-v1 prompt pack (see prompts/audit-v1.md)
-//   - Verifier wrapping to suppress hallucinated specifics
-//   - Skeleton cross-feeding stays disabled (per v4.8.0 hallucination fix)
+// Architecture: delegates the actual LLM call to runAuditSynthesis in
+// src/analyst/index.js, which holds all the model/API key/retry/error
+// machinery for the rest of Ghost's modes. This module just sequences
+// the call and adds audit-mode specific guards (skip when all inputs
+// are stubs, etc.).
 //
-// Output shape:
-//   {
-//     stabilizeAndKeep: {
-//       headline: string,
-//       narrative: string,           // paragraphs
-//       sequencedSteps: {
-//         phase: 'Days 1-30' | 'Days 31-60' | 'Days 61-90',
-//         items: string[],
-//       }[],
-//     },
-//     rebuildScope: {
-//       headline: string,
-//       narrative: string,
-//       scopeRanges: string[],       // prose-only, NO dollar figures
-//     },
-//     recommendation: 'stabilize' | 'rebuild' | 'mixed' | 'needs-discovery',
-//     confidence: 'low' | 'medium' | 'high',
-//     caveats: string[],
-//   }
-//
-// v1 implementation is a STUB. The LLM synthesis pipeline ships in the
-// next build pass (Day 3 of the audit-mode plan).
+// Hard rule from the build spec: NO dollar figures in output. Enforced
+// in the system prompt; if a buggy model emits one anyway it will be
+// rendered verbatim — we don't post-process synthesis output yet.
+
+import { runAuditSynthesis } from '../../analyst/index.js';
 
 export async function runRoadmapStub(analyzerOutputs, options = {}) {
+  // Guard: if all upstream analyzers are stubbed or errored, don't waste
+  // an LLM call. Return a clear "insufficient data" result instead.
+  const allStubbed = isAllStubsOrErrors(analyzerOutputs);
+  if (allStubbed) {
+    return {
+      stabilizeAndKeep: {
+        headline: 'Insufficient analyzer data for stabilization plan',
+        narrative: 'All upstream analyzers returned stubbed or empty results. The modernization roadmap synthesis requires real analyzer output to produce meaningful scenarios.',
+        sequencedSteps: [],
+      },
+      rebuildScope: {
+        headline: 'Insufficient analyzer data for rebuild scope',
+        narrative: 'See above.',
+        scopeRanges: [],
+      },
+      recommendation: 'needs-discovery',
+      confidence: 'low',
+      caveats: ['Upstream analyzers returned no real findings — synthesis cannot be meaningfully completed.'],
+      _stub: false,
+      _skippedLLM: true,
+    };
+  }
+
+  // Real call. The analyst module handles model selection, API key
+  // resolution, JSON parsing, and error normalization.
+  const result = await runAuditSynthesis(analyzerOutputs, options);
+
   return {
-    stabilizeAndKeep: {
-      headline: 'Stabilization plan not yet generated',
-      narrative: 'Audit Mode is in early development. The modernization roadmap synthesis will be implemented in a subsequent build pass.',
-      sequencedSteps: [],
-    },
-    rebuildScope: {
-      headline: 'Rebuild scope not yet generated',
-      narrative: 'Coming in the next build pass.',
-      scopeRanges: [],
-    },
-    recommendation: 'needs-discovery',
-    confidence: 'low',
-    caveats: ['Audit Mode v0.1.0 — analyzers are stubbed pending full implementation'],
-    _stub: true,
+    ...result,
+    _stub: false,
   };
+}
+
+function isAllStubsOrErrors(outputs) {
+  if (!outputs) return true;
+  const { stackReality, keyPersonRisk, dependencyMap } = outputs;
+  const flag = (o) => !o || o._stub || o._error;
+  return flag(stackReality) && flag(keyPersonRisk) && flag(dependencyMap);
 }

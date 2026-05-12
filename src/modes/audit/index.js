@@ -45,8 +45,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
     chalk.cyan.bold('📋  INHERITANCE AUDIT  —  PRE-CLOSE / POST-INHERITANCE') + '\n\n' +
     chalk.gray('Deal-grade codebase audit for buyers, PE diligence,') + '\n' +
     chalk.gray('fractional CTOs, and modernization consultants.') + '\n\n' +
-    chalk.yellow(`${SYM.warn}  v0.2.0 development — Stack Reality + Key-Person Risk live;`) + '\n' +
-    chalk.yellow('    Dependency Map + Modernization Roadmap still stubbed') +
+    chalk.yellow(`${SYM.warn}  v0.3.0 development — all four analyzers live; PDF template Day 4`) +
     (profile ? '\n\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
@@ -109,6 +108,8 @@ export async function runAuditMode(codebaseContext, options = {}) {
   console.log('');
   renderStackRealityFindings(results.stackReality);
   renderKeyPersonRiskFindings(results.keyPersonRisk);
+  renderDependencyMapFindings(results.dependencyMap);
+  renderRoadmapFindings(results.roadmap);
 
   // ── Development summary box ──────────────────────────────────────────
   console.log('');
@@ -117,10 +118,10 @@ export async function runAuditMode(codebaseContext, options = {}) {
     chalk.gray(`Completed in ${elapsedSec}s`) + '\n\n' +
     chalk.white('Live analyzers:') + '\n' +
     chalk.green('  ✓ Stack Reality Check') + '\n' +
-    chalk.green('  ✓ Key-Person Risk') + '\n\n' +
-    chalk.white('Stubs remaining:') + '\n' +
-    chalk.gray('  • Dependency Map — manifest parsing (Day 3)') + '\n' +
-    chalk.gray('  • Modernization Roadmap — LLM synthesis (Day 3)') + '\n' +
+    chalk.green('  ✓ Key-Person Risk') + '\n' +
+    chalk.green('  ✓ Hidden Dependency Map') + '\n' +
+    chalk.green('  ✓ Modernization Roadmap (LLM synthesis)') + '\n\n' +
+    chalk.white('Pending:') + '\n' +
     chalk.gray('  • Deal-grade PDF template (Day 4)') + '\n' +
     chalk.gray('  • Sample-repo testing (Day 5)') + '\n\n' +
     chalk.gray('Severity recast tiers:') + '\n' +
@@ -264,6 +265,127 @@ function renderKeyPersonRiskFindings(keyPersonRisk) {
       console.log(`    ${icon} ${chalk.white(callout)}`);
     }
   }
+}
+
+function renderDependencyMapFindings(dependencyMap) {
+  if (!dependencyMap || dependencyMap._error || dependencyMap._stub) return;
+  if (!dependencyMap.totalDependencies) return;
+
+  console.log('');
+  console.log(boxen(
+    chalk.cyan.bold('HIDDEN DEPENDENCY MAP') + '\n' +
+    chalk.gray('Third-party libraries the buyer is inheriting'),
+    { padding: { top: 0, bottom: 0, left: 1, right: 1 }, borderColor: 'cyan', borderStyle: 'round' }
+  ));
+
+  console.log('');
+  console.log(`  ${chalk.white('Total direct dependencies:')} ${chalk.cyan(dependencyMap.totalDependencies)}`);
+
+  if (dependencyMap.riskCallouts && dependencyMap.riskCallouts.length > 0) {
+    console.log('');
+    console.log(chalk.white.bold('  Risk callouts'));
+    for (const callout of dependencyMap.riskCallouts) {
+      const severityColor = callout.severity === 'high' ? chalk.red
+        : callout.severity === 'medium' ? chalk.yellow
+        : chalk.gray;
+      const icon = severityColor('→');
+      console.log(`    ${icon} ${chalk.white(callout.summary)}`);
+      if (callout.packages && callout.packages.length > 0) {
+        const preview = callout.packages.slice(0, 5).join(', ');
+        const more = callout.packages.length > 5 ? `, ... +${callout.packages.length - 5} more` : '';
+        console.log(`      ${chalk.gray(preview + more)}`);
+      }
+    }
+  } else {
+    console.log('');
+    console.log(chalk.gray('  No license, EOL, or commercial-dependency risks detected in direct dependencies.'));
+  }
+}
+
+function renderRoadmapFindings(roadmap) {
+  if (!roadmap || roadmap._error) return;
+
+  console.log('');
+  console.log(boxen(
+    chalk.cyan.bold('MODERNIZATION ROADMAP') + '\n' +
+    chalk.gray('Stabilize-and-keep vs rebuild scope'),
+    { padding: { top: 0, bottom: 0, left: 1, right: 1 }, borderColor: 'cyan', borderStyle: 'round' }
+  ));
+
+  const confColor = roadmap.confidence === 'high' ? chalk.green
+    : roadmap.confidence === 'medium' ? chalk.yellow
+    : chalk.gray;
+  console.log('');
+  console.log(
+    `  ${chalk.white('Recommendation:')} ${chalk.cyan.bold(roadmap.recommendation)}` +
+    `   ${chalk.white('Confidence:')} ${confColor.bold(roadmap.confidence)}`
+  );
+
+  if (roadmap.stabilizeAndKeep?.headline) {
+    console.log('');
+    console.log(chalk.white.bold('  Stabilize and keep'));
+    console.log(`    ${chalk.cyan(roadmap.stabilizeAndKeep.headline)}`);
+    if (roadmap.stabilizeAndKeep.narrative) {
+      console.log('');
+      console.log(wrapAndIndent(roadmap.stabilizeAndKeep.narrative, '    ', 76));
+    }
+    if (roadmap.stabilizeAndKeep.sequencedSteps?.length > 0) {
+      console.log('');
+      for (const phase of roadmap.stabilizeAndKeep.sequencedSteps) {
+        console.log(`    ${chalk.cyan(phase.phase)}`);
+        for (const item of (phase.items || [])) {
+          console.log(`      • ${chalk.white(item)}`);
+        }
+      }
+    }
+  }
+
+  if (roadmap.rebuildScope?.headline) {
+    console.log('');
+    console.log(chalk.white.bold('  Rebuild scope'));
+    console.log(`    ${chalk.cyan(roadmap.rebuildScope.headline)}`);
+    if (roadmap.rebuildScope.narrative) {
+      console.log('');
+      console.log(wrapAndIndent(roadmap.rebuildScope.narrative, '    ', 76));
+    }
+    if (roadmap.rebuildScope.scopeRanges?.length > 0) {
+      console.log('');
+      for (const range of roadmap.rebuildScope.scopeRanges) {
+        console.log(`    • ${chalk.white(range)}`);
+      }
+    }
+  }
+
+  if (roadmap.caveats?.length > 0) {
+    console.log('');
+    console.log(chalk.white.bold('  Caveats'));
+    for (const caveat of roadmap.caveats) {
+      console.log(`    ${chalk.gray('•')} ${chalk.gray(caveat)}`);
+    }
+  }
+}
+
+function wrapAndIndent(text, indent, width) {
+  if (!text) return '';
+  const lines = [];
+  for (const paragraph of String(text).split('\n\n')) {
+    const words = paragraph.split(/\s+/);
+    let current = indent;
+    for (const word of words) {
+      if (current.length + word.length + 1 > width && current.length > indent.length) {
+        lines.push(current);
+        current = indent + word;
+      } else if (current.length === indent.length) {
+        current = indent + word;
+      } else {
+        current += ' ' + word;
+      }
+    }
+    if (current.length > indent.length) lines.push(current);
+    lines.push('');
+  }
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines.join('\n');
 }
 
 function makeBar(pct, width) {

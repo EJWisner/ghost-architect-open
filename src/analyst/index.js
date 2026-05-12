@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST, buildSystemBlast } from '../../prompts/index.js';
+import { AUDIT_ROADMAP_SYSTEM, buildAuditRoadmapUserMessage } from '../../prompts/audit/v1.js';
 import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
@@ -272,4 +273,109 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
   );
 
   return narratedReport || rawOutput;
+}
+
+// ── Audit Mode — Modernization Roadmap synthesis ───────────────────────────────
+//
+// Single-shot synthesis call for Inheritance Audit Mode. Takes the
+// outputs of the three deterministic analyzers (Stack Reality + Key-Person
+// Risk + Dependency Map) and asks the model to produce two prose scenarios
+// (stabilize-and-keep, rebuild scope) plus a recommendation and confidence.
+//
+// The model is instructed to return strict JSON. We parse it; on parse
+// failure we return a structured error result the caller can render.
+//
+// Temperature is set low (0.2) for consistency across runs — we want
+// similar inputs to produce similar narrative shape. The same scan
+// shouldn't read differently on Tuesday vs Wednesday.
+//
+// No streaming — the JSON has to be parsed in one shot. The caller can
+// show a spinner while this runs.
+
+export async function runAuditSynthesis(analyzerOutputs, options = {}) {
+  const anthropic = getClient();
+
+  const userMessage = buildAuditRoadmapUserMessage(analyzerOutputs);
+
+  let rawOutput = '';
+  try {
+    const response = await anthropic.messages.create({
+      model: getModel(),
+      max_tokens: 3000,
+      temperature: 0.2,
+      system: AUDIT_ROADMAP_SYSTEM,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+
+    // The Anthropic SDK returns content as an array of blocks. We want
+    // the concatenated text from any text blocks.
+    for (const block of response.content || []) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        rawOutput += block.text;
+      }
+    }
+  } catch (err) {
+    return {
+      _error: `LLM call failed: ${err.message}`,
+      stabilizeAndKeep: {
+        headline: 'Synthesis unavailable',
+        narrative: `The modernization roadmap synthesis could not run: ${err.message}`,
+        sequencedSteps: [],
+      },
+      rebuildScope: {
+        headline: 'Synthesis unavailable',
+        narrative: 'See above.',
+        scopeRanges: [],
+      },
+      recommendation: 'needs-discovery',
+      confidence: 'low',
+      caveats: [`LLM call failed: ${err.message}`],
+    };
+  }
+
+  // Attempt to parse JSON output. Tolerant to surrounding markdown fences
+  // even though the system prompt forbids them.
+  let parsed;
+  try {
+    const cleaned = rawOutput
+      .replace(/^```(?:json)?\s*/m, '')
+      .replace(/\s*```\s*$/m, '')
+      .trim();
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    return {
+      _error: `JSON parse failed: ${err.message}`,
+      _rawOutput: rawOutput.slice(0, 500),
+      stabilizeAndKeep: {
+        headline: 'Synthesis returned non-JSON output',
+        narrative: 'The model returned text that could not be parsed as JSON. Raw output preserved in _rawOutput for debugging.',
+        sequencedSteps: [],
+      },
+      rebuildScope: {
+        headline: 'Synthesis returned non-JSON output',
+        narrative: 'See above.',
+        scopeRanges: [],
+      },
+      recommendation: 'needs-discovery',
+      confidence: 'low',
+      caveats: ['Synthesis output was malformed.'],
+    };
+  }
+
+  // Normalize the shape so downstream renderers can rely on all fields existing.
+  return {
+    stabilizeAndKeep: {
+      headline: parsed.stabilizeAndKeep?.headline || 'No stabilization headline returned',
+      narrative: parsed.stabilizeAndKeep?.narrative || '',
+      sequencedSteps: Array.isArray(parsed.stabilizeAndKeep?.sequencedSteps) ? parsed.stabilizeAndKeep.sequencedSteps : [],
+    },
+    rebuildScope: {
+      headline: parsed.rebuildScope?.headline || 'No rebuild headline returned',
+      narrative: parsed.rebuildScope?.narrative || '',
+      scopeRanges: Array.isArray(parsed.rebuildScope?.scopeRanges) ? parsed.rebuildScope.scopeRanges : [],
+    },
+    recommendation: parsed.recommendation || 'needs-discovery',
+    confidence: parsed.confidence || 'low',
+    caveats: Array.isArray(parsed.caveats) ? parsed.caveats : [],
+  };
 }
