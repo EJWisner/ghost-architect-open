@@ -5,6 +5,87 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.4.0] - 2026-05-12
+
+### Added
+
+- **Inheritance Audit Mode (Pro+).**
+  A new mode purpose-built for deal-grade codebase audits. Audience:
+  agency founders running pre-engagement diligence, fractional CTOs
+  onboarding to new engagements, PE/M&A diligence teams, and
+  modernization consultancies scoping rebuilds. Produces a 5-page
+  deal-grade PDF (plus TXT and MD) combining four analyzers:
+  Stack Reality Check (language census, framework detection, EOL
+  flagging), Key-Person Risk (git history parsing, bus factor,
+  contributor concentration, departed-author flagging), Hidden
+  Dependency Map (license risk, EOL exposure, commercial
+  encumbrances), and Modernization Roadmap (LLM-synthesized
+  stabilize-vs-rebuild recommendation with 90-day plan and
+  confidence rating). Runs in roughly 30 to 60 seconds at roughly
+  $0.02 to $0.04 per audit in API charges. Validated end-to-end
+  against magento/meta-for-magento2 in three configurations:
+  local clone (666 files, 68 deps, multi-author KPR), GitHub
+  capped (198 files, 8 deps, graceful KPR degradation), GitHub
+  full (669 files, 68 deps, complete coverage matching local).
+
+- **Per-run model picker in Audit Mode.**
+  Inquirer list prompt between project label and cost estimate.
+  Default selection respects the user's global defaultModel config
+  so pressing Enter is the happy path. Audit is a high-stakes
+  deliverable; users may want Opus for an important deal even if
+  they run POI on Sonnet day-to-day. Cost estimate reflects the
+  per-run model choice, not the global config.
+
+- **Save prompt in Audit Mode.**
+  `Save this audit to ~/Ghost Architect Reports/?` confirm before
+  saveReport runs. Default Yes (audit is the deliverable). User can
+  bail if the synthesis came back weak. Matches POI/Blast convention.
+
+- **GitHub loader file-count prompt for large repos.**
+  When the GitHub loader detects more than 200 code files in the
+  user's selected folders, pause before fetching and ask whether
+  to fetch all or sample the first 200. Default Yes (fetch all)
+  since senior users running deal-grade audits expect complete
+  coverage. The prompt tells the user the cost estimate fires
+  inside the mode before the report runs, so they get a second
+  chance to bail at no cost. Behavior applies to every mode that
+  loads from GitHub, not just Audit.
+
+### Tier gating
+
+- **Audit Mode is Pro+ entirely.**
+  On Ghost Open, selecting Inheritance Audit shows a clean
+  information panel explaining what the feature does, what it
+  costs, and how to upgrade. No partial run, no analyzers, no
+  API charges. The user picks 'Back to mode menu' (default) or
+  'Open pricing page in browser' and the flow continues. The
+  paywall takes the same fail-closed posture as the existing
+  Pro+ Project Intelligence gating from v5.2.1: tier defaults
+  to 'open' if any caller forgets to pass it.
+
+- **Why no stripped-down free version of Audit Mode.**
+  A stripped-down free version misrepresents the product. An
+  Open user either thinks "that's all it does" (damaging
+  Ghost's reputation for what Audit IS) or feels held hostage.
+  Audit Mode is a deal-grade artifact; Open gets the honest
+  information panel and an explicit upgrade path.
+
+### Notes
+
+- Audit Mode v0.4.0 ships with all four analyzers live and
+  deal-grade reports saving. Future enhancements scheduled for
+  later versions: audit-over-time comparison (Team tier
+  differentiator), custom PDF branding (Enterprise tier
+  differentiator), transitive dependency walking, CVE scanning.
+
+- Stack Reality framework dedup: composer.json files in each
+  Magento module previously triggered duplicate PHP detections.
+  Fixed via dedup map keyed on (name, version).
+
+- Version constraint normalization: Composer multi-version
+  syntax `8.1.0||~8.2.0||~8.3.0||~8.4.0` previously leaked into
+  deal-grade reports. Normalized to clean range `8.1.0 – 8.4.0`.
+
 ## [5.2.1] - 2026-05-10
 
 ### Fixed
