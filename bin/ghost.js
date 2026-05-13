@@ -16,7 +16,7 @@ import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { runAuditMode } from '../src/modes/audit/index.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
-import { checkFirstRun } from '../src/onboarding/firstRun.js';
+import { checkFirstRun, pingModeUsage } from '../src/onboarding/firstRun.js';
 import { listPresets } from '../src/loader/excludes.js';
 import fs from 'fs';
 import path from 'path';
@@ -36,7 +36,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.4.1';
+const VERSION      = '5.4.2';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -287,7 +287,13 @@ async function main() {
     const dirPath = process.cwd();
     console.log(`Ghost Architect scanning: ${dirPath}`);
     const codebaseContext = await loadFromPath(dirPath);
-    if (codebaseContext) await runPOIMode(codebaseContext, { nonInteractive: true });
+    if (codebaseContext) {
+      // Mode-usage telemetry — Claude Code plugin invokes POI directly.
+      // Awaited (not fire-and-forget) because process.exit(0) below
+      // would otherwise kill the event loop before the ping lands.
+      try { await pingModeUsage(VERSION, 'poi'); } catch (_) {}
+      await runPOIMode(codebaseContext, { nonInteractive: true });
+    }
     process.exit(0);
   }
 
@@ -405,6 +411,9 @@ async function main() {
           targetModel = answer.targetModel;
         }
 
+        // Mode-usage telemetry. See main switch below for design notes.
+        pingModeUsage(VERSION, 'prompt-triage').catch(() => {});
+
         try {
           await runPromptTriageMode({
             source: { kind: 'localFolder', path: folderPath.trim() },
@@ -436,6 +445,13 @@ async function main() {
       printBanner();
       continue;
     }
+
+    // Mode-usage telemetry. Anonymous, fire-and-forget, captures
+    // which mode the user selected from the menu so Pulse can show
+    // a "Scan Modes" breakdown across the install base. Never blocks
+    // the mode dispatch itself — if the network is slow, the scan
+    // still runs at full speed.
+    pingModeUsage(VERSION, mode).catch(() => {});
 
     switch (mode) {
       case 'chat':      await runChatMode(codebaseContext);     break;

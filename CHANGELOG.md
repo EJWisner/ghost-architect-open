@@ -5,6 +5,26 @@ All notable changes to Ghost Architect Open are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.4.2] - 2026-05-13
+
+### Added
+
+- **Mode-usage telemetry.** Anonymous, per-scan pings now fire when a
+  user enters a scan mode (Chat, POI, Blast Radius, Conflict Detection,
+  Recon, Inheritance Audit, Prompt Triage). This gives the Pulse
+  dashboard a "Scan Modes" breakdown across the install base so we can
+  see which features users actually run, not just which tier they
+  install. Same anonymous envelope as the existing heartbeat: only the
+  anonymous userId, CLI version, mode tag, and timestamp are sent. No
+  code, no codebase fingerprint, no findings, no file paths.
+
+  Pings fire on mode entry (after the user picks a mode from the
+  menu, before the scan starts). The `--scan` Claude Code plugin
+  path fires a `mode-poi` ping since it bypasses the menu and runs
+  POI directly. Opt out via `GHOST_NO_PING=1` — same env var that
+  governs all other telemetry. Failures stay silent and never block
+  the CLI.
+
 ## [5.4.1] - 2026-05-13
 
 ### Fixed

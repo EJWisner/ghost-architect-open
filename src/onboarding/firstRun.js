@@ -397,6 +397,50 @@ async function runPrompt(rl, isUpgrade) {
   return { state: 'confirmed', email: emailRaw };
 }
 
+// ── Mode-usage telemetry ────────────────────────────────────────────────
+//
+// Fires a single anonymous ping when a user enters a scan mode (POI,
+// Blast, Conflict, Recon, Chat, Prompt Triage). This is how the Pulse
+// dashboard learns which features customers actually use, without
+// collecting any code or codebase metadata.
+//
+// The event tag is `mode-<name>` (e.g. `mode-poi`) so it lands in the
+// existing event-sources histogram in the Pulse dashboard. Friendly
+// labels for these tags are mapped in pulse-x7k2m9.html SOURCE_LABELS.
+//
+// Privacy: only the anonymous userId, version, mode name, and
+// timestamp are transmitted. Same envelope as the existing heartbeat.
+// No PII, no file paths, no findings.
+//
+// Failure modes:
+//   • No config file (user opted out / Ctrl-C'd at firstrun) → silent no-op
+//   • GHOST_NO_PING=1 set                                     → silent no-op
+//   • Network error / Worker down                              → silent no-op
+//
+// Never throws. Never blocks. Fire-and-forget by design — we await it
+// inside a try/catch in each mode entry so the CLI never hangs on
+// a slow Worker, but a hung Worker should not delay a real scan
+// either, so callers can choose to not-await if they prefer.
+
+export async function pingModeUsage(version, mode) {
+  if (pingDisabled()) return;
+
+  const config = readConfig();
+  if (!config || !config.userId) return;
+
+  try {
+    await postSignup({
+      userId: config.userId,
+      email: null,
+      version,
+      source: `mode-${mode}`,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (_) {
+    // Silent — telemetry must never break the CLI.
+  }
+}
+
 // ── Main entry point ────────────────────────────────────────────────────
 //
 // `sourceTag` is an optional override used by the --scan code path in
