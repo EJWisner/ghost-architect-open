@@ -11,7 +11,7 @@
 //      per-userId activity over time without collecting any PII
 //
 // Design principles:
-//   1. Fully optional. Three states (Y/N/S), default-to-yes UX.
+//   1. Fully optional. Three states (Y/N/S), default-to-yes UX in TTY.
 //   2. Graceful failure. Network errors, parse errors, signal
 //      interrupts — none of them block the CLI startup.
 //   3. Once per machine. Config persists at ~/.ghost-architect/
@@ -20,8 +20,10 @@
 //      only a locally-generated UUID + version + timestamp. No
 //      email, no machine details, no file contents.
 //   5. Easy opt-out. GHOST_NO_PING=1 disables all network calls.
-//   6. Non-interactive contexts skip the prompt cleanly (CI, Docker,
-//      scripts) — checked via process.stdin.isTTY.
+//   6. Non-interactive contexts (CI, Docker, scripts) still ping
+//      anonymously so we can count installs and heartbeats, but
+//      never prompt for email. Source field is tagged with the
+//      detected environment so we know where installs come from.
 //
 // This module is Open-only. It does not exist on the Pro or Team
 // branches; Pro/Team users provided email at purchase.
@@ -43,6 +45,42 @@ const POST_TIMEOUT_MS = 3000;
 const USAGE_PING_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// ── Environment detection ───────────────────────────────────────────────
+//
+// Detect the runtime environment so non-interactive installs are tagged
+// with where they came from. This gives EJ a source breakdown in Pulse
+// showing the real distribution: Docker dev environments, CI runners,
+// Claude Code plugin invocations, etc.
+//
+// Order matters: most specific first. A GitHub Actions runner inside a
+// Docker container should be tagged as GitHub Actions, not Docker.
+
+function detectEnvironment() {
+  // CI environments — check specific platforms before generic CI flag
+  if (process.env.GITHUB_ACTIONS) return 'ci-github';
+  if (process.env.GITLAB_CI) return 'ci-gitlab';
+  if (process.env.CIRCLECI) return 'ci-circle';
+  if (process.env.JENKINS_URL) return 'ci-jenkins';
+  if (process.env.BUILDKITE) return 'ci-buildkite';
+  if (process.env.TRAVIS) return 'ci-travis';
+  if (process.env.BITBUCKET_BUILD_NUMBER) return 'ci-bitbucket';
+  if (process.env.TF_BUILD) return 'ci-azure';
+  if (process.env.CI) return 'ci-other';
+
+  // Container detection. /.dockerenv exists in standard Docker images.
+  // Podman and some other runtimes set container=podman/oci.
+  try {
+    if (fs.existsSync('/.dockerenv')) return 'docker';
+  } catch (_) {}
+  if (process.env.container) return 'container';
+
+  // Claude Code plugin path is set explicitly by the caller before
+  // this function runs (via the source override below).
+
+  // Generic non-interactive
+  return 'noninteractive';
+}
 
 // ── Config helpers ──────────────────────────────────────────────────────
 
@@ -231,7 +269,10 @@ async function retryPendingSync(config) {
 // Updates config.lastPingAt on successful send to throttle subsequent
 // invocations. If the ping fails (network error, Worker down), we
 // don't update lastPingAt, so the next run will try again.
-async function maybeSendUsagePing(config, version) {
+//
+// In v5.4.1 this runs for both TTY and non-TTY contexts. Non-TTY
+// users get heartbeats too — they just never see a prompt.
+async function maybeSendUsagePing(config, version, sourceOverride) {
   if (!config || !config.userId) return config;
   if (pingDisabled()) return config;
 
@@ -245,11 +286,12 @@ async function maybeSendUsagePing(config, version) {
   }
 
   const timestamp = new Date(now).toISOString();
+  const source = sourceOverride || 'cli-usage';
   const result = await postSignup({
     userId: config.userId,
     email: null,
     version,
-    source: 'cli-usage',
+    source,
     timestamp,
   });
 
@@ -282,6 +324,36 @@ function needsUpgradePrompt(config) {
   if (typeof config.email !== 'undefined') return false;
   if (typeof config.upgradePromptedAt === 'string') return false;
   return true;
+}
+
+// ── Non-interactive fresh install path ──────────────────────────────────
+//
+// When stdin is not a TTY (Docker, CI, piped scripts, --scan from Claude
+// Code plugin), we cannot prompt for email — readline would either hang
+// or render junk in build logs. But we still want to count the install,
+// so we generate a userId, fire one anonymous ping tagged with the
+// detected environment, and persist a config so the user shows up in
+// subsequent heartbeats too.
+
+async function runNonInteractiveFirstRun(version, sourceTag) {
+  const userId = crypto.randomUUID();
+  const promptedAt = new Date().toISOString();
+  const env = sourceTag || detectEnvironment();
+  const source = `cli-firstrun-${env}`;
+
+  await pingAnonymous(userId, version, source, promptedAt);
+
+  writeConfig({
+    userId,
+    email: null,
+    optedIn: false,
+    promptedAt,
+    version,
+    skippedAt: null,
+    nonInteractive: true,
+    detectedEnv: env,
+    lastPingAt: promptedAt,
+  });
 }
 
 // ── Prompt loop (shared by first-run and upgrade paths) ─────────────────
@@ -326,14 +398,13 @@ async function runPrompt(rl, isUpgrade) {
 }
 
 // ── Main entry point ────────────────────────────────────────────────────
+//
+// `sourceTag` is an optional override used by the --scan code path in
+// bin/ghost.js to label Claude Code plugin invocations specifically.
+// When omitted, detectEnvironment() figures out the source from env vars.
 
-export async function checkFirstRun(version) {
-  // Non-interactive contexts (CI, Docker builds, piped scripts) — the
-  // readline prompt would either hang or appear broken. Skip cleanly.
-  // We don't write a config either; next interactive run will prompt.
-  if (!process.stdin.isTTY) {
-    return;
-  }
+export async function checkFirstRun(version, sourceTag) {
+  const isTTY = !!process.stdin.isTTY;
 
   // ── PATH 1: Config exists ──────────────────────────────────────────
   if (configExists()) {
@@ -344,18 +415,32 @@ export async function checkFirstRun(version) {
     existing = await retryPendingSync(existing);
 
     // Edge case: config exists but is missing userId/email fields
-    // (theoretical upgrade-from-pre-5.3.1 path). Run upgrade prompt.
-    if (needsUpgradePrompt(existing)) {
+    // (theoretical upgrade-from-pre-5.3.1 path). Only run upgrade
+    // prompt if we have a TTY; otherwise just send a heartbeat as if
+    // they were a returning user.
+    if (needsUpgradePrompt(existing) && isTTY) {
       await runUpgradePrompt(existing, version);
       return;
     }
 
-    // Normal path: existing user, just send a throttled heartbeat.
-    await maybeSendUsagePing(existing, version);
+    // Normal path: existing user, send throttled heartbeat.
+    // For non-TTY users, tag the heartbeat with the detected env so
+    // we can see WHERE returning users are running ghost from.
+    const heartbeatSource = isTTY
+      ? 'cli-usage'
+      : `cli-usage-${sourceTag || detectEnvironment()}`;
+    await maybeSendUsagePing(existing, version, heartbeatSource);
     return;
   }
 
   // ── PATH 2: Fresh install, no config yet ───────────────────────────
+  if (!isTTY) {
+    // Non-interactive: ping + persist config, no prompt.
+    await runNonInteractiveFirstRun(version, sourceTag);
+    return;
+  }
+
+  // Interactive: full prompt flow.
   await runFreshInstallPrompt(version);
 }
 

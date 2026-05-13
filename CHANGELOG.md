@@ -5,6 +5,29 @@ All notable changes to Ghost Architect Open are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.4.1] - 2026-05-13
+
+### Fixed
+
+- **Non-interactive telemetry.** Anonymous install pings and 24-hour
+  heartbeats now also fire when the CLI runs in non-TTY contexts
+  (Docker containers, CI runners, piped scripts, the Claude Code
+  plugin's `--scan` path). Previously these contexts silently exited
+  the first-run flow with no ping, which made install counts and
+  active-user metrics undercount real-world usage by a wide margin.
+
+  Behavior is unchanged for interactive terminal users — the email
+  signup prompt still fires once on first run and is fully optional
+  (Y/N/S). Non-interactive contexts never see the prompt, only a
+  single anonymous ping per install plus the existing 24-hour
+  heartbeat. Pings include a source field tagged with the detected
+  environment (Docker, GitHub Actions, GitLab CI, CircleCI, Jenkins,
+  Buildkite, Travis, Bitbucket, Azure Pipelines, Claude Code plugin,
+  generic CI, or generic non-interactive).
+
+  Opt out by setting `GHOST_NO_PING=1`. All failures stay silent and
+  never block the CLI.
+
 ## [5.4.0] - 2026-05-12
 
 ### Added

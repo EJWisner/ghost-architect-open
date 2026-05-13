@@ -36,7 +36,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.4.0';
+const VERSION      = '5.4.1';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -166,6 +166,8 @@ Options:
   --help, -h               Print this help and exit.
 
 When flags are omitted, Ghost runs interactively and uses your configured defaults.
+
+Anonymous telemetry: set GHOST_NO_PING=1 to disable all phone-home pings.
 `);
 }
 
@@ -269,8 +271,19 @@ async function selectMode(codebaseContext) {
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 async function main() {
-  // Non-interactive scan mode for Claude Code plugin
+  // Non-interactive scan mode for Claude Code plugin.
+  // v5.4.1: this path now also fires a telemetry ping so we can see
+  // Claude Code plugin usage in Pulse. Source tag forces it into the
+  // 'cli-firstrun-claude-code' / 'cli-usage-claude-code' buckets.
   if (process.argv.includes("--scan")) {
+    // Ping happens BEFORE the scan so even a crash during scanning
+    // doesn't lose the install record. Awaited so the request actually
+    // completes before process.exit() below kills the event loop.
+    try {
+      await checkFirstRun(VERSION, 'claude-code');
+    } catch (_) {
+      // Telemetry must never block real work. Swallow and continue.
+    }
     const dirPath = process.cwd();
     console.log(`Ghost Architect scanning: ${dirPath}`);
     const codebaseContext = await loadFromPath(dirPath);
@@ -302,6 +315,8 @@ async function main() {
 
   // First-run email capture (Open only). Runs once per machine on
   // initial CLI invocation. Fully optional, graceful failure.
+  // v5.4.1: now also fires anonymous ping in non-TTY contexts
+  // (Docker, CI, piped scripts) with environment-tagged source.
   // See src/onboarding/firstRun.js for the full design.
   await checkFirstRun(VERSION);
 
