@@ -21,14 +21,16 @@ Six scan modes are available:
 - **Recon** — sizing-only mode. Single planner call, ~$0.05. Tells you what a full scan would surface before you commit to running one.
 - **Prompt Triage** — audit a folder of LLM prompts for defects: ambiguous instructions, conflicting directives, prompt-injection patterns, undefined output formats, token-budget overflows, and more. Backed by 15 detectors built on the Tian et al. (2025) prompt-defect taxonomy.
 
-Every codebase scan produces three files:
+Every codebase scan produces report files in `~/Ghost Architect Reports/`:
 
 - `ghost-poi.txt` / `ghost-poi.md` / `ghost-poi.pdf` — for Points of Interest
 - `ghost-blast.txt` / `ghost-blast.md` / `ghost-blast.pdf` — for Blast Radius
 - `ghost-conflict.txt` / `ghost-conflict.md` / `ghost-conflict.pdf` — for Conflict Detection
 - `ghost-recon.txt` / `ghost-recon.md` / `ghost-recon.pdf` — for Recon
 
-Reports save to `~/Ghost Architect Reports/` and overwrite the prior run for that mode. Chat is interactive only and does not save a transcript.
+As of **v5.5.0**, every POI scan also writes a structured `ghost-poi.findings.json` sidecar — the same findings as the report, but machine-readable. Stable finding IDs, severity, file paths, effort estimates, and confidence scores. Feed it into your own dashboard, ticket tracker, or risk register. Ghost Platform™ portal customers get cross-scan Open / New / Fixed tracking, severity filtering, and remediation cost totals on top of this data automatically.
+
+Reports overwrite the prior run for that mode. Chat is interactive only and does not save a transcript.
 
 Prompt Triage saves a timestamped Markdown report (one per scan, never overwritten) to `~/Ghost Architect Reports/prompt-triage/prompt-triage-YYYYMMDD-HHMMSS.md`.
 
@@ -195,7 +197,7 @@ On first run, Ghost Architect Open asks once whether you'd like to receive occas
 
 The first-run prompt is fully optional. Pick "No" or "Skip" and Ghost saves a local config so it never asks again.
 
-**Anonymous heartbeat (v5.3.2+).** Whether you opt in or not, Ghost sends an anonymous ping when you run the CLI — at most once per 24 hours per machine. The ping contains only a locally-generated random UUID, the Ghost version, a source tag (e.g. `cli-usage`, `cli-firstrun-no`), and a timestamp. No email, no code, no system info, no IP-level tracking beyond what any HTTP request inherently carries. This lets us see how many people are actively using Ghost over time so we know where to invest. Disable entirely with `GHOST_NO_PING=1` in your environment.
+**Anonymous heartbeat.** Whether you opt in or not, Ghost sends an anonymous ping when you run the CLI — at most once per 24 hours per machine. The ping contains only a locally-generated random UUID, the Ghost version, a source tag (e.g. `cli-usage`, `cli-firstrun-no`, `cli-install`), and a timestamp. No email, no code, no system info, no IP-level tracking beyond what any HTTP request inherently carries. This lets us see how many people are actively using Ghost over time so we know where to invest. Disable entirely with `GHOST_NO_PING=1` in your environment.
 
 If you opt in:
 - We collect: your email address, the anonymous install ID (UUID), the Ghost version, and a timestamp.
