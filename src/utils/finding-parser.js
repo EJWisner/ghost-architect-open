@@ -21,7 +21,15 @@
 export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?(.+?)$/;
 export const SEVERITY_RE = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
 export const FILES_RE    = /^[Ff]iles?\s*:\s*(.+)/;
-export const EFFORT_RE   = /^[Ee]ffort\s*:[^\d]*([\d.]+[\u2013\-][\d.]+)\s*(?:hours?|hrs?)/i;
+// Matches "Effort: 3-5 hours" or "Effort: 4 hours" at the start of a line.
+// Accepts both ranges (3-5, 3–5) and single values (4, 4.5). Captures the
+// full value text; the parser splits/parses it after the match.
+export const EFFORT_RE   = /^[Ee]ffort\s*:[^\d]*([\d.]+(?:[\u2013\-][\d.]+)?)\s*(?:hours?|hrs?)/i;
+// Same pattern as EFFORT_RE but unanchored — finds inline effort hidden
+// inside pipe-separated metadata lines like "Severity: HIGH | Effort: 3-5
+// hours | Complexity: Medium | Cost: $360-480". Used as a fallback when the
+// effort field shares a line with severity instead of getting its own line.
+export const EFFORT_INLINE_RE = /[Ee]ffort\s*:[^\d]*([\d.]+(?:[\u2013\-][\d.]+)?)\s*(?:hours?|hrs?)/i;
 
 /**
  * Strip markdown bold/italic markers (`**`, `*`) from a line.
@@ -184,7 +192,22 @@ export function extractFindings(reportText, opts = {}) {
 
     if (current) {
       const sm = t.match(SEVERITY_RE);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
+      if (sm) {
+        current.severity = sm[1].toUpperCase();
+        // v5.5.1+: pipe-separated metadata lines often pack severity, effort,
+        // complexity, and cost onto a single line. Try to extract inline
+        // effort from the same line before continuing. Without this, any
+        // report using the format "Severity: X | Effort: Y hours | ..." loses
+        // its effort estimates because the parser already consumed the line.
+        if (current.effortHours === 0) {
+          const eim = t.match(EFFORT_INLINE_RE);
+          if (eim) {
+            const parts = eim[1].split(/[\u2013\-]/);
+            current.effortHours = parseFloat(parts[parts.length - 1]) || 0;
+          }
+        }
+        continue;
+      }
 
       const fim = t.match(FILES_RE);
       if (fim) {
@@ -195,11 +218,26 @@ export function extractFindings(reportText, opts = {}) {
         continue;
       }
 
+      // Line-start "Effort: ..." pattern (each field on its own line)
       const em = t.match(EFFORT_RE);
       if (em) {
         const parts = em[1].split(/[\u2013\-]/);
         current.effortHours = parseFloat(parts[parts.length - 1]) || 0;
         continue;
+      }
+
+      // Inline effort fallback — catches "Effort:" tokens embedded in
+      // pipe-separated metadata or anywhere mid-line. Only fires when we
+      // don't already have an effort value to avoid overwriting a clean
+      // line-anchored match.
+      if (current.effortHours === 0) {
+        const eim = t.match(EFFORT_INLINE_RE);
+        if (eim) {
+          const parts = eim[1].split(/[\u2013\-]/);
+          current.effortHours = parseFloat(parts[parts.length - 1]) || 0;
+          // Don't continue — the line might also contain detail text we
+          // want to capture. Fall through to the detail-accumulation branch.
+        }
       }
 
       if (t && t.length > 10 && !t.startsWith('---') && !t.startsWith('===') && !tRaw.startsWith('```') && !t.startsWith('|')) {
