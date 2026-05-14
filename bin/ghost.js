@@ -16,7 +16,7 @@ import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { runAuditMode } from '../src/modes/audit/index.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
-import { checkFirstRun, pingModeUsage } from '../src/onboarding/firstRun.js';
+import { checkFirstRun, pingModeUsage, pingHeartbeatNoPrompt } from '../src/onboarding/firstRun.js';
 import { listPresets } from '../src/loader/excludes.js';
 import fs from 'fs';
 import path from 'path';
@@ -36,7 +36,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.4.2';
+const VERSION      = '5.4.3';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -305,6 +305,15 @@ async function main() {
   const argv = process.argv.slice(2);
   const cliOpts = parseArgs(argv);
 
+  // v5.4.3: capture the curious-installer flow. Users who run
+  // `ghost --help` or `ghost --version` right after install were
+  // previously exiting before any ping fired. Fire a non-interactive
+  // heartbeat here so we see them in Pulse as 'cli-help' / 'cli-version'.
+  if (cliOpts.help) {
+    try { await pingHeartbeatNoPrompt(VERSION, 'help'); } catch (_) {}
+  } else if (cliOpts.version) {
+    try { await pingHeartbeatNoPrompt(VERSION, 'version'); } catch (_) {}
+  }
   if (cliOpts.help)    { printUsage(); process.exit(0); }
   if (cliOpts.version) { console.log(`ghost-architect v${VERSION} (${TIER})`); process.exit(0); }
 

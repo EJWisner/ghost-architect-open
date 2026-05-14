@@ -38,7 +38,8 @@ import https from 'https';
 const CONFIG_DIR = path.join(os.homedir(), '.ghost-architect');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const SIGNUP_ENDPOINT = 'https://signup.ghostarchitect.dev/signup';
-const POST_TIMEOUT_MS = 3000;
+const POST_TIMEOUT_MS = 10000;
+const POST_RETRY_DELAY_MS = 2000;
 
 // Heartbeat throttle: only send a usage ping if the last one was more
 // than 24 hours ago. Users who run ghost 20x/day don't generate 20x rows.
@@ -121,7 +122,24 @@ function pingDisabled() {
   return process.env.GHOST_NO_PING === '1';
 }
 
+// Two-attempt wrapper around the actual HTTP POST. Slow networks,
+// hotel wifi, corporate VPNs, and Cloudflare cold-starts all cause
+// silent first-attempt failures. One retry with a 2s delay recovers
+// most of those without ever blocking the CLI.
 function postSignup(payload) {
+  return new Promise(async (resolve) => {
+    const first = await postSignupOnce(payload);
+    if (first.ok || first.disabled) {
+      resolve(first);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, POST_RETRY_DELAY_MS));
+    const second = await postSignupOnce(payload);
+    resolve(second);
+  });
+}
+
+function postSignupOnce(payload) {
   return new Promise((resolve) => {
     // Respect global opt-out env var.
     if (pingDisabled()) {
@@ -335,6 +353,36 @@ function needsUpgradePrompt(config) {
 // detected environment, and persist a config so the user shows up in
 // subsequent heartbeats too.
 
+// Exported for v5.4.3 use by --help and --version paths in bin/ghost.js,
+// which need to fire a one-shot install ping without showing the
+// interactive prompt. The 'cli-help' / 'cli-version' source tag lets
+// us see this segment separately in Pulse.
+export async function pingHeartbeatNoPrompt(version, sourceTag) {
+  if (pingDisabled()) return;
+  if (configExists()) return; // already counted, no need to ping again
+
+  const userId = crypto.randomUUID();
+  const promptedAt = new Date().toISOString();
+  const source = `cli-${sourceTag}`;
+
+  try {
+    await pingAnonymous(userId, version, source, promptedAt);
+    writeConfig({
+      userId,
+      email: null,
+      optedIn: false,
+      promptedAt,
+      version,
+      skippedAt: null,
+      nonInteractive: true,
+      detectedEnv: sourceTag,
+      lastPingAt: promptedAt,
+    });
+  } catch (_) {
+    // Silent — telemetry must never break the CLI.
+  }
+}
+
 async function runNonInteractiveFirstRun(version, sourceTag) {
   const userId = crypto.randomUUID();
   const promptedAt = new Date().toISOString();
@@ -425,12 +473,17 @@ async function runPrompt(rl, isUpgrade) {
 export async function pingModeUsage(version, mode) {
   if (pingDisabled()) return;
 
+  // If config exists, use the persistent userId so we can correlate
+  // mode usage with the firstRun event. If config doesn't exist yet
+  // (very first invocation, before checkFirstRun finishes writing),
+  // generate an anonymous one-shot userId so we still capture the mode.
+  // This is what fixes the "first run logs firstRun but not mode" gap.
   const config = readConfig();
-  if (!config || !config.userId) return;
+  const userId = config?.userId || `anon-${crypto.randomUUID()}`;
 
   try {
     await postSignup({
-      userId: config.userId,
+      userId,
       email: null,
       version,
       source: `mode-${mode}`,
