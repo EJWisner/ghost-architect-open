@@ -77,14 +77,63 @@ export async function saveReport(content, prefix, label, meta = {}) {
 
   const pdfExists = fs.existsSync(pdfPath);
 
+  // Save FINDINGS.JSON — structured findings data for portal/mobile consumption.
+  // v5.5.0+: when meta.findings is provided (an array of structured finding
+  // objects from extractFindings()), write it as a sibling .findings.json
+  // file. Schema: { schema: 1, mode, project, generated, tool, findings: [...] }
+  // Modes that don't yet expose structured findings simply omit meta.findings
+  // and no JSON file is written. Backwards compatible — nothing breaks if
+  // findings are absent.
+  let findingsPath = null;
+  if (Array.isArray(meta.findings) && meta.findings.length > 0) {
+    const findingsPayload = {
+      schema: 1,
+      mode: prefix.replace(/^ghost-/, ''),
+      project: label || 'Project Analysis',
+      generated: new Date().toISOString(),
+      tool: `Ghost Architect v${GHOST_VERSION}`,
+      filesAnalyzed: meta.filesAnalyzed || null,
+      totalFiles: meta.totalFiles || null,
+      severityCounts: {
+        critical: meta.critical || 0,
+        high:     meta.high     || 0,
+        medium:   meta.medium   || 0,
+        low:      meta.low      || 0,
+      },
+      totals: {
+        findingCount: meta.findingCount || meta.findings.length,
+        totalHours: meta.totalHours || null,
+        totalCost:  meta.totalCost  || null,
+      },
+      findings: meta.findings.map((f) => ({
+        id: f.id,
+        title: f.title,
+        severity: f.severity,
+        files: Array.isArray(f.files) ? f.files : [],
+        effortHours: typeof f.effortHours === 'number' ? f.effortHours : 0,
+        confidence: typeof f.confidence === 'number' ? f.confidence : null,
+        detail: typeof f.detail === 'string' ? f.detail.slice(0, 1200) : '',
+      })),
+    };
+    findingsPath = path.join(dir, `${baseName}.findings.json`);
+    try {
+      fs.writeFileSync(findingsPath, JSON.stringify(findingsPayload, null, 2));
+    } catch (err) {
+      console.log(chalk.gray(`  (findings.json save skipped — ${err.message})`));
+      findingsPath = null;
+    }
+  }
+
   return {
     filename: baseName,
     txtFile: `${baseName}.txt`,
     mdFile: `${baseName}.md`,
     pdfFile: pdfExists ? `${baseName}.pdf` : null,
+    findingsFile: findingsPath ? `${baseName}.findings.json` : null,
     txtPath,
     mdPath,
     pdfPath: pdfExists ? pdfPath : null,
+    findingsPath,
     dir: REPORTS_DIR
   };
 }

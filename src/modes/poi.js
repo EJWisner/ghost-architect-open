@@ -401,6 +401,12 @@ export async function runPOIMode(codebaseContext) {
       resolved:       resolvedCount,
       newFindings:    projectIntelResult?.newIssues      || 0,
       scans:          [],
+      // v5.5.0+: structured findings array for portal/mobile consumption.
+      // saveReport() writes these to a sibling .findings.json file when
+      // present. Open users get the same JSON output as Pro/Team/Enterprise
+      // because the data is parsed from the report buffer locally — no
+      // upstream gate, no tier check, no extra API calls.
+      findings: parsedFindings,
     };
 
     if (doSave) {
@@ -410,6 +416,7 @@ export async function runPOIMode(codebaseContext) {
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
+      if (saved.findingsFile) console.log(chalk.gray(`  🔍 ${saved.findingsFile}`));
       console.log('');
     }
 
