@@ -28,7 +28,7 @@ Every codebase scan produces report files in `~/Ghost Architect Reports/`:
 - `ghost-conflict.txt` / `ghost-conflict.md` / `ghost-conflict.pdf` — for Conflict Detection
 - `ghost-recon.txt` / `ghost-recon.md` / `ghost-recon.pdf` — for Recon
 
-As of **v5.5.0**, every POI scan also writes a structured `ghost-poi.findings.json` sidecar — the same findings as the report, but machine-readable. Stable finding IDs, severity, file paths, effort estimates, and confidence scores. Feed it into your own dashboard, ticket tracker, or risk register. Ghost Platform™ portal customers get cross-scan Open / New / Fixed tracking, severity filtering, and remediation cost totals on top of this data automatically.
+As of **v5.6.0**, every POI, Blast Radius, Conflict Detection, and Inheritance Audit scan also writes a structured `<report>.findings.json` sidecar — the same findings as the report, but machine-readable. Stable finding IDs, severity, file paths, effort estimates, and confidence scores. Feed it into your own dashboard, ticket tracker, or risk register. Ghost Platform™ portal customers get cross-scan Open / New / Fixed tracking, severity filtering, and remediation cost totals on top of this data automatically.
 
 Reports overwrite the prior run for that mode. Chat is interactive only and does not save a transcript.
 

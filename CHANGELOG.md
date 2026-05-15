@@ -5,6 +5,70 @@ All notable changes to Ghost Architect Open are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [5.6.0] - 2026-05-15
+
+### Added
+
+- **Structured findings JSON for Blast Radius, Conflict Detection, and
+  Inheritance Audit.** Each scan in these modes now writes a sibling
+  `<report>.findings.json` file alongside the existing TXT / MD / PDF
+  outputs. The format matches the v5.5.0 POI findings JSON: stable
+  finding IDs, severity (CRITICAL/HIGH/MEDIUM/LOW), file paths, effort
+  estimates, confidence scores, and per-finding detail.
+
+  Blast and Conflict extract findings from the model's report markdown
+  via the same shared parser POI uses. Audit is different: its findings
+  come from deterministic analyzers (dependency tree, EOL framework
+  detection, contributor concentration, stack-reality surprises) and
+  are normalized into the canonical schema directly — no model parsing.
+  Confidence for Audit findings is 1.0 because they are programmatic
+  observations, not LLM judgments. File mappings point at the actual
+  manifest files (composer.json, package.json) where dependencies and
+  framework declarations live.
+
+  Modes that don't yet emit structured findings (Chat, Compare, Recon)
+  remain unchanged — no `.findings.json` is written for those, which
+  is correct because their output isn't finding-shaped.
+
+## [5.5.1] - 2026-05-14
+
+### Fixed
+
+- **Finding parser extracts inline effort from pipe-separated
+  metadata.** When the model emits a single-line metadata header like
+  `Severity: HIGH | Effort: 3-5 hours | Complexity: Medium`, the
+  parser now correctly extracts the `effortHours` field instead of
+  leaving it at 0. The original `EFFORT_RE` regex was anchored at the
+  start of a line, so inline effort hidden inside a metadata pipe got
+  silently dropped. Added a separate unanchored `EFFORT_INLINE_RE`
+  used as a fallback when the line-start match misses.
+
+## [5.5.0] - 2026-05-13
+
+### Added
+
+- **POI writes structured findings JSON.** Every POI scan now writes a
+  `ghost-poi.findings.json` sidecar alongside the TXT / MD / PDF
+  outputs. Schema: `{ schema, mode, project, generated, tool,
+  filesAnalyzed, totalFiles, severityCounts, totals, findings: [...] }`.
+  Each finding has a stable ID, title, severity, file list, effort
+  hours, confidence, and detail. Designed for portal/mobile/dashboard
+  consumption. Backwards compatible — existing report files are
+  unchanged, the JSON is additive.
+
+## [5.4.3] - 2026-05-14
+
+### Fixed
+
+- **Telemetry capture reliability.** Several edge cases that caused
+  pings to silently drop are now fixed: outbound HTTP requests now
+  have a 3-second timeout (was unbounded, so a slow proxy could hang
+  the firstrun flow indefinitely); failed pings retry once after a
+  short backoff; the postinstall script now also fires an
+  `install-postinstall` ping so npm-side installs (which never enter
+  the interactive flow) get counted; `--help` and `--version` flags
+  now fire lightweight pings so CI-only usage shows up in Pulse.
+
 ## [5.4.2] - 2026-05-13
 
 ### Added
