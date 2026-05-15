@@ -127,7 +127,24 @@ export async function runBlastMode(codebaseContext) {
 
     if (doSave) {
       // Ghost Open v5.0.0: no label, overwrites ghost-blast.{txt,md,pdf}
-      const saved = await saveReport(buffer, 'ghost-blast', null);
+      // v5.6.0: also extract structured findings → sibling .findings.json
+      const { extractFindings } = await import('../utils/finding-parser.js');
+      const parsedFindings = extractFindings(buffer);
+      const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+      const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+      const lowCount      = parsedFindings.filter(f => f.severity === 'LOW').length;
+      const totalHours    = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
+
+      const saved = await saveReport(buffer, 'ghost-blast', null, {
+        findings: parsedFindings,
+        findingCount: parsedFindings.length,
+        critical: criticalCount,
+        high:     highCount,
+        medium:   mediumCount,
+        low:      lowCount,
+        totalHours,
+      });
       console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));

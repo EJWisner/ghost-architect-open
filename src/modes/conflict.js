@@ -260,6 +260,15 @@ export async function runConflictMode(codebaseContext) {
     }]);
 
     if (doSave) {
+      // v5.6.0: extract structured findings → sibling .findings.json
+      const { extractFindings } = await import('../utils/finding-parser.js');
+      const parsedFindings = extractFindings(buffer);
+      const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+      const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+      const lowCount      = parsedFindings.filter(f => f.severity === 'LOW').length;
+      const totalHours    = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
+
       const meta = {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
@@ -268,6 +277,13 @@ export async function runConflictMode(codebaseContext) {
         mode: 'conflict-detection',
         verified: result.verified || false,
         verificationStats: result.stats || null,
+        findings: parsedFindings,
+        findingCount: parsedFindings.length,
+        critical: criticalCount,
+        high:     highCount,
+        medium:   mediumCount,
+        low:      lowCount,
+        totalHours,
       };
       // Ghost Open v5.0.0: no label, overwrites ghost-conflict.{txt,md,pdf}
       const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
