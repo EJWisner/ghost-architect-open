@@ -45,3 +45,29 @@ export function getPublicKey() {
 export function getPublicKeyHex() {
   return PUBLIC_KEY_HEX;
 }
+
+// ── Trial-token HMAC secret ────────────────────────────────────────────────
+//
+// Trial tokens are signed with a symmetric HMAC-SHA256 secret baked into the
+// binary, NOT with Ed25519. This is deliberate: customers don't have access
+// to the Ed25519 private key (it lives only on EJ's iMac), so they can't
+// generate paid licenses for themselves. But trials need to start immediately
+// on first run without a server roundtrip, which means the CLI itself must
+// be able to mint and verify the trial token.
+//
+// Honest threat model: anyone who reverse-engineers the Pro binary can
+// extract this secret and mint trial tokens of arbitrary length. We accept
+// this because trial-tier tokens:
+//   - Block `audit` mode (the deal-grade output)
+//   - Watermark every PDF page ("TRIAL — Powered by Ghost Architect")
+//   - Are tracked per fingerprint (one trial per machine via configstore marker)
+// The bypass value is low enough that defending against it isn't worth the
+// added friction of an activation-server roundtrip for new evaluators.
+//
+// Rotating this secret invalidates all in-flight trials. Don't rotate
+// without a deprecation window.
+const TRIAL_HMAC_SECRET_HEX = '3cd1f69fe2a8603f51c3a56ec1d73bf73c2bb711a841e86cb0dfbc9da54d31f2';
+
+export function getTrialHmacSecret() {
+  return Buffer.from(TRIAL_HMAC_SECRET_HEX, 'hex');
+}

@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import { generatePDF } from './pdf-generator.js';
 import { getBranding } from './profile/index.js';
+import { isTrialActive, getActiveLicense } from './license/session.js';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _require('../package.json');
@@ -49,7 +50,20 @@ export async function saveReport(content, prefix, label, meta = {}) {
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
     : 'Report';
 
-  const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION, branding };
+  // Pull trial state from the active license session so PDFs generated under
+  // a trial license get watermarked. The active license is set once at CLI
+  // startup by bin/ghost.js and persists through all mode invocations.
+  const trial = isTrialActive();
+  const activeLicense = getActiveLicense();
+  const trialMeta = trial && activeLicense && activeLicense.payload
+    ? {
+        trial: true,
+        trialLicenseId: activeLicense.payload.lid,
+        trialExpires: activeLicense.payload.expires,
+      }
+    : { trial: false };
+
+  const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION, branding, ...trialMeta };
   
   try {
     await generatePDF(stripAnsi(content), pdfPath, metaWithType);

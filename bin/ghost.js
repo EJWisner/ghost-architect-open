@@ -51,6 +51,8 @@ import {
   hasLicense,
   getLicenseRecord,
 } from '../src/license/store.js';
+import { startTrial, checkEligibility, TRIAL_DURATION_DAYS } from '../src/license/trial.js';
+import { setActiveLicense, isTrialActive } from '../src/license/session.js';
 
 const VERSION   = '5.4.0-pro';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
@@ -81,6 +83,7 @@ function parseArgs(argv) {
     activate: null,
     licenseStatus: false,
     licenseClear: false,
+    startTrial: false,
     help: false,
     version: false,
   };
@@ -133,6 +136,7 @@ function parseArgs(argv) {
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
+    if (a === '--start-trial')      { out.startTrial = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -179,6 +183,9 @@ Licensing:
                            remaining, fingerprint match). Then exit.
   --license-clear          Remove the installed license from local storage.
                            Then exit. Useful for migrating to a new license.
+  --start-trial            Start a ${TRIAL_DURATION_DAYS}-day evaluation trial on this machine. One
+                           trial per fingerprint. Trial output is watermarked
+                           and audit mode is blocked. Then exit.
 
 Misc:
   --version, -v            Print version and exit.
@@ -732,6 +739,57 @@ async function runLicenseClearFlow() {
 }
 
 /**
+ * Handle `ghost --start-trial` — start a 14-day evaluation on this machine.
+ * Refuses if a license is already installed or a trial was previously used.
+ * On success, installs the trial token and prints the trial details.
+ *
+ * Also used internally when the user picks "Start trial" from the missing-
+ * license interactive prompt. Returns true on success, false on refusal.
+ */
+async function runStartTrialFlow() {
+  const elig = checkEligibility();
+  if (!elig.eligible) {
+    if (elig.reason === 'license_already_installed') {
+      console.log(chalk.gray(`\nA license is already installed. Run \`ghost --license\` to see current status.\n`));
+    } else {
+      console.log('\n' + boxen(
+        chalk.yellow.bold('Trial already used on this machine') + '\n\n' +
+        chalk.white(`Trial was started on ${elig.usedAt.slice(0, 10)}.`) + '\n' +
+        chalk.white('Each machine is eligible for one trial.') + '\n\n' +
+        chalk.gray('Purchase a Pro license at:') + '\n' +
+        chalk.cyan('  https://ghostarchitect.dev/pro'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+      console.log('');
+    }
+    return false;
+  }
+
+  let result;
+  try {
+    result = startTrial();
+  } catch (err) {
+    console.error(chalk.red(`\n${SYM.cross} Could not start trial: ${err.message}\n`));
+    return false;
+  }
+
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} Trial started`) + '\n\n' +
+    chalk.white('Tier:     ') + chalk.cyan('trial') + '\n' +
+    chalk.white('Duration: ') + chalk.cyan(`${TRIAL_DURATION_DAYS} days`) + '\n' +
+    chalk.white('Expires:  ') + chalk.cyan(result.payload.expires.slice(0, 10)) + '\n\n' +
+    chalk.gray('Trial mode notes:') + '\n' +
+    chalk.gray('  • Inheritance Audit mode is disabled (paid tiers only)') + '\n' +
+    chalk.gray('  • PDF output is watermarked "TRIAL — NOT FOR DISTRIBUTION"') + '\n' +
+    chalk.gray('  • All other modes (POI, Blast, Conflict, Recon, Chat) work fully') + '\n\n' +
+    chalk.gray('Upgrade at any time: ') + chalk.cyan('https://ghostarchitect.dev/pro'),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  console.log('');
+  return true;
+}
+
+/**
  * Render the appropriate banner for non-valid license states, BEFORE the
  * mode dispatch happens. For blocking states this also exits the process
  * after rendering — caller doesn't need to handle that.
@@ -740,17 +798,31 @@ async function runLicenseClearFlow() {
  * Returns false if the run can continue (state was valid or just a warning).
  */
 function renderLicenseStateAndMaybeBlock(result) {
-  // missing — offer the activation hint and block
+  // missing — show the offer (trial vs activate vs purchase) and block.
+  // Caller's responsibility to interactively prompt for trial start; this
+  // function only displays the static information.
   if (result.state === 'missing') {
-    console.log('\n' + boxen(
-      chalk.yellow.bold('No license installed') + '\n\n' +
-      chalk.white('Ghost Architect Pro requires an active license to run scans.') + '\n\n' +
-      chalk.white('Install your license:') + '\n' +
-      chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
-      chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pro') + '\n' +
-      chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'),
-      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
-    ));
+    const trialElig = checkEligibility();
+    const trialAvailable = trialElig.eligible;
+    const lines = [
+      chalk.yellow.bold('No license installed') + '\n',
+      chalk.white('Ghost Architect Pro requires an active license to run scans.') + '\n',
+    ];
+    if (trialAvailable) {
+      lines.push(chalk.white('You\'re eligible for a free ' + TRIAL_DURATION_DAYS + '-day evaluation trial.'));
+      lines.push(chalk.cyan('  ghost --start-trial') + chalk.gray('    (one trial per machine)'));
+      lines.push('');
+    } else if (trialElig.reason === 'trial_already_used') {
+      lines.push(chalk.gray(`Trial was previously used on this machine (${trialElig.usedAt.slice(0, 10)}).`));
+      lines.push('');
+    }
+    lines.push(chalk.white('Already have a license? Install it:'));
+    lines.push(chalk.cyan('  ghost --activate <signed-token-from-email>'));
+    lines.push('');
+    lines.push(chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pro'));
+    lines.push(chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'));
+    console.log('\n' + boxen(lines.join('\n'),
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }));
     console.log('');
     return true;
   }
@@ -788,7 +860,14 @@ function renderLicenseStateAndMaybeBlock(result) {
     console.log('');
     return false;
   }
-  // valid — silent
+  // valid — silent unless trial, in which case show one-line banner
+  if (result.payload && result.payload.tier === 'trial') {
+    const days = result.daysUntilExpires;
+    const daysLabel = days <= 0 ? 'expires today'
+      : days === 1 ? 'expires tomorrow'
+      : `${days} days remaining`;
+    console.log(chalk.yellow(`\n⚠  Trial mode active — ${daysLabel}. PDF output is watermarked. Audit mode is disabled.\n`));
+  }
   return false;
 }
 
@@ -815,6 +894,10 @@ async function main() {
   if (cliOpts.licenseClear) {
     await runLicenseClearFlow();
     process.exit(0);
+  }
+  if (cliOpts.startTrial) {
+    const ok = await runStartTrialFlow();
+    process.exit(ok ? 0 : 2);
   }
 
   // Headless Ghost Partner profile management flags. Each one performs its
@@ -905,7 +988,57 @@ async function main() {
   // Warning states (valid_warn / grace / expired) display a banner and let
   // the run continue.
   try {
-    const licenseResult = await validateLicense();
+    let licenseResult = await validateLicense();
+
+    // Interactive trial offer: in 'missing' state, if the user is eligible
+    // for a trial AND we're running in a TTY (not piped/scripted), offer to
+    // start one inline rather than forcing them to re-invoke with --start-trial.
+    if (licenseResult.state === 'missing' && process.stdin.isTTY && checkEligibility().eligible) {
+      console.log('\n' + boxen(
+        chalk.yellow.bold('No license installed') + '\n\n' +
+        chalk.white('Ghost Architect Pro requires an active license.'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+      const { choice } = await inquirer.prompt([{
+        type: 'list',
+        name: 'choice',
+        message: chalk.cyan(`How would you like to proceed?`),
+        theme: inquirerTheme,
+        choices: [
+          { name: `🚀  Start ${TRIAL_DURATION_DAYS}-day evaluation trial (one per machine)`, value: 'trial' },
+          { name: '🔑  I have a license — show me how to activate it', value: 'activate-instructions' },
+          { name: '🚪  Exit', value: 'exit' },
+        ],
+      }]);
+      if (choice === 'trial') {
+        const ok = await runStartTrialFlow();
+        if (ok) {
+          // Re-validate so the rest of the run sees the freshly-activated trial.
+          licenseResult = await validateLicense();
+        }
+      } else if (choice === 'activate-instructions') {
+        console.log('\n' + boxen(
+          chalk.cyan.bold('Activate your license') + '\n\n' +
+          chalk.white('Run:') + '\n' +
+          chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
+          chalk.gray('The signed token comes from your purchase confirmation email.\n') +
+          chalk.gray('Questions: ') + chalk.cyan('support@ghostarchitect.dev'),
+          { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+        ));
+        console.log('');
+        console.log(chalk.gray(`${COPYRIGHT}\n`));
+        process.exit(1);
+      } else {
+        console.log(chalk.gray('\nExiting. Run `ghost --start-trial` or `ghost --activate <token>` when ready.\n'));
+        console.log(chalk.gray(`${COPYRIGHT}\n`));
+        process.exit(1);
+      }
+    }
+
+    // Set active license for the session so downstream code (PDF generator
+    // watermark, audit-mode block) can consult it without re-parsing the token.
+    setActiveLicense(licenseResult);
+
     const blocked = renderLicenseStateAndMaybeBlock(licenseResult);
     if (blocked) {
       console.log(chalk.gray(`${COPYRIGHT}\n`));
@@ -1055,7 +1188,23 @@ async function main() {
       case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
       case 'conflict':  await runConflictMode(codebaseContext, { profile });  break;
       case 'recon':     await runReconMode(codebaseContext, { profile });  break;
-      case 'audit':     await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
+      case 'audit':
+        if (isTrialActive()) {
+          console.log('\n' + boxen(
+            chalk.yellow.bold('Inheritance Audit is a paid-tier feature') + '\n\n' +
+            chalk.white('You\'re on a trial license. The deal-grade Inheritance Audit\n') +
+            chalk.white('mode is disabled for trial users because its output is meant\n') +
+            chalk.white('for buyer-side diligence and fractional-CTO deliverables.') + '\n\n' +
+            chalk.white('Trial-available modes: POI, Blast, Conflict, Recon, Chat') + '\n\n' +
+            chalk.white('Upgrade to Pro to unlock Audit:') + '\n' +
+            chalk.cyan('  https://ghostarchitect.dev/pro'),
+            { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+          ));
+          console.log('');
+        } else {
+          await runAuditMode(codebaseContext, { profile, tier: TIER });
+        }
+        break;
       case 'compare':   await runCompareMode();                         break;
       case 'dashboard': await showProjectDashboard();                   break;
     }
