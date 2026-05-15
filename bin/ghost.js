@@ -38,6 +38,20 @@ import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 
+// ── License enforcement ────────────────────────────────────────────────────
+// v1 ships on the Pro umbrella main branch only. Ghost Open (MIT, public)
+// MUST NOT receive this code. Team and Enterprise inherit when those
+// branches sync forward from main.
+import { validateLicense, isBlocking } from '../src/license/validator.js';
+import { decodeAndVerifyToken } from '../src/license/token.js';
+import { currentFingerprintHashes } from '../src/license/fingerprint.js';
+import {
+  saveActivation,
+  clearLicense,
+  hasLicense,
+  getLicenseRecord,
+} from '../src/license/store.js';
+
 const VERSION   = '5.4.0-pro';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
@@ -64,6 +78,9 @@ function parseArgs(argv) {
     listProfiles: false,
     setDefaultProfile: null,
     clearDefaultProfile: false,
+    activate: null,
+    licenseStatus: false,
+    licenseClear: false,
     help: false,
     version: false,
   };
@@ -111,6 +128,11 @@ function parseArgs(argv) {
     if (a === '--set-default-profile')          { out.setDefaultProfile = argv[++i] || ''; continue; }
     if (a.startsWith('--set-default-profile=')) { out.setDefaultProfile = a.slice('--set-default-profile='.length); continue; }
     if (a === '--clear-default-profile')        { out.clearDefaultProfile = true; continue; }
+    // License management flags.
+    if (a === '--activate')         { out.activate = argv[++i] || ''; continue; }
+    if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
+    if (a === '--license')          { out.licenseStatus = true; continue; }
+    if (a === '--license-clear')    { out.licenseClear = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -149,6 +171,14 @@ Ghost Partner™ — white-label consultant profiles:
                            to every scan unless --profile or --no-profile is
                            passed. Then exit.
   --clear-default-profile  Remove the default profile setting. Then exit.
+
+Licensing:
+  --activate <token>       Install the signed license token you received by
+                           email. Bound to this machine on activation. Then exit.
+  --license                Show current license status (tier, expiration, days
+                           remaining, fingerprint match). Then exit.
+  --license-clear          Remove the installed license from local storage.
+                           Then exit. Useful for migrating to a new license.
 
 Misc:
   --version, -v            Print version and exit.
@@ -566,6 +596,202 @@ function printProfilesList() {
 
 // ── Main loop ────────────────────────────────────────────────────────────────
 
+// ── License helpers ────────────────────────────────────────────────────────
+
+/**
+ * Handle `ghost --activate <token>`. Verifies the token signature, binds it
+ * to this machine's hardware fingerprint, writes it to local storage. The
+ * fingerprint embedded in the token must match this machine 3-of-4 or
+ * activation refuses (token was issued for a different buyer's hardware).
+ */
+async function runActivateFlow(tokenString) {
+  if (!tokenString || !tokenString.trim()) {
+    console.error(chalk.red(`\n${SYM.cross} --activate requires a token. Paste the signed token from your license email.\n`));
+    process.exit(2);
+  }
+  const cleaned = tokenString.trim();
+  let decoded;
+  try {
+    decoded = decodeAndVerifyToken(cleaned);
+  } catch (e) {
+    console.error(chalk.red(`\n${SYM.cross} Activation failed: ${e.message}`));
+    console.error(chalk.gray('   The token may be corrupted in transit. Copy the entire blob from your license email\n   exactly, including the two `.` separators, and try again.\n'));
+    process.exit(2);
+  }
+  const payload = decoded.payload;
+  const fpHashes = currentFingerprintHashes();
+
+  // If the token has fingerprint binding, verify it matches THIS machine
+  // before we save. Otherwise the customer gets a useless license and
+  // a confusing "License is bound to a different machine" error on next run.
+  if (payload.fingerprint) {
+    const { matchesFingerprint } = await import('../src/license/fingerprint.js');
+    const m = matchesFingerprint(fpHashes, payload.fingerprint);
+    if (!m.match) {
+      console.error(chalk.red(`\n${SYM.cross} Activation refused: this license is bound to a different machine.`));
+      console.error(chalk.gray(`   Got ${m.matchCount} of 4 hardware components matching (need 3). If you have a new\n   machine, email support@ghostarchitect.dev to have your license reissued.\n`));
+      process.exit(2);
+    }
+  }
+
+  saveActivation({ token: cleaned, fingerprintHashes: fpHashes });
+
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} License activated`) + '\n\n' +
+    chalk.white('Customer: ') + chalk.cyan(payload.customer) + '\n' +
+    chalk.white('Tier:     ') + chalk.cyan(payload.tier) + '\n' +
+    chalk.white('Expires:  ') + chalk.cyan(payload.expires.slice(0, 10)) + '\n' +
+    chalk.white('Grace:    ') + chalk.cyan('through ' + payload.grace_until.slice(0, 10)),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  console.log('');
+}
+
+/**
+ * Handle `ghost --license` — show status without running validation against
+ * the network (so the command is fast and works offline).
+ */
+async function runLicenseStatusFlow() {
+  if (!hasLicense()) {
+    console.log('\n' + boxen(
+      chalk.yellow.bold(`No license installed`) + '\n\n' +
+      chalk.gray('Install a license with:') + '\n' +
+      chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
+      chalk.gray('Purchase at ') + chalk.cyan('https://ghostarchitect.dev/pro'),
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+    ));
+    console.log('');
+    return;
+  }
+  // Skip network clock check so this flag is fast + offline-safe.
+  const result = await validateLicense({ skipNetworkClock: true });
+  const record = getLicenseRecord();
+
+  const stateColor =
+    result.state === 'valid'      ? chalk.green :
+    result.state === 'valid_warn' ? chalk.yellow :
+    result.state === 'grace'      ? chalk.yellow :
+    result.state === 'expired'    ? chalk.red :
+    result.state === 'hard_stop'  ? chalk.red :
+    result.state === 'tampered'   ? chalk.red :
+    chalk.red;
+
+  const lines = [
+    chalk.cyan.bold(`License Status`) + '  ' + stateColor.bold(`[${result.state}]`),
+    '',
+    chalk.white('Customer:  ') + chalk.cyan(result.customer || '(unknown)'),
+    chalk.white('Tier:      ') + chalk.cyan(result.tier || '(unknown)'),
+  ];
+  if (result.expires) {
+    lines.push(chalk.white('Expires:   ') + chalk.cyan(result.expires.slice(0, 10)) +
+      chalk.gray(`  (${result.daysUntilExpires} days)`));
+  }
+  if (result.hard_stop) {
+    lines.push(chalk.white('Hard stop: ') + chalk.cyan(result.hard_stop.slice(0, 10)) +
+      chalk.gray(`  (${result.daysUntilHardStop} days)`));
+  }
+  if (record && record.activated_at) {
+    lines.push(chalk.white('Activated: ') + chalk.gray(record.activated_at.slice(0, 10)));
+  }
+  if (record && record.last_seen_utc) {
+    lines.push(chalk.white('Last seen: ') + chalk.gray(record.last_seen_utc));
+  }
+  if (result.message) {
+    lines.push('');
+    lines.push(stateColor(result.message));
+  }
+  console.log('\n' + boxen(lines.join('\n'),
+    { padding: 1, borderColor: stateColor === chalk.green ? 'green' :
+                                stateColor === chalk.yellow ? 'yellow' : 'red',
+      borderStyle: 'round' }));
+  console.log('');
+}
+
+/**
+ * Handle `ghost --license-clear` — remove the stored license. Asks for
+ * confirmation to prevent fat-finger accidents.
+ */
+async function runLicenseClearFlow() {
+  if (!hasLicense()) {
+    console.log(chalk.gray('\nNo license installed. Nothing to clear.\n'));
+    return;
+  }
+  const { confirm } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'confirm',
+    message: chalk.yellow('Remove the installed license? You will need to re-activate to run new scans.'),
+    default: false,
+    theme: inquirerTheme,
+  }]);
+  if (!confirm) {
+    console.log(chalk.gray('\nCancelled. License left in place.\n'));
+    return;
+  }
+  clearLicense();
+  console.log(chalk.green(`\n${SYM.check} License removed.\n`));
+}
+
+/**
+ * Render the appropriate banner for non-valid license states, BEFORE the
+ * mode dispatch happens. For blocking states this also exits the process
+ * after rendering — caller doesn't need to handle that.
+ *
+ * Returns true if the run should be blocked (caller should not proceed).
+ * Returns false if the run can continue (state was valid or just a warning).
+ */
+function renderLicenseStateAndMaybeBlock(result) {
+  // missing — offer the activation hint and block
+  if (result.state === 'missing') {
+    console.log('\n' + boxen(
+      chalk.yellow.bold('No license installed') + '\n\n' +
+      chalk.white('Ghost Architect Pro requires an active license to run scans.') + '\n\n' +
+      chalk.white('Install your license:') + '\n' +
+      chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
+      chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pro') + '\n' +
+      chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'),
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+    ));
+    console.log('');
+    return true;
+  }
+  if (isBlocking(result.state)) {
+    const headline =
+      result.state === 'hard_stop' ? 'License expired' :
+      result.state === 'invalid'   ? 'License invalid' :
+      result.state === 'tampered'  ? 'Clock validation failed' :
+                                     'License problem';
+    console.log('\n' + boxen(
+      chalk.red.bold(`${SYM.cross} ${headline}`) + '\n\n' +
+      chalk.white(result.message) + '\n\n' +
+      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pro') + '\n' +
+      chalk.gray('Help:  ') + chalk.cyan('support@ghostarchitect.dev'),
+      { padding: 1, borderColor: 'red', borderStyle: 'round' }
+    ));
+    console.log('');
+    console.log(chalk.gray('Existing reports on disk are unaffected. New scans are blocked until\nthe license is renewed.\n'));
+    return true;
+  }
+  // valid_warn / grace / expired — show banner, continue
+  if (result.state === 'valid_warn') {
+    console.log(chalk.yellow(`\n⚠  ${result.message}\n`));
+    return false;
+  }
+  if (result.state === 'grace' || result.state === 'expired') {
+    const color = result.state === 'expired' ? 'red' : 'yellow';
+    const chalkColor = result.state === 'expired' ? chalk.red : chalk.yellow;
+    console.log('\n' + boxen(
+      chalkColor.bold('License attention needed') + '\n\n' +
+      chalk.white(result.message) + '\n\n' +
+      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pro'),
+      { padding: 1, borderColor: color, borderStyle: 'round' }
+    ));
+    console.log('');
+    return false;
+  }
+  // valid — silent
+  return false;
+}
+
 async function main() {
   // Parse CLI flags first so --help / --version / --max-context etc. are honored
   // before we print the banner or run the setup wizard.
@@ -574,6 +800,22 @@ async function main() {
 
   if (cliOpts.help)    { printUsage(); process.exit(0); }
   if (cliOpts.version) { console.log(`ghost-architect v${VERSION} (${TIER})`); process.exit(0); }
+
+  // License management flags — handle and exit BEFORE we run any other
+  // setup so customers can always reach `--activate`, `--license`, and
+  // `--license-clear` even when their license is expired or missing.
+  if (cliOpts.activate !== null) {
+    await runActivateFlow(cliOpts.activate);
+    process.exit(0);
+  }
+  if (cliOpts.licenseStatus) {
+    await runLicenseStatusFlow();
+    process.exit(0);
+  }
+  if (cliOpts.licenseClear) {
+    await runLicenseClearFlow();
+    process.exit(0);
+  }
 
   // Headless Ghost Partner profile management flags. Each one performs its
   // action and exits cleanly so users can script them without entering the
@@ -653,6 +895,27 @@ async function main() {
     console.log('');
     await runSetupWizard();
     printBanner();
+  }
+
+  // ── License enforcement gate ─────────────────────────────────────────────
+  // Runs after setup wizard so first-time users can complete API key
+  // configuration before being told about licensing, but BEFORE we enter
+  // the mode loop so we never accept work the customer can't pay for.
+  // Status states (missing / invalid / hard_stop / tampered) block.
+  // Warning states (valid_warn / grace / expired) display a banner and let
+  // the run continue.
+  try {
+    const licenseResult = await validateLicense();
+    const blocked = renderLicenseStateAndMaybeBlock(licenseResult);
+    if (blocked) {
+      console.log(chalk.gray(`${COPYRIGHT}\n`));
+      process.exit(1);
+    }
+  } catch (err) {
+    // Defense in depth: if validation itself crashes, fail closed.
+    console.error(chalk.red(`\n${SYM.cross} License validation failed unexpectedly: ${err.message}`));
+    console.error(chalk.gray('   Email support@ghostarchitect.dev with this error if it persists.\n'));
+    process.exit(1);
   }
 
   let codebaseContext = null;
