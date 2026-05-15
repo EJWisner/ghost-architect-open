@@ -77,8 +77,50 @@ function secColor(t) {
   return C.NAVY;
 }
 
-function drawChrome(doc, pageNum, logoPath, branding = null) {
+function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
   const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
+
+  // ── Trial watermark ──────────────────────────────────────────────────────
+  // When the active license is trial-tier, every page gets a large translucent
+  // diagonal "TRIAL" stamp plus a footer-level identifier with the license id
+  // and expiration. The output stays readable but is visibly unsuitable for
+  // submitting to a deal committee — protects the value of the paid tier
+  // without breaking the trial UX. Drawn FIRST so all other chrome paints
+  // on top of it cleanly.
+  if (trialInfo && trialInfo.trial) {
+    doc.save();
+    // Big diagonal stamp: light gray, large font, rotated -30 degrees,
+    // centered on the page. Render with low opacity so body text remains
+    // readable through it.
+    doc.opacity(0.10);
+    doc.fillColor([180, 0, 0]); // red so it's unmistakable
+    doc.font('Helvetica-Bold').fontSize(120);
+    doc.rotate(-30, { origin: [PW / 2, PH / 2] });
+    doc.text('TRIAL', 0, PH / 2 - 60, {
+      width: PW,
+      align: 'center',
+      lineBreak: false,
+    });
+    doc.restore();
+
+    // Smaller secondary stamp at top-right of content area: license id and
+    // expiration. Higher opacity so reviewers can read who/when this trial
+    // was issued at a glance.
+    doc.save();
+    doc.opacity(0.55);
+    doc.fillColor([180, 0, 0]);
+    doc.font('Helvetica-Bold').fontSize(7);
+    const stampLines = [
+      'TRIAL OUTPUT — NOT FOR DISTRIBUTION',
+      `Lic: ${trialInfo.trialLicenseId || 'unknown'}  ·  Expires: ${(trialInfo.trialExpires || '').slice(0, 10)}`,
+    ];
+    doc.text(stampLines.join('\n'), 0, HEADER_H + 2, {
+      width: PW - 8,
+      align: 'right',
+      lineBreak: true,
+    });
+    doc.restore();
+  }
 
   // White-label mode: use the consultant's accent color and company name
   // in the header/footer. No Ghost Architect branding rendered.
@@ -152,14 +194,24 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       let y = TOP;
       let pageNum = 1;
 
+      // Trial state from saveReport — when present, drawChrome stamps every
+      // page with a "TRIAL" watermark + license id + expiration.
+      const trialInfo = meta.trial
+        ? {
+            trial: true,
+            trialLicenseId: meta.trialLicenseId,
+            trialExpires: meta.trialExpires,
+          }
+        : null;
+
       // Draw chrome on first page immediately
-      drawChrome(doc, pageNum, logoPath, branding);
+      drawChrome(doc, pageNum, logoPath, branding, trialInfo);
 
       function newPage() {
         doc.addPage();
         pageNum++;
         y = TOP;
-        drawChrome(doc, pageNum, logoPath, branding);
+        drawChrome(doc, pageNum, logoPath, branding, trialInfo);
       }
 
       function need(h) { if (y + h > BOTTOM) newPage(); }
