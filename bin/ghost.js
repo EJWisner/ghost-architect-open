@@ -44,6 +44,7 @@ import { SessionCostTracker } from '../src/estimator.js';
 // branches sync forward from main.
 import { validateLicense, isBlocking } from '../src/license/validator.js';
 import { decodeAndVerifyToken } from '../src/license/token.js';
+import { tryParseKey } from '../src/license/format.js';
 import { currentFingerprintHashes } from '../src/license/fingerprint.js';
 import {
   saveActivation,
@@ -53,6 +54,13 @@ import {
 } from '../src/license/store.js';
 import { startTrial, checkEligibility, TRIAL_DURATION_DAYS } from '../src/license/trial.js';
 import { setActiveLicense, isTrialActive } from '../src/license/session.js';
+
+// Activation server endpoint. Hardcoded so customers can't be tricked into
+// activating against a malicious server (they'd already need to compromise
+// the binary or DNS). Override only available via GHOST_ACTIVATION_ENDPOINT
+// env var for local-dev testing against `wrangler dev`.
+const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
+  || 'https://license.ghostarchitect.dev/activate';
 
 const VERSION   = '5.4.0-pro';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
@@ -177,8 +185,13 @@ Ghost Partner™ — white-label consultant profiles:
   --clear-default-profile  Remove the default profile setting. Then exit.
 
 Licensing:
-  --activate <token>       Install the signed license token you received by
-                           email. Bound to this machine on activation. Then exit.
+  --activate <key|token>   Install your license. Accepts either:
+                             (a) human-typeable key: GA-2026-PRO-XXXX-XXXX-XXXX
+                                 — exchanged with the activation server for a
+                                 token bound to this machine. Requires internet.
+                             (b) pre-signed token — verified locally, no network.
+                                 Used for offline activation when emailed by EJ.
+                           Then exit.
   --license                Show current license status (tier, expiration, days
                            remaining, fingerprint match). Then exit.
   --license-clear          Remove the installed license from local storage.
@@ -606,23 +619,140 @@ function printProfilesList() {
 // ── License helpers ────────────────────────────────────────────────────────
 
 /**
- * Handle `ghost --activate <token>`. Verifies the token signature, binds it
- * to this machine's hardware fingerprint, writes it to local storage. The
- * fingerprint embedded in the token must match this machine 3-of-4 or
- * activation refuses (token was issued for a different buyer's hardware).
+ * Handle `ghost --activate <input>`. The input is either:
+ *   (a) A human-typeable key like GA-2026-PRO-X7K9-M2P4-Q8R3 — we POST it to
+ *       the activation server, receive a signed token bound to this machine,
+ *       and save it.
+ *   (b) A pre-signed token (long base64url.base64url.base64url blob) — we
+ *       verify the signature locally, confirm fingerprint binding, and save.
+ *       This is the v1-manual fallback for licenses minted by EJ on the iMac
+ *       and emailed directly.
+ *
+ * We detect format with tryParseKey() first because:
+ *   - Human keys have a fixed format (6 hyphen-separated segments, 26 chars)
+ *     and a built-in checksum, so detection is unambiguous.
+ *   - Pre-signed tokens are 200+ chars of base64url and would fail human-key
+ *     parsing immediately with a "must have 6 segments" error.
  */
-async function runActivateFlow(tokenString) {
-  if (!tokenString || !tokenString.trim()) {
-    console.error(chalk.red(`\n${SYM.cross} --activate requires a token. Paste the signed token from your license email.\n`));
+async function runActivateFlow(input) {
+  if (!input || !input.trim()) {
+    console.error(chalk.red(`\n${SYM.cross} --activate requires a license key or token. Paste the value from your license email.\n`));
     process.exit(2);
   }
-  const cleaned = tokenString.trim();
+  const cleaned = input.trim();
+
+  // Try human-key path first. tryParseKey returns { ok, parsed } or { ok: false, error }.
+  const keyAttempt = tryParseKey(cleaned);
+  if (keyAttempt.ok) {
+    await runActivateViaHumanKey(cleaned, keyAttempt.parsed);
+    return;
+  }
+
+  // Not a human key — assume signed token.
+  await runActivateViaSignedToken(cleaned);
+}
+
+/**
+ * Human-key path: POST to the activation server with the human key + the
+ * current machine's fingerprint hashes, receive a signed token, verify it
+ * locally, save. This is the customer-facing flow after Stripe payment.
+ */
+async function runActivateViaHumanKey(humanKey, parsed) {
+  console.log(chalk.gray(`\nActivating ${chalk.cyan(humanKey)} (tier: ${parsed.tier})...`));
+
+  const fpHashes = currentFingerprintHashes();
+
+  let resp;
+  let respBody;
+  try {
+    resp = await fetch(ACTIVATION_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ humanKey, fingerprintHashes: fpHashes }),
+    });
+    respBody = await resp.json().catch(() => ({}));
+  } catch (err) {
+    console.error(chalk.red(`\n${SYM.cross} Could not reach activation server: ${err.message}`));
+    console.error(chalk.gray('   Check your internet connection and try again. If your network blocks'));
+    console.error(chalk.gray('   ' + ACTIVATION_ENDPOINT + ', email support@ghostarchitect.dev'));
+    console.error(chalk.gray('   for an offline activation token.\n'));
+    process.exit(2);
+  }
+
+  if (!resp.ok) {
+    const code = respBody && respBody.error ? respBody.error : `http_${resp.status}`;
+    const friendly =
+      code === 'license_not_found'                 ? 'License key not found. Double-check the key from your email.' :
+      code === 'license_revoked'                   ? 'This license has been revoked. Email support@ghostarchitect.dev if you believe this is an error.' :
+      code === 'license_bound_to_different_machine'? (respBody.detail || 'This license is already activated on a different machine.') :
+      code === 'invalid_key_format'                ? 'License key format is invalid. Check for typos.' :
+      code === 'rate_limit_exceeded'               ? 'Too many activation attempts. Wait a minute and try again.' :
+                                                     `Activation server returned ${code}.`;
+    console.error(chalk.red(`\n${SYM.cross} Activation refused: ${friendly}\n`));
+    process.exit(2);
+  }
+
+  if (!respBody.signedToken || typeof respBody.signedToken !== 'string') {
+    console.error(chalk.red(`\n${SYM.cross} Activation server returned an unexpected response (no signedToken).`));
+    console.error(chalk.gray('   This is a bug — email support@ghostarchitect.dev with the time of this attempt.\n'));
+    process.exit(2);
+  }
+
+  // Verify the returned token locally before saving. The server should never
+  // hand us a bad token, but a compromised server is exactly what local
+  // signature verification protects against.
   let decoded;
   try {
-    decoded = decodeAndVerifyToken(cleaned);
+    decoded = decodeAndVerifyToken(respBody.signedToken);
+  } catch (e) {
+    console.error(chalk.red(`\n${SYM.cross} Activation server returned a token that failed local verification: ${e.message}`));
+    console.error(chalk.gray('   This is a bug or a man-in-the-middle. Email support@ghostarchitect.dev.\n'));
+    process.exit(2);
+  }
+  const payload = decoded.payload;
+
+  // Confirm the token is bound to THIS machine. The server should have set
+  // payload.fingerprint = fpHashes (the hashes we sent), but verify anyway.
+  if (payload.fingerprint) {
+    const { matchesFingerprint } = await import('../src/license/fingerprint.js');
+    const m = matchesFingerprint(fpHashes, payload.fingerprint);
+    if (!m.match) {
+      console.error(chalk.red(`\n${SYM.cross} Server returned a token bound to a different machine.`));
+      console.error(chalk.gray(`   This is a bug. Got ${m.matchCount} of 4 hardware components matching.\n`));
+      process.exit(2);
+    }
+  }
+
+  saveActivation({ token: respBody.signedToken, fingerprintHashes: fpHashes });
+
+  const reactivated = !!respBody.reactivated;
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} License ${reactivated ? 're-activated' : 'activated'}`) + '\n\n' +
+    chalk.white('Customer: ') + chalk.cyan(payload.customer) + '\n' +
+    chalk.white('Tier:     ') + chalk.cyan(payload.tier) + '\n' +
+    chalk.white('Expires:  ') + chalk.cyan(payload.expires.slice(0, 10)) + '\n' +
+    chalk.white('Grace:    ') + chalk.cyan('through ' + payload.grace_until.slice(0, 10)),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  if (reactivated) {
+    console.log(chalk.gray('  (License was already activated on this machine — token refreshed.)'));
+  }
+  console.log('');
+}
+
+/**
+ * Signed-token path: existing v1-manual flow. The customer was emailed a
+ * pre-signed token (long base64url blob). We verify the signature locally,
+ * confirm fingerprint binding matches this machine, save.
+ */
+async function runActivateViaSignedToken(tokenString) {
+  let decoded;
+  try {
+    decoded = decodeAndVerifyToken(tokenString);
   } catch (e) {
     console.error(chalk.red(`\n${SYM.cross} Activation failed: ${e.message}`));
-    console.error(chalk.gray('   The token may be corrupted in transit. Copy the entire blob from your license email\n   exactly, including the two `.` separators, and try again.\n'));
+    console.error(chalk.gray('   The input was not a valid license key (GA-YYYY-TIER-XXXX-XXXX-XXXX format)'));
+    console.error(chalk.gray('   AND not a valid signed token. Copy the value from your license email exactly\n   and try again. If issues persist, email support@ghostarchitect.dev.\n'));
     process.exit(2);
   }
   const payload = decoded.payload;
@@ -641,7 +771,7 @@ async function runActivateFlow(tokenString) {
     }
   }
 
-  saveActivation({ token: cleaned, fingerprintHashes: fpHashes });
+  saveActivation({ token: tokenString, fingerprintHashes: fpHashes });
 
   console.log('\n' + boxen(
     chalk.green.bold(`${SYM.check} License activated`) + '\n\n' +
@@ -817,7 +947,7 @@ function renderLicenseStateAndMaybeBlock(result) {
       lines.push('');
     }
     lines.push(chalk.white('Already have a license? Install it:'));
-    lines.push(chalk.cyan('  ghost --activate <signed-token-from-email>'));
+    lines.push(chalk.cyan('  ghost --activate <GA-YYYY-TIER-XXXX-XXXX-XXXX>'));
     lines.push('');
     lines.push(chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pro'));
     lines.push(chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'));
@@ -1020,8 +1150,8 @@ async function main() {
         console.log('\n' + boxen(
           chalk.cyan.bold('Activate your license') + '\n\n' +
           chalk.white('Run:') + '\n' +
-          chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
-          chalk.gray('The signed token comes from your purchase confirmation email.\n') +
+          chalk.cyan('  ghost --activate <GA-YYYY-TIER-XXXX-XXXX-XXXX>') + '\n\n' +
+          chalk.gray('The license key comes from your purchase confirmation email.\n') +
           chalk.gray('Questions: ') + chalk.cyan('support@ghostarchitect.dev'),
           { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
         ));
@@ -1029,7 +1159,7 @@ async function main() {
         console.log(chalk.gray(`${COPYRIGHT}\n`));
         process.exit(1);
       } else {
-        console.log(chalk.gray('\nExiting. Run `ghost --start-trial` or `ghost --activate <token>` when ready.\n'));
+        console.log(chalk.gray('\nExiting. Run `ghost --start-trial` or `ghost --activate <license-key>` when ready.\n'));
         console.log(chalk.gray(`${COPYRIGHT}\n`));
         process.exit(1);
       }
