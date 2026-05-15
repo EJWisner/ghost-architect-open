@@ -131,7 +131,7 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
 
   if (nowMs >= hardStopMs) {
     return { ...baseResult, state: 'hard_stop',
-      message: `License expired on ${payload.expires.slice(0, 10)}. Renew at ghostarchitect.dev/pro or email support@ghostarchitect.dev.` };
+      message: `License expired on ${payload.expires.slice(0, 10)}. Renew at ghostarchitect.dev/pricing or email support@ghostarchitect.dev.` };
   }
   if (nowMs >= graceMs) {
     return { ...baseResult, state: 'expired',

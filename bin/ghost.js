@@ -794,7 +794,7 @@ async function runLicenseStatusFlow() {
       chalk.yellow.bold(`No license installed`) + '\n\n' +
       chalk.gray('Install a license with:') + '\n' +
       chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
-      chalk.gray('Purchase at ') + chalk.cyan('https://ghostarchitect.dev/pro'),
+      chalk.gray('Purchase at ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
       { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
     ));
     console.log('');
@@ -887,7 +887,7 @@ async function runStartTrialFlow() {
         chalk.white(`Trial was started on ${elig.usedAt.slice(0, 10)}.`) + '\n' +
         chalk.white('Each machine is eligible for one trial.') + '\n\n' +
         chalk.gray('Purchase a Pro license at:') + '\n' +
-        chalk.cyan('  https://ghostarchitect.dev/pro'),
+        chalk.cyan('  https://ghostarchitect.dev/pricing'),
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
       ));
       console.log('');
@@ -912,7 +912,7 @@ async function runStartTrialFlow() {
     chalk.gray('  • Inheritance Audit mode is disabled (paid tiers only)') + '\n' +
     chalk.gray('  • PDF output is watermarked "TRIAL — NOT FOR DISTRIBUTION"') + '\n' +
     chalk.gray('  • All other modes (POI, Blast, Conflict, Recon, Chat) work fully') + '\n\n' +
-    chalk.gray('Upgrade at any time: ') + chalk.cyan('https://ghostarchitect.dev/pro'),
+    chalk.gray('Upgrade at any time: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
     { padding: 1, borderColor: 'green', borderStyle: 'round' }
   ));
   console.log('');
@@ -949,7 +949,7 @@ function renderLicenseStateAndMaybeBlock(result) {
     lines.push(chalk.white('Already have a license? Install it:'));
     lines.push(chalk.cyan('  ghost --activate <GA-YYYY-TIER-XXXX-XXXX-XXXX>'));
     lines.push('');
-    lines.push(chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pro'));
+    lines.push(chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pricing'));
     lines.push(chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'));
     console.log('\n' + boxen(lines.join('\n'),
       { padding: 1, borderColor: 'yellow', borderStyle: 'round' }));
@@ -965,7 +965,7 @@ function renderLicenseStateAndMaybeBlock(result) {
     console.log('\n' + boxen(
       chalk.red.bold(`${SYM.cross} ${headline}`) + '\n\n' +
       chalk.white(result.message) + '\n\n' +
-      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pro') + '\n' +
+      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
       chalk.gray('Help:  ') + chalk.cyan('support@ghostarchitect.dev'),
       { padding: 1, borderColor: 'red', borderStyle: 'round' }
     ));
@@ -984,7 +984,7 @@ function renderLicenseStateAndMaybeBlock(result) {
     console.log('\n' + boxen(
       chalkColor.bold('License attention needed') + '\n\n' +
       chalk.white(result.message) + '\n\n' +
-      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pro'),
+      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
       { padding: 1, borderColor: color, borderStyle: 'round' }
     ));
     console.log('');
@@ -1327,7 +1327,7 @@ async function main() {
             chalk.white('for buyer-side diligence and fractional-CTO deliverables.') + '\n\n' +
             chalk.white('Trial-available modes: POI, Blast, Conflict, Recon, Chat') + '\n\n' +
             chalk.white('Upgrade to Pro to unlock Audit:') + '\n' +
-            chalk.cyan('  https://ghostarchitect.dev/pro'),
+            chalk.cyan('  https://ghostarchitect.dev/pricing'),
             { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
           ));
           console.log('');

@@ -81,7 +81,7 @@ export function startTrial() {
   if (!elig.eligible) {
     const msg = elig.reason === 'license_already_installed'
       ? 'A license is already installed. Trial mode is only for first-time users.'
-      : `Trial has already been used on this machine (${elig.usedAt.slice(0, 10)}). Purchase at ghostarchitect.dev/pro.`;
+      : `Trial has already been used on this machine (${elig.usedAt.slice(0, 10)}). Purchase at ghostarchitect.dev/pricing.`;
     throw new Error(msg);
   }
 
