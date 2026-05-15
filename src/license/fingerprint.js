@@ -17,11 +17,20 @@
 //   3. /proc/cpuinfo model name (first occurrence)
 //   4. /sys/class/dmi/id/product_name
 //
-// Windows:
-//   1. wmic csproduct get UUID
-//   2. wmic bios get SerialNumber
-//   3. wmic cpu get Name
-//   4. wmic computersystem get Model
+// Windows (uses PowerShell Get-CimInstance — wmic was removed in Win11
+// 25H2 and Win10 22H2 cannot reinstall it; PowerShell is the supported
+// path going forward. Falls back to registry MachineGuid + env vars when
+// PowerShell is locked down):
+//   1. Win32_ComputerSystemProduct UUID
+//   2. Win32_BIOS SerialNumber
+//   3. Win32_Processor Name
+//   4. Win32_ComputerSystem Model
+//
+//   Fallback chain when PowerShell fails or returns empty:
+//     - HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid (registry,
+//       universally readable, stable across hardware changes)
+//     - PROCESSOR_IDENTIFIER / PROCESSOR_ARCHITECTURE env vars
+//     - COMPUTERNAME env var
 //
 // Each component is normalized (trim, lowercase, collapse whitespace) and
 // hashed with sha256. The token stores all four hashes. At validation we
@@ -39,9 +48,45 @@ function normalize(s) {
   return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function safeExec(cmd) {
+// Some hardware ships with non-discriminating placeholder values in WMI/SMBIOS
+// fields. Two completely different machines with stripped SMBIOS would otherwise
+// fingerprint identically because all their placeholder values are equal. We
+// treat known placeholders as empty so they hash to the MISSING_SENTINEL and
+// stop counting toward 3-of-4 matches.
+//
+// All comparisons against the *normalized* form (already lowercased,
+// whitespace-collapsed).
+const NON_DISCRIMINATING_VALUES = new Set([
+  '',
+  '00000000-0000-0000-0000-000000000000',                  // SMBIOS all-zeros UUID
+  'ffffffff-ffff-ffff-ffff-ffffffffffff',                  // SMBIOS all-ones UUID
+  'to be filled by o.e.m.',                                // generic OEM placeholder
+  'to be filled by o.e.m',                                 // dotless variant
+  'default string',                                        // Dell stripped SMBIOS
+  'not specified',                                         // some Intel NUC boards
+  'system serial number',                                  // motherboard-default placeholder
+  'system manufacturer',
+  'system product name',
+  'oem',                                                   // some virt platforms
+  'none',
+  'n/a',
+  'na',
+  'unknown',
+]);
+
+function discriminating(normalizedValue) {
+  return !NON_DISCRIMINATING_VALUES.has(normalizedValue);
+}
+
+function safeExec(cmd, opts = {}) {
   try {
-    return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
+    return execSync(cmd, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+      windowsHide: true,
+      ...opts,
+    });
   } catch (e) {
     return '';
   }
@@ -97,21 +142,106 @@ function linuxComponents() {
 }
 
 // ── Windows collectors ──────────────────────────────────────────────────────
+//
+// Strategy: try PowerShell Get-CimInstance first (one process call collecting
+// all 4 components via JSON output for robust parsing). If that fails or
+// returns nothing useful, fall back to registry + env vars so we still get
+// SOME signal on locked-down corporate machines where PowerShell is blocked
+// by group policy or ConstrainedLanguage restricts CIM access.
+//
+// We never call wmic — it has been removed from Win11 25H2 onward and is
+// no longer installable on Win10 22H2, so building a license layer that
+// depends on it is shipping a known-broken product to Medline.
 
-function parseWmicValue(out) {
-  // wmic output is two lines: header, then value. Possibly trailing blanks.
-  const lines = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (lines.length < 2) return '';
-  return lines[1];
+function runPowerShell(script) {
+  // -NoProfile: skip $PROFILE so we don't inherit corporate profile errors
+  // -NonInteractive: never prompt
+  // -ExecutionPolicy Bypass: corp policies often block default execution
+  // -OutputFormat Text: avoid CLIXML wrapping the result
+  // Single-line escape: collapse newlines so we pass one -Command argument.
+  const flat = script.replace(/\r?\n/g, '; ');
+  return safeExec(
+    `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -OutputFormat Text -Command "${flat.replace(/"/g, '\\"')}"`,
+    { timeout: 8000 } // PS startup is slow on cold boot; give it a bit more
+  );
+}
+
+function windowsComponentsViaPowerShell() {
+  // One combined call: get all four properties, emit as 4 lines we can split.
+  // We use Format-List style "Name : Value" parsing — robust against
+  // properties that contain commas, quotes, or whitespace.
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue';
+$uuid  = (Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID;
+$serial = (Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber;
+$cpu   = (Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).Name;
+$model = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue).Model;
+Write-Output ('UUID=' + $uuid);
+Write-Output ('SERIAL=' + $serial);
+Write-Output ('CPU=' + $cpu);
+Write-Output ('MODEL=' + $model);
+  `.trim();
+
+  const out = runPowerShell(script);
+  if (!out) return null;
+
+  const result = { c1: '', c2: '', c3: '', c4: '' };
+  for (const line of out.split(/\r?\n/)) {
+    const m = line.match(/^(UUID|SERIAL|CPU|MODEL)=(.*)$/);
+    if (!m) continue;
+    const val = m[2].trim();
+    if (m[1] === 'UUID')   result.c1 = val;
+    if (m[1] === 'SERIAL') result.c2 = val;
+    if (m[1] === 'CPU')    result.c3 = val;
+    if (m[1] === 'MODEL')  result.c4 = val;
+  }
+  // If everything came back empty, signal failure so caller can try fallback.
+  if (!result.c1 && !result.c2 && !result.c3 && !result.c4) return null;
+  return result;
+}
+
+function readMachineGuidFromRegistry() {
+  // `reg query` is always available and works without PowerShell. The
+  // MachineGuid is generated at OS install time and is stable across all
+  // hardware changes — only an OS reinstall regenerates it. This makes it
+  // a reasonable substitute for the BIOS UUID when WMI is unreachable.
+  const out = safeExec('reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid');
+  const m = out.match(/MachineGuid\s+REG_SZ\s+([0-9a-fA-F-]+)/);
+  return m ? m[1] : '';
+}
+
+function windowsComponentsViaFallback() {
+  // Last-resort fallback — combines the registry MachineGuid (which is
+  // every-Windows reliable) with env-var-derived signals. None of these
+  // require PowerShell or any non-default tools.
+  const machineGuid = readMachineGuidFromRegistry();
+  const cpuId = process.env.PROCESSOR_IDENTIFIER || '';     // e.g. "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel"
+  const cpuArch = process.env.PROCESSOR_ARCHITECTURE || ''; // e.g. "AMD64"
+  const computerName = process.env.COMPUTERNAME || '';
+
+  return {
+    c1: machineGuid,
+    c2: cpuId,
+    c3: cpuArch,
+    c4: computerName,
+  };
 }
 
 function windowsComponents() {
-  return {
-    c1: parseWmicValue(safeExec('wmic csproduct get UUID')),
-    c2: parseWmicValue(safeExec('wmic bios get SerialNumber')),
-    c3: parseWmicValue(safeExec('wmic cpu get Name')),
-    c4: parseWmicValue(safeExec('wmic computersystem get Model')),
-  };
+  const primary = windowsComponentsViaPowerShell();
+  if (primary) {
+    // If PowerShell gave us at least 2 non-empty components, use it. If
+    // only 0-1 came back (very rare, e.g. virtualized box with stripped
+    // SMBIOS), splice in registry fallback values for the empty slots so
+    // we still get 4 reasonably distinct hashes.
+    const nonEmpty = ['c1','c2','c3','c4'].filter(k => primary[k]).length;
+    if (nonEmpty >= 2) {
+      if (!primary.c1) primary.c1 = readMachineGuidFromRegistry();
+      return primary;
+    }
+  }
+  // Fallback path: PowerShell unavailable / blocked / returned nothing.
+  return windowsComponentsViaFallback();
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -147,12 +277,23 @@ const MISSING_SENTINEL = 'GHOST_FINGERPRINT_MISSING';
 
 export function currentFingerprintHashes() {
   const c = collectComponents();
-  return [c.c1, c.c2, c.c3, c.c4].map(v => sha256Hex(v || MISSING_SENTINEL));
+  // Treat non-discriminating placeholder values (all-zeros UUID, "to be filled
+  // by O.E.M.", etc.) as empty so they hash to MISSING_SENTINEL. This stops
+  // two stripped-SMBIOS boxes from colliding on identical placeholder values.
+  return [c.c1, c.c2, c.c3, c.c4].map(v => sha256Hex(discriminating(v) ? v : MISSING_SENTINEL));
 }
 
-// 3-of-4 fuzzy match: returns { match: boolean, matchCount: number,
-// missingComponents: number } given a current set and a stored set.
-// Both arrays must be length 4. Order doesn't matter — we compare as sets.
+// 3-of-4 fuzzy match using set-intersection semantics. Returns
+// { match, matchCount, freeMissingMatches } where matchCount is the count
+// of DISTINCT hashes present in both arrays, after subtracting any
+// "free" matches caused by the MISSING_SENTINEL being equal on both sides.
+//
+// Set-intersection (not array-iteration) is critical: if current contains
+// the same hash twice (e.g. CPU brand equals product name on a stripped
+// SMBIOS box, both producing the same empty-after-normalize string), naive
+// iteration over current counts that one hash twice against stored, which
+// can promote a 2-distinct-match into a passing 3-of-4. Counting distinct
+// hashes only is the correct semantics for "3 of 4 components match".
 export function matchesFingerprint(currentHashes, storedHashes) {
   if (!Array.isArray(currentHashes) || currentHashes.length !== 4) {
     return { match: false, matchCount: 0, reason: 'current fingerprint malformed' };
@@ -160,25 +301,29 @@ export function matchesFingerprint(currentHashes, storedHashes) {
   if (!Array.isArray(storedHashes) || storedHashes.length !== 4) {
     return { match: false, matchCount: 0, reason: 'stored fingerprint malformed' };
   }
-  const stored = new Set(storedHashes);
-  let matchCount = 0;
-  for (const h of currentHashes) {
-    if (stored.has(h)) matchCount++;
-  }
-  // Count missing components on the current side — if a current slot is
-  // the MISSING_SENTINEL hash AND it matched stored (because stored is
-  // also missing), that match is "free" and shouldn't count toward the
-  // 3-of-4 threshold. Penalize accordingly.
   const missingHash = sha256Hex(MISSING_SENTINEL);
-  let freeMissingMatches = 0;
-  for (const h of currentHashes) {
-    if (h === missingHash && stored.has(missingHash)) freeMissingMatches++;
+
+  // Build sets — duplicates collapse, which is exactly the semantics we want.
+  const currentSet = new Set(currentHashes);
+  const storedSet = new Set(storedHashes);
+
+  // Intersect.
+  let intersection = 0;
+  for (const h of currentSet) {
+    if (storedSet.has(h)) intersection++;
   }
-  const realMatches = matchCount - freeMissingMatches;
+
+  // If the missing-sentinel hash is in both sets, that match is "free" —
+  // both sides are equally broken on at least one slot, which doesn't
+  // demonstrate machine identity. Subtract it.
+  const missingMatchedBothSides =
+    currentSet.has(missingHash) && storedSet.has(missingHash) ? 1 : 0;
+
+  const realMatches = intersection - missingMatchedBothSides;
   return {
     match: realMatches >= 3,
     matchCount: realMatches,
-    freeMissingMatches,
+    freeMissingMatches: missingMatchedBothSides,
   };
 }
 

@@ -112,7 +112,12 @@ manifest[parsed.licenseId] = {
   fingerprint,
   signedToken,
 };
-fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
+fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), { mode: 0o600 });
+// Belt-and-suspenders: if the manifest already existed with looser perms
+// from an earlier run, fs.writeFileSync's mode option only applies to file
+// CREATION, not to overwrites of existing files. Explicitly chmod every time
+// so we tighten perms on existing manifests too.
+fs.chmodSync(MANIFEST_PATH, 0o600);
 
 // (5) Output
 console.log('');

@@ -106,10 +106,21 @@ export function parseKey(input) {
   if (checksumChar !== expectedChecksum) {
     throw new Error(`Checksum mismatch (likely typo). Got ${checksumChar}, expected ${expectedChecksum}.`);
   }
+  // Normalize tier code to the canonical tier vocabulary used everywhere
+  // else in the system: 'pro' | 'team' | 'enterprise'. The key format uses
+  // 3-char codes (PRO/TEM/ENT) for typing-friendliness; everywhere else uses
+  // full names. Inconsistency here previously caused parseKey('GA-...-ENT-...')
+  // to return tier='ent' which doesn't match the token payload vocabulary.
+  const tierLower = tier.toLowerCase();
+  const tierNormalized =
+    tierLower === 'tem' ? 'team' :
+    tierLower === 'ent' ? 'enterprise' :
+    tierLower; // 'pro' stays 'pro'
+
   return {
     brand,
     year,
-    tier: tier.toLowerCase() === 'tem' ? 'team' : tier.toLowerCase(),
+    tier: tierNormalized,
     licenseId: dataChars,
     checksum: checksumChar,
     raw: `${brand}-${yearStr}-${tier}-${p1}-${p2}-${p3}`,
