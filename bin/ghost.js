@@ -1149,15 +1149,33 @@ async function main() {
       } else if (choice === 'activate-instructions') {
         console.log('\n' + boxen(
           chalk.cyan.bold('Activate your license') + '\n\n' +
-          chalk.white('Run:') + '\n' +
-          chalk.cyan('  ghost --activate <GA-YYYY-TIER-XXXX-XXXX-XXXX>') + '\n\n' +
-          chalk.gray('The license key comes from your purchase confirmation email.\n') +
-          chalk.gray('Questions: ') + chalk.cyan('support@ghostarchitect.dev'),
+          chalk.white('Paste the license key from your purchase email below.') + '\n' +
+          chalk.gray('Format: ') + chalk.cyan('GA-YYYY-TIER-XXXX-XXXX-XXXX'),
           { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
         ));
         console.log('');
-        console.log(chalk.gray(`${COPYRIGHT}\n`));
-        process.exit(1);
+        const { keyInput } = await inquirer.prompt([{
+          type: 'input',
+          name: 'keyInput',
+          message: chalk.cyan('License key:'),
+          theme: inquirerTheme,
+          validate: (input) => {
+            if (!input || !input.trim()) return 'License key is required.';
+            return true;
+          },
+        }]);
+        try {
+          await runActivateFlow(keyInput.trim());
+          // runActivateFlow handles its own exit on failure; if we get here
+          // it succeeded. Re-validate so the rest of the run sees the
+          // freshly-installed license.
+          licenseResult = await validateLicense();
+        } catch (err) {
+          console.error(chalk.red(`\n${SYM.cross} Activation failed: ${err.message}\n`));
+          console.error(chalk.gray('   Power-user tip: you can also run `ghost --activate <key>` from a shell.\n'));
+          console.log(chalk.gray(`${COPYRIGHT}\n`));
+          process.exit(1);
+        }
       } else {
         console.log(chalk.gray('\nExiting. Run `ghost --start-trial` or `ghost --activate <license-key>` when ready.\n'));
         console.log(chalk.gray(`${COPYRIGHT}\n`));
