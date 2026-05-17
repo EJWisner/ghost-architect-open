@@ -4,6 +4,7 @@ import os from 'os';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import { generatePDF } from './pdf-generator.js';
+import { incrementScanCount } from './freemium.js';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _require('../package.json');
@@ -123,6 +124,11 @@ export async function saveReport(content, prefix, label, meta = {}) {
       findingsPath = null;
     }
   }
+
+  // Freemium counter: bump if this prefix counts toward the 2-free quota.
+  // No-op for non-counted prefixes (ghost-chat, ghost-recon, ghost-audit).
+  // Bumped AFTER all writes succeed so a crashed save doesn't burn a credit.
+  incrementScanCount(prefix);
 
   return {
     filename: baseName,

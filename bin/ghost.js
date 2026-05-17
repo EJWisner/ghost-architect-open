@@ -30,13 +30,18 @@ const inquirerTheme = process.platform === 'win32' ? { icon: { cursor: '>' } } :
 
 import { runConflictMode } from '../src/modes/conflict.js';
 import { SessionCostTracker } from '../src/estimator.js';
+import {
+  shouldBlockMode,
+  renderAuditPaywall,
+  renderQuotaPaywall,
+} from '../src/freemium.js';
 
 // Ghost Open v5.0.0: Compare Reports and Project Dashboard are Pro features
 // and were removed entirely from the Open menu (rather than shown as locked
 // teasers). The showUpgradePrompt function that displayed them was removed
 // in this version. Recon was added as a fifth mode.
 
-const VERSION      = '5.6.0';
+const VERSION      = '6.0.0';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER         = 'open';
@@ -367,6 +372,15 @@ async function main() {
       }
 
       if (method === 'prompt-triage') {
+        // Freemium gate before any prompt-triage work. Same logic as the
+        // main switch below — block once the user has used their 2 free
+        // saved reports.
+        const ptBlock = shouldBlockMode('prompt-triage');
+        if (ptBlock.block) {
+          if (ptBlock.reason === 'quota') renderQuotaPaywall();
+          else if (ptBlock.reason === 'audit') renderAuditPaywall();
+          continue;
+        }
         // No default: an explicit path must be typed. v5.1.2 had `default:
         // process.cwd()` which created a UX trap — if the user hit Enter
         // without typing, Ghost would silently scan the current working
@@ -453,6 +467,20 @@ async function main() {
       codebaseContext = null;
       printBanner();
       continue;
+    }
+
+    // Freemium gate. Runs BEFORE telemetry + dispatch so we don't burn
+    // an Anthropic API call (or local state) on a scan we're going to
+    // block. Audit always paywalls; POI/Blast/Conflict gate once the user
+    // has saved their 2 free reports. Chat and Recon are unlimited.
+    const block = shouldBlockMode(mode);
+    if (block.block) {
+      if (block.reason === 'audit') {
+        renderAuditPaywall();
+      } else if (block.reason === 'quota') {
+        renderQuotaPaywall();
+      }
+      continue; // back to mode selector
     }
 
     // Mode-usage telemetry. Anonymous, fire-and-forget, captures

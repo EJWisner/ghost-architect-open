@@ -5,6 +5,28 @@ All notable changes to Ghost Architect Open are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [6.0.0] - 2026-05-17
+
+Ghost Architect Pro launches today. As part of the v6 era, Ghost Open transitions from "all modes unlimited" to a 2-free-saved-reports model that funnels paying customers to the Pro tier. Chat and Recon remain free and unlimited forever.
+
+### Added
+
+- **Freemium gate on saved-report modes.** Points of Interest, Blast Radius, Conflict Detection, and Prompt Triage are free for the first two saved reports per machine. After the second saved report, attempting one of these modes opens a paywall directing users to ghostarchitect.dev/pricing.
+- **Inheritance Audit paywall.** Audit mode is now a Pro+ feature. Open users can still see it in the menu and learn what it does, but selecting it opens a paywall instead of running the scan. Audit produces deal-grade reports for buyer diligence, fractional CTO onboarding, and modernization scoping, and is not appropriate as a free deliverable.
+- **Existing-user launch discount.** Code `EARLY20` at Stripe checkout gives 20% off your first month on any paid tier (Pro $99, Team $399, or Enterprise $1,200). Limited-time launch offer for existing Ghost Open users transitioning to a paid plan.
+
+### Unchanged
+
+- **Chat and Recon remain unlimited and free** in Open. Chat is interactive Q&A with no saved deliverable; Recon is sizing without analysis. Neither competes with the paid product, and both continue to work without any quota or counter.
+- All analysis quality, detector behavior, model selection, and output formats are unchanged. Reports you produce in Open are byte-identical to what they would have been in v5.6.0.
+- Existing reports on disk are unaffected.
+
+### Notes
+
+- The scan counter is stored locally in configstore (`~/.config/configstore/ghost-architect.json`) and is intentionally never synced to a server. Open remains an honor-system free tier.
+- The counter is incremented only after a save completes successfully, so a crashed scan does not burn a free credit.
+- Customers who have already used Ghost Open before installing v6.0.0 start with their counter at zero, the same as new installs. The launch discount is the bridge.
+
 ## [5.6.0] - 2026-05-15
 
 ### Added
