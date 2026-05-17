@@ -62,7 +62,7 @@ import { setActiveLicense, isTrialActive } from '../src/license/session.js';
 const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
   || 'https://license.ghostarchitect.dev/activate';
 
-const VERSION   = '5.4.0-pro';
+const VERSION   = '6.0.0-pro';
 // TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
 // When cherry-picking this file across branches, change this constant to match.
 const TIER      = 'pro';
