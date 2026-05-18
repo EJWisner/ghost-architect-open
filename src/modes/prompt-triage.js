@@ -46,6 +46,7 @@ import { renderReport } from '../prompt-pack/report.js';
 import { getModel } from '../prompt-pack/models.js';
 import { resetSessionUsage, getSessionUsage } from '../prompt-pack/llmAuditClient.js';
 import { promptProjectLabel, handleProjectIntelligence } from '../projects.js';
+import { isPortalConfigured, publishToPortal } from '../core/portal-publish.js';
 import {
   estimateMultiCallCost,
   formatCost,
@@ -269,6 +270,78 @@ export async function runPromptTriageMode(options = {}) {
     console.log(chalk.gray('Report saved to: ') + reportPath);
   } catch (err) {
     console.log(chalk.red('  ✗ Could not save report: ' + err.message));
+  }
+
+  // ── Portal publish (Pro+) ─────────────────────────────────────────────
+  // Push the Prompt Triage results to the web portal alongside POI/Blast/
+  // Conflict/Recon/Audit. Mirror the saveReport contract: write standard-
+  // naming files (ghost-prompt-triage-{label}-{ts}.{md,findings.json}) to
+  // the main reports dir, build a findings.json sidecar that powers Jira
+  // export, and call publishToPortal. Non-fatal on failure — the primary
+  // report at prompt-triage/ is already saved.
+  if (projectLabel && isPortalConfigured()) {
+    try {
+      const mainReportsDir = path.join(os.homedir(), 'Ghost Architect Reports');
+      const safeLabel = projectLabel.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const baseName = `ghost-prompt-triage-${safeLabel}-${ts}`;
+
+      const stdMdPath  = path.join(mainReportsDir, baseName + '.md');
+      const stdTxtPath = path.join(mainReportsDir, baseName + '.txt');
+      const findingsJsonPath = path.join(mainReportsDir, baseName + '.findings.json');
+
+      fs.writeFileSync(stdMdPath,  markdown, 'utf8');
+      fs.writeFileSync(stdTxtPath, markdown, 'utf8');
+
+      // Map prompt-triage finding shape to the portal sidecar shape.
+      // Prompt Triage findings carry: detector, severity, title, file,
+      // detail (or message), confidence. Map to: id, title, severity,
+      // files (array), effortHours, confidence, detail.
+      const sidecarFindings = allFindings.map((f, i) => ({
+        id:          `${(f.severity || 'INFO').toUpperCase()}:${f.file || 'unknown'}:${f.detector || ('f' + i)}`,
+        title:       f.title || f.detector || 'Untitled finding',
+        severity:    (f.severity || 'INFO').toUpperCase(),
+        files:       f.file ? [f.file] : [],
+        effortHours: 0,
+        confidence:  f.confidence || 85,
+        detail:      f.detail || f.message || '',
+      }));
+      const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      for (const f of sidecarFindings) {
+        const k = (f.severity || '').toLowerCase();
+        if (counts[k] !== undefined) counts[k]++;
+      }
+      const sidecar = {
+        schema:         1,
+        generatedAt:    new Date().toISOString(),
+        project:        projectLabel,
+        mode:           'prompt-triage',
+        totalFindings:  sidecarFindings.length,
+        severityCounts: counts,
+        findings:       sidecarFindings,
+      };
+      fs.writeFileSync(findingsJsonPath, JSON.stringify(sidecar, null, 2));
+
+      const portalTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('portal-publish timeout after 120s')), 120000)
+      );
+      await Promise.race([
+        publishToPortal({
+          baseName,
+          mode:             'prompt-triage',
+          label:            projectLabel,
+          txtPath:          stdTxtPath,
+          mdPath:           stdMdPath,
+          pdfPath:          null,
+          findingsJsonPath,
+          reportText:       markdown,
+          scanIso:          new Date().toISOString(),
+        }),
+        portalTimeout,
+      ]);
+    } catch {
+      // Portal failure is non-fatal — the primary report is already saved.
+    }
   }
 
   // ── Project intelligence ──────────────────────────────────────────────

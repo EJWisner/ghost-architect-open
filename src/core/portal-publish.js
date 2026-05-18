@@ -173,15 +173,16 @@ function extractSummarySnippet(md) {
 // ── Manifest entry ────────────────────────────────────────────────────────────
 
 const MODE_LABELS = {
-  poi:        { label: 'Points of Interest', order: 1 },
-  blast:      { label: 'Blast Radius',       order: 2 },
-  conflict:   { label: 'Conflict',           order: 3 },
-  recon:      { label: 'Recon',              order: 4 },
-  audit:      { label: 'Inheritance Audit',  order: 5 },
-  inheritance:{ label: 'Inheritance Audit',  order: 5 },
-  chat:       { label: 'Chat',               order: 6 },
-  compare:    { label: 'Compare',            order: 7 },
-  dashboard:  { label: 'Dashboard',          order: 8 },
+  poi:           { label: 'Points of Interest', order: 1 },
+  blast:         { label: 'Blast Radius',       order: 2 },
+  conflict:      { label: 'Conflict',           order: 3 },
+  recon:         { label: 'Recon',              order: 4 },
+  audit:         { label: 'Inheritance Audit',  order: 5 },
+  inheritance:   { label: 'Inheritance Audit',  order: 5 },
+  'prompt-triage':{ label: 'Prompt Triage',     order: 6 },
+  chat:          { label: 'Chat',               order: 7 },
+  compare:       { label: 'Compare',            order: 8 },
+  dashboard:     { label: 'Dashboard',          order: 9 },
 };
 
 function buildManifestEntry({ mode, label, baseName, reportText, scanIso }) {
