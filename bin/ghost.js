@@ -12,6 +12,7 @@ import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { runReconMode } from '../src/modes/recon.js';
 import { runAuditMode } from '../src/modes/audit/index.js';
+import { pingModeUsage } from '../src/telemetry/pulse.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
 import { loadProfile } from '../src/profile/index.js';
@@ -1329,6 +1330,11 @@ async function main() {
       printBanner();
       continue;
     }
+
+    // Mode-usage telemetry. Fire-and-forget so a slow Pulse Worker never
+    // delays a scan. Lands as `mode-<name>` in the Pulse dashboard so the
+    // Scan Modes histogram shows real cross-tier usage (not just Open).
+    pingModeUsage(VERSION, TIER, mode).catch(() => {});
 
     switch (mode) {
       case 'chat':      await runChatMode(codebaseContext);             break;

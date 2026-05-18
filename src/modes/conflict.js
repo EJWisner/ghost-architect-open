@@ -106,6 +106,13 @@ export async function runConflictMode(codebaseContext, options = {}) {
   let buffer  = '';
   let spinner = null;
 
+  // Bridging spinner — covers the gap between "Run conflict detection? Yes"
+  // and the first onProgress event from runConflictScan. Without this the
+  // terminal sits silent for 30-60+ seconds while the model prepares the
+  // first pass. The very first onProgress event will stop and replace
+  // this spinner.
+  spinner = ora({ text: chalk.gray('  Ghost is starting the conflict scan...'), color: 'magenta' }).start();
+
   try {
     const callbacks = {
       onChunk(text) {
@@ -122,6 +129,11 @@ export async function runConflictMode(codebaseContext, options = {}) {
       onProgress({ type, ...data }) {
         switch (type) {
           case 'start':
+            // Stop the bridging spinner first so we don't stack two
+            // spinners. The bridging spinner was started in runConflictMode
+            // immediately after "Run conflict detection? Yes" to cover the
+            // gap before this event fires.
+            if (spinner) { spinner.stop(); spinner = null; }
             if (data.singlePass) {
               spinner = ora({ text: chalk.gray('Ghost is scanning for conflicts...'), color: 'magenta' }).start();
             }
