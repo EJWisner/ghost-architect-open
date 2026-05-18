@@ -911,12 +911,21 @@ async function renderSingleFinding(finding, categoryHeader, rates, profile) {
     + 'Write the entry now:';
 
   try {
-    const response = await anthropic.messages.create({
+    // Race the API call against a 30-second timeout. If the API hangs
+    // (network, rate limit, model latency), we want the patcher to give
+    // up on this single finding and continue rather than block the entire
+    // report. Patcher findings are a defense-in-depth completeness check,
+    // not load-bearing — a missing one is acceptable; a hung scan is not.
+    const apiCall = anthropic.messages.create({
       model: getModel(),
       max_tokens: 800,
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
     });
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('renderSingleFinding timeout after 30s')), 30000)
+    );
+    const response = await Promise.race([apiCall, timeout]);
     const text = (response.content[0]?.text || '').trim();
     const idx = text.indexOf('###');
     if (idx < 0) return null;
