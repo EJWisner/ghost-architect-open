@@ -13,6 +13,7 @@ import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+import { promptProjectLabel } from '../projects.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -85,6 +86,14 @@ export async function runConflictMode(codebaseContext, options = {}) {
   } catch {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
   }
+
+  // Smart project label prompt — same UX as POI/Blast/Recon/Audit. The label
+  // is what groups Conflict scans with the rest of a project's history on
+  // the portal. Without this, Conflict was saving with no label (null was
+  // passed verbatim to saveReport) and every Conflict scan ended up
+  // orphaned from its project.
+  const label = await promptProjectLabel();
+  console.log('');
 
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
@@ -240,7 +249,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       },
     };
 
-    const result = await runConflictScan(fileMap, callbacks, { projectLabel, profile });
+    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, profile });
 
     if (!result?.finalReport) return;
     buffer = result.finalReport;
@@ -280,7 +289,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
         verificationStats: result.stats || null,
         profile,
       };
-      const saved = await saveReport(buffer, 'ghost-conflict', null, meta);
+      const saved = await saveReport(buffer, 'ghost-conflict', label, meta);
       console.log(chalk.green(`\n${SYM.check} Conflict report saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));

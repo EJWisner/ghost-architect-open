@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { generatePDF } from './pdf-generator.js';
 import { getBranding } from './profile/index.js';
 import { isTrialActive, getActiveLicense } from './license/session.js';
+import { isPortalConfigured, publishToPortal, buildFindingsSidecar } from './core/portal-publish.js';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _require('../package.json');
@@ -73,6 +74,55 @@ export async function saveReport(content, prefix, label, meta = {}) {
   }
 
   const pdfExists = fs.existsSync(pdfPath);
+
+  // ── Findings sidecar ───────────────────────────────────────────────
+  // Generate a findings.json file alongside the report. This powers the
+  // Jira export buttons on the web portal: those buttons only render when
+  // findings.json exists. Mode is derived from the prefix (ghost-poi →
+  // poi, ghost-blast → blast, etc).
+  const mode = prefix.replace(/^ghost-/, '');
+  const findingsJsonPath = path.join(dir, `${baseName}.findings.json`);
+  let findingsSidecarWritten = false;
+  try {
+    const sidecar = buildFindingsSidecar(stripAnsi(content), {
+      project: label,
+      mode,
+    });
+    fs.writeFileSync(findingsJsonPath, JSON.stringify(sidecar, null, 2));
+    findingsSidecarWritten = true;
+  } catch {
+    // Sidecar generation failure is non-fatal — the report itself still saves
+  }
+
+  // ── Portal Publish ─────────────────────────────────────────────────
+  // Push report files + findings.json sidecar + manifest entry to the
+  // ghost-reports-portal-test repo. The web portal at ghostarchitect.dev
+  // reads from this repo via the signup.ghostarchitect.dev Worker. This
+  // is what makes scans appear on the portal (and what makes the Jira
+  // export buttons render — they only show when findings.json exists).
+  if (label && isPortalConfigured()) {
+    try {
+      const portalTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('portal-publish timeout after 120s')), 120000)
+      );
+      await Promise.race([
+        publishToPortal({
+          baseName,
+          mode,
+          label,
+          txtPath,
+          mdPath,
+          pdfPath:          pdfExists ? pdfPath : null,
+          findingsJsonPath: findingsSidecarWritten ? findingsJsonPath : null,
+          reportText:       stripAnsi(content),
+          scanIso:          new Date().toISOString(),
+        }),
+        portalTimeout,
+      ]);
+    } catch {
+      // Portal failure is non-fatal — local save succeeded.
+    }
+  }
 
   return {
     filename: baseName,

@@ -10,6 +10,7 @@ import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
+import { promptProjectLabel } from '../projects.js';
 
 // ── Target selection ────────────────────────────────────────────────────────
 //
@@ -221,6 +222,12 @@ export async function runBlastMode(codebaseContext, options = {}) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard analysis)\n'));
   }
 
+  // Smart project label prompt — mirrors POI. Without this, Blast saves
+  // were always using a synthetic change-set-N-files label that broke
+  // project grouping on the portal.
+  const label = await promptProjectLabel();
+  console.log('');
+
   const { proceed } = await inquirer.prompt([{
     type: 'confirm',
     name: 'proceed',
@@ -280,12 +287,14 @@ export async function runBlastMode(codebaseContext, options = {}) {
     }]);
 
     if (doSave) {
-      // Saved-report label needs to be filesystem-safe. Single targets are
-      // already short. Multi-target uses a synthetic label so we don't end
-      // up with a 200-character filename built from joined paths.
-      const saveLabel = targetCount > 1
+      // Saved-report label: prefer the user-provided project label so the
+      // file groups with the rest of the project's history on the portal.
+      // Fall back to the synthetic change-set / target name when no
+      // project label was given (one-time scan).
+      const fallbackLabel = targetCount > 1
         ? `change-set-${targetCount}-files`
         : (Array.isArray(target) ? target[0] : target);
+      const saveLabel = label || fallbackLabel;
 
       // Meta drives PDF chrome and markdown branding. The `profile` field is
       // what flips PDF rendering into white-label mode — saveReport calls
@@ -296,6 +305,8 @@ export async function runBlastMode(codebaseContext, options = {}) {
           ? `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`
           : `${codebaseContext.loadedFiles || 0}`,
         totalFiles: codebaseContext.totalFiles,
+        changeSet: targetCount > 1 ? `change-set-${targetCount}-files` : null,
+        targetCount,
         profile,
       };
 
