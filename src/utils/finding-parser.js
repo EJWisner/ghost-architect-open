@@ -169,7 +169,8 @@ export function extractFindings(reportText, opts = {}) {
   let inNonFindingSection = false;
   let inCodeBlock = false;
 
-  for (const line of lines) {
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
     const t = line.trim();
 
     if (t.startsWith('```')) {
@@ -198,6 +199,46 @@ export function extractFindings(reportText, opts = {}) {
         continue;
       }
       inNonFindingSection = false;
+
+      // ##-as-finding peek-ahead (v6.0.1).
+      // Some narrator outputs emit each finding as its own top-level ##
+      // block rather than nesting findings under a category ## with ###
+      // per item. When this happens the existing ### finding-trigger
+      // never fires and saveReport silently skips findings.json (the
+      // sidecar write is gated on findings.length > 0).
+      //
+      // Peek up to 5 non-empty lines forward for a Severity: line before
+      // the next ## or ### header. Presence of a severity line is the
+      // unambiguous "this ## is a finding header" signal — non-finding
+      // category sections (## 🔴 Red Flags, ## Fault Lines) never have a
+      // Severity line directly under them; they contain ### children that
+      // do, and the ### header stops the peek before we reach those.
+      //
+      // See TODO-architect-narrator-drift-open-vs-pro.md for the upstream
+      // question this defensive patch is working around.
+      let peeksRemaining = 5;
+      let isFindingHeader = false;
+      for (let i = lineIdx + 1; i < lines.length && peeksRemaining > 0; i++) {
+        const peek = lines[i].trim();
+        if (!peek) continue;
+        if (/^#{2,3}\s+/.test(peek)) break;
+        if (SEVERITY_RE.test(peek)) { isFindingHeader = true; break; }
+        peeksRemaining--;
+      }
+      if (isFindingHeader) {
+        if (current) findings.push(finalize(current));
+        const title = t.replace(/^##\s+/, '').replace(/^\d+\.\s+/, '').replace(/\*\*/g, '').trim();
+        current = {
+          title,
+          severity:    currentSectionSeverity, // overwritten by Severity: line; otherwise inherits section context
+          detail:      '',
+          files:       [],
+          effortHours: 0,
+          confidence:  85,
+        };
+        continue;
+      }
+
       // When opts.keepLandmarks is true and the section header matches
       // /landmark/i, override the section severity to 'LANDMARK' so the
       // compare-mode caller can identify architectural findings explicitly.
