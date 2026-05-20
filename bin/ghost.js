@@ -1221,11 +1221,13 @@ async function main() {
       }
 
       if (method === 'dashboard') {
+        pingModeUsage(VERSION, TIER, 'dashboard').catch(() => {});
         await showProjectDashboard();
         continue;
       }
 
       if (method === 'compare') {
+        pingModeUsage(VERSION, TIER, 'compare').catch(() => {});
         await runCompareMode();
         continue;
       }
@@ -1300,6 +1302,12 @@ async function main() {
         }
 
         try {
+          // Telemetry — fire BEFORE the run so a long Prompt Triage doesn't
+          // delay the ping landing in Pulse. Fire-and-forget; if the network
+          // is slow, the user shouldn't wait. Lands as `mode-prompt-triage`
+          // in the dashboard's Event Sources histogram.
+          pingModeUsage(VERSION, TIER, 'prompt-triage').catch(() => {});
+
           await runPromptTriageMode({
             source: { kind: 'localFolder', path: folderPath.trim() },
             targetModel,
