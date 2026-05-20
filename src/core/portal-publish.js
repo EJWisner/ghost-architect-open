@@ -185,13 +185,35 @@ const MODE_LABELS = {
   dashboard:     { label: 'Dashboard',          order: 9 },
 };
 
-function buildManifestEntry({ mode, label, baseName, reportText, scanIso }) {
+function buildManifestEntry({ mode, label, baseName, reportText, scanIso, findingsSidecar = null }) {
   const normalizedMode = mode === 'inheritance' ? 'audit' : mode;
   const modeInfo       = MODE_LABELS[normalizedMode] || { label: mode, order: 99 };
-  const severityCounts = extractSeverityCountsFromBody(reportText);
-  const findingsTotal  = severityCounts.critical + severityCounts.high +
-                         severityCounts.medium   + severityCounts.low +
-                         severityCounts.info;
+
+  // Prefer the in-memory findings sidecar (authoritative — same data that
+  // powers the Jira export and the portal's per-finding rendering). Fall
+  // back to markdown regex only when no sidecar is available (e.g. legacy
+  // re-pushes of reports generated before the sidecar shipped).
+  let severityCounts;
+  let findingsTotal;
+  if (findingsSidecar && findingsSidecar.severityCounts) {
+    severityCounts = {
+      critical: findingsSidecar.severityCounts.critical || 0,
+      high:     findingsSidecar.severityCounts.high     || 0,
+      medium:   findingsSidecar.severityCounts.medium   || 0,
+      low:      findingsSidecar.severityCounts.low      || 0,
+      info:     findingsSidecar.severityCounts.info     || 0,
+    };
+    findingsTotal = typeof findingsSidecar.totalFindings === 'number'
+      ? findingsSidecar.totalFindings
+      : severityCounts.critical + severityCounts.high +
+        severityCounts.medium   + severityCounts.low + severityCounts.info;
+  } else {
+    severityCounts = extractSeverityCountsFromBody(reportText);
+    findingsTotal  = severityCounts.critical + severityCounts.high +
+                     severityCounts.medium   + severityCounts.low +
+                     severityCounts.info;
+  }
+
   const summary        = extractSummarySnippet(reportText);
   const id             = `${normalizedMode}__${label || '(untitled)'}__${baseName.replace(/^ghost-[a-z]+-?/, '').replace(/^.+?-(\d{4}-\d{2}-\d{2}T)/, '$1')}`;
 
@@ -352,9 +374,21 @@ export async function publishToPortal({
   await Promise.all(pushes);
 
   // Build and push manifest entry. Done after file pushes so the entry
-  // never points at a file that hasn't landed yet.
+  // never points at a file that hasn't landed yet. We re-read the
+  // sidecar (just written by the caller and pushed above) so the
+  // manifest counts come from the authoritative source rather than
+  // markdown regex on the report body.
+  let findingsSidecar = null;
+  if (findingsJsonPath && fs.existsSync(findingsJsonPath)) {
+    try {
+      findingsSidecar = JSON.parse(fs.readFileSync(findingsJsonPath, 'utf8'));
+    } catch {
+      findingsSidecar = null;
+    }
+  }
+
   const entry = buildManifestEntry({
-    mode, label, baseName, reportText, scanIso,
+    mode, label, baseName, reportText, scanIso, findingsSidecar,
   });
   await updateManifest(octokit, owner, repo, entry);
 
