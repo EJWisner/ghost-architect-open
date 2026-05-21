@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 
 const PROJECTS_DIR = path.join(os.homedir(), 'Ghost Architect Reports', 'projects');
 
@@ -74,34 +75,23 @@ export function fuzzyMatch(input, existing) {
 }
 
 // ── Finding extraction ────────────────────────────────────────────────────────
+// Delegates to the canonical extractFindings() in src/utils/finding-parser.js.
+// The local implementation that used to live here had its own brittle regex
+// approach (\*?\*? inline encoding) and a 'severity: UNKNOWN' default that
+// dominated the project intelligence rollup whenever the regex failed to
+// match — the root cause of the 71% UNKNOWN severity issue documented in
+// TODO-architect-projects-severity-extraction.md. Replacing this local
+// parser with the canonical one eliminates the UNKNOWN string at its source,
+// adds files/detail/id fields the downstream consumers (mobile-publish,
+// portal-publish) already know how to use, and ensures any future parser
+// improvement applies uniformly to project intelligence.
+//
+// See finding-parser.js header comment for the pre-strip architecture
+// rationale. The 'Finding 16' note there documents this exact consolidation
+// pattern applied previously to multipass.js, analyst/index.js, and
+// pdf-generator.js — core/projects.js was the last holdout.
 
-export function extractFindingsFromReport(reportText) {
-  const findings  = [];
-  const lines     = reportText.split('\n');
-  const findingRe = /^(?:###\s+)?\d+\.\s+\*?\*?(.+?)\*?\*?$/;
-  const severityRe = /\*?\*?Severity:\*?\*?\s*(CRITICAL|HIGH|MEDIUM|LOW)/i;
-  const effortRe  = /Effort:\s*([\d–\-]+)\s*hours?/i;
-  let current = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const m = trimmed.match(findingRe);
-    if (m) {
-      if (current) findings.push(current);
-      current = { title: m[1].replace(/\*\*/g, '').trim(), severity: 'UNKNOWN', effortHours: 0 };
-    } else if (current) {
-      const sm = trimmed.match(severityRe);
-      if (sm) current.severity = sm[1].toUpperCase();
-      const em = trimmed.match(effortRe);
-      if (em) {
-        const parts = em[1].split(/[–\-]/);
-        current.effortHours = parseInt(parts[parts.length - 1]) || 0;
-      }
-    }
-  }
-  if (current) findings.push(current);
-  return findings;
-}
+export { extractFindingsFromReport };
 
 function similarFinding(a, b) {
   const norm = s => s.toLowerCase().replace(/^\d+\.\s+/, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
