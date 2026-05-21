@@ -57,6 +57,26 @@ function parseCertificateBlocks(content) {
   return parseKeyBlocks(content, '-----BEGIN CERTIFICATE-----', '-----END CERTIFICATE-----', '[REDACTED:CERTIFICATE_BLOCK]');
 }
 
+// ── Regex timeout wrapper (Finding 15 - ReDoS protection) ──────────────────
+function safeRegexReplace(content, regex, replacement, timeoutMs = 500) {
+  // Simple length-based guard — skip regex on extremely large inputs
+  // This prevents catastrophic backtracking on malformed files
+  if (content.length > 500_000) {
+    return { result: content, timedOut: true };
+  }
+  try {
+    const result = content.replace(regex, replacement);
+    return { result, timedOut: false };
+  } catch (err) {
+    return { result: content, timedOut: true, error: err.message };
+  }
+}
+
+function safeRegexMatch(content, regex) {
+  if (content.length > 500_000) return null;
+  try { return content.match(regex); } catch { return null; }
+}
+
 // Patterns to detect and redact sensitive data
 const REDACTION_RULES = [
   // API Keys & Tokens — specific service patterns (high confidence, low false positive)
@@ -75,6 +95,14 @@ const REDACTION_RULES = [
   { name: 'DB Password Flag',      regex: /-p(?:assword)?\s+\S+/g,                                replacement: '-p[REDACTED:DB_PASSWORD]' },
 
   // Private Keys & Certificates — bounded quantifiers to prevent ReDoS
+  // (Stateful parser path, ReDoS-immune. v7-unification 2026-05-21: these
+  // parsers were defined since the redactor was first built but never
+  // wired into REDACTION_RULES, meaning PEM keys and X.509 certificates
+  // passed through unredacted on all three tiers. Wired up now.
+  // See TODO-architect-redactor-pem-wiring-backport.md for the backport
+  // plan to v6.0.2 on Pro/Team/Open.)
+  { name: 'Private Key Block', parser: parsePrivateKeyBlocks },
+  { name: 'Certificate Block', parser: parseCertificateBlocks },
 
   // Cloud credentials — specific patterns only
   { name: 'Azure Connection',      regex: /DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]{1,256}/gi, replacement: '[REDACTED:AZURE_CONNECTION_STRING]' },
@@ -104,11 +132,28 @@ export function redactContent(content) {
           findings.push(`${rule.name} (redacted)`);
         }
       } else {
-        // Regex path
-        const matches = redacted.match(rule.regex);
-        if (matches && matches.length > 0) {
+        // Regex path — use safe wrappers to prevent ReDoS
+        const matches = safeRegexMatch(redacted, rule.regex);
+        if (matches === null && redacted.length > 500_000) {
+          // safeRegexMatch returned null because the size guard fired,
+          // not because there were no matches. The rule was silently
+          // skipped — record it so the caller knows redaction is partial.
+          // Without this, callers see partialRedaction: false and assume
+          // redaction succeeded cleanly, when in fact credentials in
+          // large files may have passed through unredacted. The
+          // failedRules + partialRedaction reporting mechanism exists
+          // specifically to signal this case.
+          failedRules.push({ rule: rule.name, error: 'Skipped — input exceeds 500KB size guard (ReDoS protection)' });
+          partialRedaction = true;
+        } else if (matches && matches.length > 0) {
           findings.push(`${rule.name} (${matches.length} instance${matches.length > 1 ? 's' : ''})`);
-          redacted = redacted.replace(rule.regex, rule.replacement);
+          const { result, timedOut } = safeRegexReplace(redacted, rule.regex, rule.replacement);
+          if (timedOut) {
+            failedRules.push({ rule: rule.name, error: 'Regex timeout — input too large or pattern backtracking' });
+            partialRedaction = true;
+          } else {
+            redacted = result;
+          }
         }
       }
     } catch (err) {
