@@ -7,3 +7,9 @@ web/node_modules/
 # emit them inside the working tree.
 Ghost Architect Reports/
 *.audit-report.md
+
+# Locked rule: CLAUDE.md and .claude/ must never be committed in any tier
+# worktree. See verifier-architecture (CLAUDE.md rule). Assistant context
+# files belong outside the repo, not in customer-shipped source.
+CLAUDE.md
+.claude/
