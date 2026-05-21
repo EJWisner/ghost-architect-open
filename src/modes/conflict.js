@@ -89,9 +89,9 @@ export async function runConflictMode(codebaseContext, options = {}) {
 
   // Smart project label prompt — same UX as POI/Blast/Recon/Audit. The label
   // is what groups Conflict scans with the rest of a project's history on
-  // the portal. Without this, Conflict was saving with no label (null was
-  // passed verbatim to saveReport) and every Conflict scan ended up
-  // orphaned from its project.
+  // the portal, in team-sync, and in mobile-publish. Without this, Conflict
+  // was saving with no label (null was passed verbatim to saveReport) and
+  // every Conflict scan ended up orphaned from its project.
   const label = await promptProjectLabel();
   console.log('');
 
