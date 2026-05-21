@@ -298,6 +298,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
     console.error('DEBUG-v7-DIAG: [poi.js post-handleProjectIntelligence] returned');
 
     // Save prompt
+    console.error('DEBUG-v7-DIAG: [poi.js spinner-state-at-prompt] spinner=' + (spinner ? 'alive' : 'null'));
     console.error('DEBUG-v7-DIAG: [poi.js pre-save-prompt] about to call inquirer.prompt for save');
     const { doSave } = await inquirer.prompt([{
       type: 'confirm', name: 'doSave',
