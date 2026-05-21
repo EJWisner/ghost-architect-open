@@ -48,6 +48,7 @@ export function ensureReportsDir() {
 // matches v6.0.1 exactly for each tier's already-configured customer.
 export async function saveReport(content, prefix, label, meta = {}) {
   const dir = ensureReportsDir();
+  console.error('DEBUG-v7-DIAG: [reports.js:saveReport-entry] saveReport entered');
 
   // ── Filename: dispatch by label presence ──────────────────────────
   let baseName;
@@ -101,7 +102,9 @@ export async function saveReport(content, prefix, label, meta = {}) {
   const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION, branding, ...trialMeta };
 
   try {
+    console.error('DEBUG-v7-DIAG: [reports.js pre-generatePDF] about to call generatePDF');
     await generatePDF(stripAnsi(content), pdfPath, metaWithType);
+    console.error('DEBUG-v7-DIAG: [reports.js post-generatePDF] generatePDF resolved');
   } catch (err) {
     // PDF generation failed silently — TXT and MD are still saved
     console.log(chalk.gray(`  (PDF generation skipped — ${err.message})`));
@@ -136,6 +139,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // Audit-log the scan event (currently Team-gated; see
   // TODO-architect-audit-log-tier-gating-ambiguity.md for resolution path
   // with first Enterprise customer). Both calls fail silently.
+  console.error('DEBUG-v7-DIAG: [reports.js pre-team-sync-block] entering team-sync gate');
   if (label && isTeamConfigured()) {
     const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
     try {
@@ -166,10 +170,12 @@ export async function saveReport(content, prefix, label, meta = {}) {
       // Sync failure is non-fatal
     }
   }
+  console.error('DEBUG-v7-DIAG: [reports.js post-team-sync-block] team-sync block exited');
 
   // ── Ghost Mobile: auto-publish if configured ──────────────────────
   // Build a structured JSON payload with current scan + baseline + history
   // and push to the ghost-reports GitHub repo. Mobile app reads from there.
+  console.error('DEBUG-v7-DIAG: [reports.js pre-mobile-publish-block] entering mobile-publish gate');
   if (label && isPublishConfigured()) {
     try {
       const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
@@ -226,6 +232,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
       // Publish failure is non-fatal
     }
   }
+  console.error('DEBUG-v7-DIAG: [reports.js post-mobile-publish-block] mobile-publish block exited');
 
   // ── Portal Publish ────────────────────────────────────────────────
   // Push report files + findings.json sidecar + manifest entry to the
@@ -233,6 +240,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // reads from this repo via the signup.ghostarchitect.dev Worker. This
   // is what makes scans appear on the portal (and what makes the Jira
   // export buttons render — they only show when findings.json exists).
+  console.error('DEBUG-v7-DIAG: [reports.js pre-portal-publish-block] entering portal gate');
   if (label && isPortalConfigured()) {
     try {
       const portalTimeout = new Promise((_, reject) =>
@@ -256,6 +264,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
       // Portal failure is non-fatal — local save and other pushes succeeded.
     }
   }
+  console.error('DEBUG-v7-DIAG: [reports.js post-portal-publish-block] portal block exited');
 
   // ── Freemium scan counter (Open tier) ─────────────────────────────
   // Stays here in Stage 2 of v7 unification. Stage 3 deletes the freemium
@@ -269,6 +278,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     // Freemium counter is non-essential; never block the save on it.
   }
 
+  console.error('DEBUG-v7-DIAG: [reports.js pre-return] about to return from saveReport');
   return {
     filename: baseName,
     txtFile:  `${baseName}.txt`,
