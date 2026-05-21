@@ -7,6 +7,11 @@ import { generatePDF } from './pdf-generator.js';
 import { getBranding } from './profile/index.js';
 import { isTrialActive, getActiveLicense } from './license/session.js';
 import { isPortalConfigured, publishToPortal, buildFindingsSidecar } from './core/portal-publish.js';
+import { isTeamConfigured } from './config.js';
+import { pushReport } from './core/team-sync.js';
+import { appendAuditEvent } from './core/enterprise.js';
+import { isPublishConfigured, publishProject } from './core/mobile-publish.js';
+import { incrementScanCount } from './freemium.js';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _require('../package.json');
@@ -24,18 +29,45 @@ export function ensureReportsDir() {
   return REPORTS_DIR;
 }
 
+// Ghost Architect v7 unification: filename convention dispatches on label
+// presence, not tier. The CLI layer (bin/ghost.js, mode files) decides whether
+// to pass a label based on tier and user input. saveReport itself is tier-blind
+// on filename behavior — the parameter shape captures intent.
+//
+//   label present → history-tracked: ${prefix}-${label}-${timestamp}.{ext}
+//                   Pro/Team/Enterprise project intelligence flow.
+//
+//   label absent  → one-off scan: ${prefix}.{ext}, overwrites on every run.
+//                   Open's freemium flow. Also used by Pro/Team users running
+//                   throwaway scans they don't want cluttering their reports
+//                   dir with timestamps.
+//
+// Per-tier side effects (team-sync, mobile-publish, portal-publish) are gated
+// by their existing isXConfigured() checks below. Stage 3 of v7 unification
+// will rewire those gates as requireTier() calls; until then, behavior
+// matches v6.0.1 exactly for each tier's already-configured customer.
 export async function saveReport(content, prefix, label, meta = {}) {
   const dir = ensureReportsDir();
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const safeName = label ? label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30) : '';
-  const baseName = safeName ? `${prefix}-${safeName}-${timestamp}` : `${prefix}-${timestamp}`;
+
+  // ── Filename: dispatch by label presence ──────────────────────────
+  let baseName;
+  let timestamp;
+  if (label) {
+    timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeName = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
+    baseName = `${prefix}-${safeName}-${timestamp}`;
+  } else {
+    timestamp = null;
+    baseName = prefix;
+  }
 
   // Save TXT — plain text, terminal-friendly
   const txtPath = path.join(dir, `${baseName}.txt`);
   fs.writeFileSync(txtPath, stripAnsi(content));
 
   // Save MD — formatted Markdown, developer-friendly (or consultant-friendly
-  // when a profile is active)
+  // when a profile is active). getBranding(undefined) returns null cleanly,
+  // so Open users with no profile get the no-branding render naturally.
   const branding = getBranding(meta.profile);
   const mdContent = convertToMarkdown(content, prefix, label, meta, timestamp, branding);
   const mdPath = path.join(dir, `${baseName}.md`);
@@ -54,6 +86,8 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // Pull trial state from the active license session so PDFs generated under
   // a trial license get watermarked. The active license is set once at CLI
   // startup by bin/ghost.js and persists through all mode invocations.
+  // For Open users (no active license), isTrialActive() returns false and
+  // trialMeta defaults to { trial: false } — no watermark, clean render.
   const trial = isTrialActive();
   const activeLicense = getActiveLicense();
   const trialMeta = trial && activeLicense && activeLicense.payload
@@ -65,7 +99,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     : { trial: false };
 
   const metaWithType = { ...meta, project: label || 'Project Analysis', reportType, version: GHOST_VERSION, branding, ...trialMeta };
-  
+
   try {
     await generatePDF(stripAnsi(content), pdfPath, metaWithType);
   } catch (err) {
@@ -75,26 +109,125 @@ export async function saveReport(content, prefix, label, meta = {}) {
 
   const pdfExists = fs.existsSync(pdfPath);
 
-  // ── Findings sidecar ───────────────────────────────────────────────
-  // Generate a findings.json file alongside the report. This powers the
-  // Jira export buttons on the web portal: those buttons only render when
-  // findings.json exists. Mode is derived from the prefix (ghost-poi →
-  // poi, ghost-blast → blast, etc).
-  const mode = prefix.replace(/^ghost-/, '');
+  // ── Findings sidecar ──────────────────────────────────────────────
+  // Generate findings.json BEFORE any push side-effect so team-sync,
+  // mobile-publish, and portal-publish can all reference the same sidecar
+  // file. Build from the raw content (not the MD with its severity-emoji
+  // rewrites) so the parser sees the original tokens. Open users (label
+  // absent) still generate the sidecar with project: null — Jira export
+  // downstream handles null project as "unlabeled scan" fallback.
   const findingsJsonPath = path.join(dir, `${baseName}.findings.json`);
+  const mode = prefix.replace(/^ghost-/, '');
   let findingsSidecarWritten = false;
   try {
     const sidecar = buildFindingsSidecar(stripAnsi(content), {
-      project: label,
+      project: label || null,
       mode,
     });
     fs.writeFileSync(findingsJsonPath, JSON.stringify(sidecar, null, 2));
     findingsSidecarWritten = true;
-  } catch {
-    // Sidecar generation failure is non-fatal — the report itself still saves
+  } catch (err) {
+    // Sidecar generation is non-fatal — TXT/MD/PDF are still saved.
+    console.log(chalk.gray(`  (findings.json skipped — ${err.message})`));
   }
 
-  // ── Portal Publish ─────────────────────────────────────────────────
+  // ── Team Sync ─────────────────────────────────────────────────────
+  // Push reports to the shared GitHub repo so other seats can read them.
+  // Audit-log the scan event (currently Team-gated; see
+  // TODO-architect-audit-log-tier-gating-ambiguity.md for resolution path
+  // with first Enterprise customer). Both calls fail silently.
+  if (label && isTeamConfigured()) {
+    const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+    try {
+      const pushJobs = [
+        pushReport(projectSlug, txtPath),
+        pushReport(projectSlug, mdPath),
+        ...(pdfExists ? [pushReport(projectSlug, pdfPath)] : []),
+        ...(findingsSidecarWritten ? [pushReport(projectSlug, findingsJsonPath)] : []),
+      ];
+      // Race against a 60-second timeout. Sync is non-essential — better
+      // to skip and let the user move on than to block forever on a
+      // network/GitHub issue.
+      const syncTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('team-sync push timeout after 60s')), 60000)
+      );
+      await Promise.race([Promise.all(pushJobs), syncTimeout]);
+      await Promise.race([
+        appendAuditEvent({
+          type: 'scan',
+          projectLabel: label,
+          reportFile: pdfExists ? `${baseName}.pdf` : `${baseName}.md`,
+          cost: meta.cost || null,
+          findingCount: meta.findingCount || null,
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('audit log timeout after 30s')), 30000)),
+      ]);
+    } catch {
+      // Sync failure is non-fatal
+    }
+  }
+
+  // ── Ghost Mobile: auto-publish if configured ──────────────────────
+  // Build a structured JSON payload with current scan + baseline + history
+  // and push to the ghost-reports GitHub repo. Mobile app reads from there.
+  if (label && isPublishConfigured()) {
+    try {
+      const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+
+      // Load full project.json to get real scan history and baseline findings.
+      // This is what populates the History tab and drill-down screens in Ghost Mobile.
+      const projectJsonPath = path.join(
+        os.homedir(), 'Ghost Architect Reports', 'projects',
+        projectSlug, 'project.json'
+      );
+      let storedProject = null;
+      try {
+        if (fs.existsSync(projectJsonPath)) {
+          storedProject = JSON.parse(fs.readFileSync(projectJsonPath, 'utf8'));
+        }
+      } catch { /* non-fatal — publish continues without history */ }
+
+      const projectMeta = {
+        label,
+        slug:             projectSlug,
+        baselineDate:     storedProject?.baselineDate     || meta.baselineDate || null,
+        baselineCount:    meta.baselineCount              || meta.findingCount || 0,
+        baselineFindings: storedProject?.baselineFindings || [],
+        scans:            storedProject?.scans            || [],
+      };
+
+      const scanRecord = {
+        date:         new Date().toISOString(),
+        version:      GHOST_VERSION,
+        findingCount: meta.findingCount || 0,
+        critical:     meta.critical     || 0,
+        high:         meta.high         || 0,
+        medium:       meta.medium       || 0,
+        low:          meta.low          || 0,
+        totalHours:   meta.totalHours   || 0,
+        totalCost:    meta.totalCost    || 0,
+        newFindings:  meta.newFindings  || 0,
+        resolved:     meta.resolved     || 0,
+        txtFile:      `${baseName}.txt`,
+        mdFile:       `${baseName}.md`,
+        pdfFile:      pdfExists ? `${baseName}.pdf` : null,
+        cost:         meta.cost         || null,
+        reportText:   stripAnsi(content),
+      };
+
+      // Race against a 90-second timeout. Mobile publish does more work
+      // than team-sync (loads + posts a richer payload), so allow more
+      // time, but still bounded so the save doesn't hang the CLI forever.
+      const publishTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('mobile-publish timeout after 90s')), 90000)
+      );
+      await Promise.race([publishProject(projectMeta, scanRecord), publishTimeout]);
+    } catch {
+      // Publish failure is non-fatal
+    }
+  }
+
+  // ── Portal Publish ────────────────────────────────────────────────
   // Push report files + findings.json sidecar + manifest entry to the
   // ghost-reports-portal-test repo. The web portal at ghostarchitect.dev
   // reads from this repo via the signup.ghostarchitect.dev Worker. This
@@ -120,23 +253,35 @@ export async function saveReport(content, prefix, label, meta = {}) {
         portalTimeout,
       ]);
     } catch {
-      // Portal failure is non-fatal — local save succeeded.
+      // Portal failure is non-fatal — local save and other pushes succeeded.
     }
+  }
+
+  // ── Freemium scan counter (Open tier) ─────────────────────────────
+  // Stays here in Stage 2 of v7 unification. Stage 3 deletes the freemium
+  // module entirely and replaces this call with the requireTier('open')
+  // flow that handles counting internally (or eliminates the count
+  // mechanism — decision deferred to Stage 3). Current behavior preserved
+  // for Open users running v7 without an activated license.
+  try {
+    incrementScanCount();
+  } catch {
+    // Freemium counter is non-essential; never block the save on it.
   }
 
   return {
     filename: baseName,
-    txtFile: `${baseName}.txt`,
-    mdFile: `${baseName}.md`,
-    pdfFile: pdfExists ? `${baseName}.pdf` : null,
+    txtFile:  `${baseName}.txt`,
+    mdFile:   `${baseName}.md`,
+    pdfFile:  pdfExists ? `${baseName}.pdf` : null,
     txtPath,
     mdPath,
-    pdfPath: pdfExists ? pdfPath : null,
-    dir: REPORTS_DIR
+    pdfPath:  pdfExists ? pdfPath : null,
+    dir:      REPORTS_DIR
   };
 }
 
-function convertToMarkdown(content, prefix, label, meta, timestamp, branding = null) {
+function convertToMarkdown(content, prefix, label, meta, timestamp = null, branding = null) {
   const clean = stripAnsi(content);
   const date = new Date().toLocaleString();
 
@@ -229,4 +374,4 @@ function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*m/g, '');
 }
 
-export { REPORTS_DIR };
+export { REPORTS_DIR, convertToMarkdown };
