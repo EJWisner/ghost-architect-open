@@ -71,6 +71,9 @@ async function main() {
     if (all) {
       filtered.push(r);
     } else if (labelFilter) {
+      // Match the label substring against the slugified label inside the
+      // filename. Slugs are lowercase with dashes; normalize the filter
+      // the same way so "Blue Acorn iCi" matches "blue-acorn-ici".
       const filterSlug = labelFilter.replace(/[^a-z0-9]/gi, '-').toLowerCase();
       if (r.labelSlug.includes(filterSlug)) filtered.push(r);
     }
@@ -110,13 +113,15 @@ async function main() {
 
     const reportText = await fs.promises.readFile(mdPath || txtPath, 'utf8');
 
+    // Generate findings.json sidecar if it doesn't already exist.
     const findingsPath = path.join(REPORTS_DIR, `${r.baseName}.findings.json`);
     let findingsExists = fs.existsSync(findingsPath);
     if (!findingsExists) {
       try {
+        // Reverse the slug back to a human label for the manifest entry.
         const humanLabel = r.labelSlug
-          .replace(/---/g, ' \u2014 ')
-          .replace(/-/g, ' ')
+          .replace(/---/g, ' \u2014 ')      // ---  → em-dash with spaces
+          .replace(/-/g, ' ')                // remaining dashes → spaces
           .replace(/\b\w/g, c => c.toUpperCase());
 
         const sidecar = buildFindingsSidecar(reportText, {
@@ -133,12 +138,15 @@ async function main() {
       console.log(`  ✓ ${r.baseName} — sidecar already exists`);
     }
 
+    // Push to portal.
     try {
+      // Reverse the slug to recover the human label for the manifest entry.
       const humanLabel = r.labelSlug
         .replace(/---/g, ' \u2014 ')
         .replace(/-/g, ' ')
         .replace(/\b\w/g, c => c.toUpperCase());
 
+      // Reconstruct scan ISO from the timestamp in the filename.
       const scanIso = r.ts.replace(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/, '$1T$2:$3:$4Z');
 
       await publishToPortal({
