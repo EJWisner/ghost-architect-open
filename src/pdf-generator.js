@@ -1,5 +1,5 @@
 /**
- * Ghost Architect PDF Report Generator v2.5
+ * Ghost Architect PDF Report Generator v7
  * Copyright © 2026 Ghost Architect. All rights reserved.
  * Pure Node.js — no Python or system dependencies required.
  */
@@ -8,6 +8,10 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+const _require = createRequire(import.meta.url);
+const { version: GHOST_VERSION } = _require('../package.json');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,13 +58,32 @@ function box(doc, x, y, w, h, color) {
 }
 
 function stripAnsi(s)  { return s.replace(/\x1B\[[0-9;]*m/g, ''); }
+
+// stripEmoji removes emoji characters AND the variation-selector + zero-width-joiner
+// codepoints that travel with them. Without removing the variation selectors,
+// PDFKit substitutes them for the closest font glyph — the most visible artefact
+// was the construction-emoji "🏗️" leaving a residual U+FE0F that PDFKit rendered
+// as the "fl" ligature (U+FB02) at the top of every report. The Unicode property
+// escape \p{Extended_Pictographic} catches all emoji including ones outside the
+// BMP ranges we used to enumerate by hand. This is Open's implementation; Pro
+// and Team used a less comprehensive BMP-range enumeration that missed
+// codepoints outside U+1F000-U+1FFFF and U+2600-U+27BF.
 function stripEmoji(s) {
-  return s.replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
-          .replace(/[\u{2600}-\u{27BF}]/gu, '')
-          .replace(/[🚩⚠✅❌🔴🟠🟡🟢👻💬📁🐙⚙🚪🗜■]/gu, '');
+  return s
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
+    .replace(/\u200D/g, '');
 }
+
 function stripMd(s) { return s.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/`(.+?)`/g,'$1'); }
-function clean(s)   { return stripEmoji(stripMd(stripAnsi(s))).replace(/!'/g, '->').trim(); }
+
+// Strip leading markdown heading markers (#, ##, ###, etc.) when they survive
+// section detection — happens when the narrator emits a top-level H1 in the
+// report body that isn't recognized as a Ghost section header. Without this,
+// the literal '#' character renders in the PDF body next to the title text.
+function stripLeadingHash(s) { return s.replace(/^#+\s*/, ''); }
+
+function clean(s)   { return stripLeadingHash(stripEmoji(stripMd(stripAnsi(s)))).replace(/!'/g, '->').trim(); }
 
 function sevColor(t) {
   const u = t.toUpperCase();
@@ -77,6 +100,14 @@ function secColor(t) {
   return C.NAVY;
 }
 
+// drawChrome paints the per-page header and footer. v7-unified signature
+// is the 5-param Pro/Team version: branding and trialInfo default to null,
+// so callers that don't have a license profile (Open users, generateDashboardPDF)
+// can omit them and get the default unbranded chrome. When trialInfo.trial is
+// truthy, a translucent diagonal "TRIAL" watermark plus license-id stamp are
+// rendered on every page. When branding.isWhiteLabeled is truthy, the chrome
+// uses the consultant's accent color, logo, and company name instead of
+// Ghost Architect branding.
 function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
   const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
 
@@ -89,11 +120,10 @@ function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
   // on top of it cleanly.
   if (trialInfo && trialInfo.trial) {
     doc.save();
-    // Big diagonal stamp: light gray, large font, rotated -30 degrees,
-    // centered on the page. Render with low opacity so body text remains
-    // readable through it.
+    // Big diagonal stamp: red, large font, rotated -30 degrees, centered on
+    // the page. Render with low opacity so body text remains readable through it.
     doc.opacity(0.10);
-    doc.fillColor([180, 0, 0]); // red so it's unmistakable
+    doc.fillColor([180, 0, 0]);
     doc.font('Helvetica-Bold').fontSize(120);
     doc.rotate(-30, { origin: [PW / 2, PH / 2] });
     doc.text('TRIAL', 0, PH / 2 - 60, {
@@ -127,7 +157,6 @@ function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
   // Default mode: dark navy bar, teal accent, Ghost Architect branding.
   const isWL          = !!(branding && branding.isWhiteLabeled);
   const headerBg      = isWL ? branding.accentColor : C.DARK_BG;
-  const accentText    = isWL ? C.WHITE              : C.TEAL;
   const headerLogoSrc = isWL ? branding.logoPath    : logoPath;
 
   // Header
@@ -277,14 +306,14 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
       if (meta.cost)          { doc.text(`Analysis cost: $${meta.cost}`, mx, my, { width: mw }); my += 12; }
 
       // White-label footer line on the metadata card: consultant attribution
-      // instead of "Ghost Architect v4.5.5 | ghostarchitect.dev".
+      // instead of "Ghost Architect v{version} | ghostarchitect.dev".
       if (isWL) {
         const finalLine = branding.author && branding.author !== branding.companyName
           ? `${branding.companyName}  ·  Prepared by ${branding.author}`
           : branding.companyName;
         doc.text(finalLine, mx, my, { width: mw });
       } else {
-        doc.text(`Ghost Architect v${meta.version || '4.5.5'}  |  ghostarchitect.dev`, mx, my, { width: mw });
+        doc.text(`Ghost Architect v${meta.version || GHOST_VERSION}  |  ghostarchitect.dev`, mx, my, { width: mw });
       }
       y += cardH + 14;
 
@@ -297,9 +326,16 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
         const line = lines[i].trim();
         if (!line) { y += 4; i++; continue; }
 
-        // Section header
+        // Section header detection. Three patterns matched:
+        //   1. Markdown H2 (## SECTION) — narrator's modern output
+        //   2. Emoji-prefixed line (🔴 RED FLAGS, 🏛 LANDMARKS, etc.) — narrator's
+        //      decorated output. Open's \p{Extended_Pictographic} is broader than
+        //      Pro/Team's enumeration (/^(🔴|🏛|🏛️|⚰️|⚡|📊)\s/) — catches
+        //      any narrator emoji prefix, not just six specific ones.
+        //   3. Plain text section name (RED FLAGS, LANDMARKS, etc.) — narrator's
+        //      undecorated fallback.
         const isMdSec    = /^##\s/.test(line);
-        const isGhostSec = /^(🔴|🏛|🏛️|⚰️|⚡|📊)\s/.test(line) ||
+        const isGhostSec = /^\p{Extended_Pictographic}\s/u.test(line) ||
           /^(RED FLAGS|LANDMARKS|DEAD ZONES|FAULT LINES|REMEDIATION SUMMARY|ROLLBACK PLAN|DIRECT DEPENDENCIES|RIPPLE EFFECTS|DANGER ZONES|SAFE ZONES)\b/i.test(line);
         if (isMdSec || isGhostSec) {
           const raw   = stripAnsi(isMdSec ? line.replace(/^#+\s*/,'') : line);
@@ -326,7 +362,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
             const next = lines[j].trim();
             // Stop at next finding, section header, or blank line after content
             if (/^###\s/.test(next) || /^\d+\.\s+[A-Z]/.test(next) && next.length > 10) break;
-            if (isMdSec || /^(🔴|🏛|🏛️|⚰️|⚡|📊)\s/.test(next)) break;
+            if (isMdSec || /^\p{Extended_Pictographic}\s/u.test(next)) break;
             lookahead += next ? 14 : 4;
             if (lookahead > 120) break; // cap estimate at 120px — if it's bigger it'll paginate mid-block which is fine
             j++;
@@ -419,11 +455,149 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
           i++; continue;
         }
 
+        // Bullets: accept both '- ' and '• ' as input markers, output '•'
+        // (professional bullet glyph; '*' looked like developer markdown in
+        // rendered PDFs going to client stakeholders).
         if (line.startsWith('- ') || line.startsWith('• ')) { writeLine(`• ${clean(line.slice(2))}`, { indent: 14 }); i++; continue; }
         if (/^\d+\./.test(line)) { writeLine(clean(line), { indent: 14 }); i++; continue; }
         if (/^\*\*.+\*\*/.test(line)) { writeLine(clean(line), { font: 'Helvetica-Bold' }); i++; continue; }
         writeLine(clean(line)); i++;
       }
+
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    } catch(err) { reject(err); }
+  });
+}
+
+// ── Dashboard PDF ────────────────────────────────────────────────────────────────
+
+/**
+ * Generate a branded PDF of the Project Intelligence Dashboard.
+ * One card per project, summary stats on cover, Ghost styling throughout.
+ *
+ * Currently Team-tier only — Open and Pro have no entry point that calls this.
+ * Stage 3 of v7 unification will not need to gate it; gating happens at the
+ * caller site (Team's dashboard CLI command). Open users carry the code as
+ * inert weight; trade-off accepted in design for cleaner unified file.
+ *
+ * @param {Array}  projects  - from getProjectDashboardData()
+ * @param {string} outputPath
+ */
+export async function generateDashboardPDF(projects, outputPath) {
+  return new Promise((resolve, reject) => {
+    try {
+      const logoPath = path.join(__dirname, '..', 'assets', 'logo.jpeg');
+      const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: true,
+        info: { Title: 'Ghost Architect — Project Intelligence Dashboard', Author: 'Ghost Architect' } });
+      const stream = fs.createWriteStream(outputPath);
+      doc.pipe(stream);
+
+      let y = TOP;
+      let pageNum = 1;
+      drawChrome(doc, pageNum, logoPath, null);
+
+      function newPage() {
+        doc.addPage();
+        pageNum++;
+        y = TOP;
+        drawChrome(doc, pageNum, logoPath, null);
+      }
+      function need(h) { if (y + h > BOTTOM) newPage(); }
+
+      // Cover banner
+      box(doc, ML, y, CW, 52, C.DARK_BG);
+      doc.font('Helvetica-Bold').fontSize(22).fillColor(C.WHITE)
+         .text('Project Intelligence Dashboard', ML + 16, y + 14, { width: CW - 32, lineBreak: false });
+      y += 62;
+
+      const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
+      doc.font('Helvetica').fontSize(9).fillColor(C.MED_GRAY)
+         .text('Generated: ' + ts + '  |  Ghost Architect v' + GHOST_VERSION + '  |  ghostarchitect.dev', ML, y, { width: CW });
+      y += 18;
+
+      const totalProjects = projects.length;
+      const totalScans    = projects.reduce((s, p) => s + (p.scanCount || 0), 0);
+      const totalResolved = projects.reduce((s, p) => s + (p.resolved || 0), 0);
+      const avgProgress   = totalProjects > 0
+        ? Math.round(projects.reduce((s, p) => s + Math.min(100, p.progress || 0), 0) / totalProjects)
+        : 0;
+
+      need(52);
+      box(doc, ML, y, CW, 44, C.NAVY);
+      const statW = CW / 4;
+      const stats = [
+        { label: 'Projects', value: String(totalProjects) },
+        { label: 'Total Scans', value: String(totalScans) },
+        { label: 'Findings Resolved', value: String(totalResolved) },
+        { label: 'Avg Progress', value: avgProgress + '%' },
+      ];
+      stats.forEach((s, i) => {
+        const sx = ML + i * statW;
+        doc.font('Helvetica-Bold').fontSize(16).fillColor(C.TEAL)
+           .text(s.value, sx, y + 6, { width: statW, align: 'center', lineBreak: false });
+        doc.font('Helvetica').fontSize(7).fillColor(C.MED_GRAY)
+           .text(s.label, sx, y + 28, { width: statW, align: 'center', lineBreak: false });
+      });
+      y += 54;
+
+      need(30);
+      box(doc, ML, y, CW, 26, C.PURPLE);
+      doc.font('Helvetica-Bold').fontSize(11).fillColor(C.WHITE)
+         .text('Project Breakdown', ML + 12, y + 8, { lineBreak: false });
+      y += 32;
+
+      for (const p of projects) {
+        const progress  = Math.min(100, Math.max(0, p.progress || 0));
+        const cardH     = p.newIssues > 0 ? 110 : 94;
+        need(cardH + 10);
+
+        box(doc, ML, y, CW, cardH, C.CARD_BG);
+        doc.save().rect(ML, y, CW, cardH).lineWidth(0.5).stroke(C.LIGHT_GRAY).restore();
+
+        const accentColor = progress === 100 ? C.GREEN : progress >= 50 ? C.TEAL : C.AMBER;
+        box(doc, ML, y, 4, cardH, accentColor);
+
+        doc.font('Helvetica-Bold').fontSize(13).fillColor(C.TEXT_DARK)
+           .text(p.label, ML + 14, y + 10, { width: CW - 120, lineBreak: false });
+
+        const pctColor = progress === 100 ? C.GREEN : progress >= 50 ? C.TEAL : C.AMBER;
+        doc.font('Helvetica-Bold').fontSize(20).fillColor(pctColor)
+           .text(progress + '%', ML + CW - 70, y + 8, { width: 60, align: 'right', lineBreak: false });
+        doc.font('Helvetica').fontSize(7).fillColor(C.MED_GRAY)
+           .text('remediated', ML + CW - 70, y + 32, { width: 60, align: 'right', lineBreak: false });
+
+        doc.font('Helvetica').fontSize(8).fillColor(C.MED_GRAY)
+           .text('Baseline: ' + (p.baselineDate || 'N/A') + '  |  Last scan: ' + (p.lastScan || 'N/A') + '  |  ' + (p.scanCount || 0) + ' scan' + (p.scanCount === 1 ? '' : 's') + '  |  ' + (p.baseline || 0) + ' baseline findings',
+             ML + 14, y + 30, { width: CW - 90, lineBreak: false });
+
+        const barY  = y + 50;
+        const barW  = CW - 28;
+        const fillW = Math.round(barW * progress / 100);
+        box(doc, ML + 14, barY, barW, 10, C.LIGHT_GRAY);
+        if (fillW > 0) box(doc, ML + 14, barY, fillW, 10, accentColor);
+        doc.save().rect(ML + 14, barY, barW, 10).lineWidth(0.3).stroke(C.MED_GRAY).restore();
+
+        doc.font('Helvetica').fontSize(8).fillColor(C.TEXT_DARK)
+           .text((p.resolved || 0) + ' of ' + (p.baseline || 0) + ' baseline findings resolved', ML + 14, barY + 16, { lineBreak: false });
+
+        if (p.newIssues > 0) {
+          box(doc, ML + 14, barY + 34, CW - 28, 18, [255, 251, 235]);
+          doc.save().rect(ML + 14, barY + 34, CW - 28, 18).lineWidth(0.3).stroke(C.AMBER).restore();
+          doc.font('Helvetica-Bold').fontSize(8).fillColor(C.AMBER)
+             .text('  ' + p.newIssues + ' new issue' + (p.newIssues === 1 ? '' : 's') + ' found in last scan', ML + 14, barY + 39, { lineBreak: false });
+        }
+
+        y += cardH + 10;
+      }
+
+      need(30);
+      y += 8;
+      doc.save().moveTo(ML, y).lineTo(ML + CW, y).lineWidth(0.5).stroke(C.LIGHT_GRAY).restore();
+      y += 8;
+      doc.font('Helvetica').fontSize(8).fillColor(C.MED_GRAY)
+         .text('Report generated by Ghost Architect  |  Senior Architect Review  |  ghostarchitect.dev', ML, y, { width: CW, align: 'center' });
 
       doc.end();
       stream.on('finish', resolve);
