@@ -1,16 +1,11 @@
 // Regression test for the v6.0.1 ##-as-finding parser fix.
 //
-// Pro/Team are receiving the same defensive patch shipped to Open earlier
-// today, ported to Pro/Team's structurally-different parser (which uses
-// isNonFindingSectionHeader() allowlist instead of Open's substring-match,
-// and seeds new-finding severity from currentSectionSeverity rather than
-// hardcoded MEDIUM).
-//
-// Both fixtures are real reports captured during 2026-05-20 verification —
-// scan1-table-format.md is the canonical ##-category/###-finding shape,
-// scan2-block-format.md is the divergent flat-## shape that reproduced the
-// bug. The fix should make both produce non-zero findings without
-// regressing the canonical format.
+// Reproduces the bug captured in TODO-architect-open-findings-json-missing-scan2.md:
+// when the narrator emitted each finding as its own top-level ## block (no ###
+// nesting), extractFindings() returned [] and saveReport silently skipped
+// findings.json. Both fixtures are real reports captured during 2026-05-20
+// verification — scan1-table-format.md is the canonical ##-category/###-finding
+// shape, scan2-block-format.md is the divergent flat-## shape.
 //
 // Run with: node test/parser-fixtures.test.js
 // Exits 0 on pass, non-zero on fail. Plain stdlib, no test framework, no deps.

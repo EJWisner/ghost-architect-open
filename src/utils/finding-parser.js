@@ -8,38 +8,43 @@
 
 // ── Shared regex patterns ─────────────────────────────────────────────────────
 //
-// Notes on the anchoring choices:
+// These regexes assume the input line has been pre-stripped of `**` markdown
+// bold markers via stripBoldMarkdown(). Pre-stripping is critical because the
+// model produces variants like `**Field:** value`, `**Field**: value`, and
+// `**Field:** **value**` — trying to encode all those positions inline with
+// optional asterisks is fragile (see git history for the bugs that caused).
 //
-// FILES_RE is anchored with `^` so body text containing the word "files"
-// (e.g. "Both files have the issue") cannot hijack the file list. Before
-// this anchor was added, narrator Pass 2 prose like "These files share a
-// common dependency." was matched and overwrote the actual file list.
-// Fixed: 2026-05-08.
-//
-// EFFORT_RE accepts both `hours` and `hrs` because the model emits both
-// spellings depending on whether it's running with white-label / consultant-
-// voice profiles (which prefer the longer form) or without. Before this
-// expansion, the regex required `hrs?` only and silently returned 0 for
-// any "hours" effort estimate, breaking remediation cost calculations on
-// scans that used the longer form. Fixed: 2026-05-08.
+// Pre-stripping reduces every variant to the canonical `Field: value` form,
+// and these regexes match only that form. FILES_RE is anchored with `^` so
+// body text containing the word "files" cannot hijack the file list.
 
-export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?\*?\*?(.+?)\*?\*?$/;
-// SEVERITY_RE matches lines like `**Severity:** **HIGH**` and the newer
-// emoji-prefixed form `**Severity:** 🟠 **HIGH**`. The narrator started
-// emitting the emoji form for white-label / consultant-voice reports; the
-// regex must tolerate any number of emoji and whitespace between the colon
-// and the severity word, otherwise the parser silently falls back to the
-// surrounding section header's inferred severity (e.g. tagging every
-// finding under `## 🔴 Red Flags ...` as CRITICAL regardless of its actual
-// per-finding rating).
-export const SEVERITY_RE = /^\*?\*?[Ss]everity\*?\*?:\s*[^A-Za-z]*\*?\*?(CRITICAL|HIGH|MEDIUM|LOW)\*?\*?/;
-export const FILES_RE    = /^\*?\*?[Ff]iles?\*?\*?[:\s]+(.+)/i;
-// EFFORT_RE uses `[^\d]*` between the colon and the digits to absorb any
-// non-digit characters (asterisks from `**Effort:** 1-2 hrs`, emoji, extra
-// whitespace) without an exhaustive enumeration. The original regex used
-// `[:\s]+` which failed on `**Effort:** 1-2 hrs` because `**` after the
-// colon is neither colon nor whitespace and broke the match.
-export const EFFORT_RE   = /\*?\*?[Ee]ffort\*?\*?\s*:[^\d]*([\d.]+[\u2013\-][\d.]+)\s*(?:hours?|hrs?)/i;
+export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?(.+?)$/;
+export const SEVERITY_RE = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
+export const FILES_RE    = /^[Ff]iles?\s*:\s*(.+)/;
+// Matches "Effort: 3-5 hours" or "Effort: 4 hours" at the start of a line.
+// Accepts both ranges (3-5, 3–5) and single values (4, 4.5). Captures the
+// full value text; the parser splits/parses it after the match.
+export const EFFORT_RE   = /^[Ee]ffort\s*:[^\d]*([\d.]+(?:[\u2013\-][\d.]+)?)\s*(?:hours?|hrs?)/i;
+// Same pattern as EFFORT_RE but unanchored — finds inline effort hidden
+// inside pipe-separated metadata lines like "Severity: HIGH | Effort: 3-5
+// hours | Complexity: Medium | Cost: $360-480". Used as a fallback when the
+// effort field shares a line with severity instead of getting its own line.
+export const EFFORT_INLINE_RE = /[Ee]ffort\s*:[^\d]*([\d.]+(?:[\u2013\-][\d.]+)?)\s*(?:hours?|hrs?)/i;
+
+/**
+ * Strip markdown bold/italic markers (`**`, `*`) from a line.
+ *
+ * The model wraps field labels in markdown bold (`**Severity:**`) and
+ * sometimes wraps values too (`**HIGH**`). Trying to encode all asterisk
+ * positions in regex via optional groups is brittle. Instead, strip first,
+ * then match against the canonical un-bolded form.
+ *
+ * Backticks are NOT stripped here — they're handled separately when needed,
+ * because file-list parsing uses backticks to delimit individual filenames.
+ */
+export function stripBoldMarkdown(line) {
+  return line.replace(/\*+/g, '');
+}
 
 // ── Deterministic finding ID ──────────────────────────────────────────────────
 
@@ -96,66 +101,16 @@ function inferSeverityFromSection(sectionHeader) {
 }
 
 /**
- * True when the given `## ...` header line is a non-finding section that
- * should be skipped by the finding extractor. Strips the `##`, leading
- * emoji, and any markdown emphasis so we can match section names against
- * a clean text body.
- *
- * The closed set of non-finding sections Ghost emits today:
- *   - Executive Summary
- *   - Remediation Summary (sometimes prefixed with 📊 or other emoji)
- *   - Risk if Left Unaddressed
- *   - Risk Assessment (legacy)
- *   - Cost Breakdown (legacy)
- *   - Recommended Next Steps (legacy)
- *
- * Anything else — including Ghost's canonical finding categories (Red
- * Flags, Landmarks, Dead Zones, Fault Lines) and Partner-defined custom
- * categories (Architecture, State Management, etc.) — is treated as a
- * finding category and its ### entries are extracted.
- */
-function isNonFindingSectionHeader(line) {
-  // Strip leading '## ', any emoji prefix, markdown emphasis, and trailing
-  // descriptive text (anything after a dash or em-dash). What remains is
-  // the bare section name.
-  const cleaned = line
-    .replace(/^##\s+/, '')
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')   // strip emoji
-    .replace(/\*+/g, '')                       // strip markdown emphasis
-    .split(/[\u2014\u2013\-\u00b7]/)[0]        // take part before any dash/bullet
-    .trim()
-    .toLowerCase();
-
-  // Exact-name matches (closed set of known non-finding sections)
-  const NON_FINDING_NAMES = [
-    'executive summary',
-    'remediation summary',
-    'risk if left unaddressed',
-    'risk assessment',
-    'cost breakdown',
-    'recommended next steps',
-  ];
-  if (NON_FINDING_NAMES.includes(cleaned)) return true;
-
-  // Catch a couple of permissive variants we've seen in the wild
-  if (/^remediation\b/.test(cleaned) && /summary$/.test(cleaned)) return true;
-  if (/^risk\b/.test(cleaned) && /unaddressed$/.test(cleaned))    return true;
-
-  return false;
-}
-
-/**
  * Extract findings from a Ghost Architect report's markdown text.
  *
  * @param {string} reportText      Raw markdown text of the report.
  * @param {object} [opts]
  * @param {boolean} [opts.keepLandmarks=false]  When true, findings inside
- *        a section whose name matches /landmark/i are tagged with severity
- *        'LANDMARK' (overriding inferSeverityFromSection). Used by
- *        compare.js to track architectural-pattern findings across runs.
- *        When false (default), landmark sections are treated like any
- *        other finding category and their severity is inferred from the
- *        header (typically MEDIUM in absence of a severity emoji).
+ *        LANDMARK sections (## 🏛 LANDMARKS, etc.) are included with
+ *        severity 'LANDMARK' instead of being dropped. Used by compare.js
+ *        which tracks architectural-pattern findings across runs. Default
+ *        false (POI/Blast scans drop landmarks because the narrator
+ *        doesn't render them as severity-tracked items).
  * @returns {Array<Finding>}
  */
 export function extractFindings(reportText, opts = {}) {
@@ -167,13 +122,18 @@ export function extractFindings(reportText, opts = {}) {
   let current    = null;
   let currentSectionSeverity = 'MEDIUM';
   let inNonFindingSection = false;
+  let inLandmarkSection = false;
   let inCodeBlock = false;
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
-    const t = line.trim();
+    const tRaw = line.trim();
+    // Pre-strip markdown bold so regex patterns can be simple. See header
+    // comments above the regex patterns for why.
+    const t = stripBoldMarkdown(tRaw);
 
-    if (t.startsWith('```')) {
+    // Code block detection uses the raw line (`***` is not a code fence).
+    if (tRaw.startsWith('```')) {
       inCodeBlock = !inCodeBlock;
       continue;
     }
@@ -184,21 +144,30 @@ export function extractFindings(reportText, opts = {}) {
 
     if (/^##\s+/.test(t)) {
       if (current) { findings.push(finalize(current)); current = null; }
-      // Detect non-finding sections precisely. Earlier regex matched
-      // substrings like 'landmark' and 'architecture', which collide with
-      // legitimate finding categories ('🏛️ Landmarks', Partner
-      // 'Architecture & Separation of Concerns'). We instead match exact
-      // section names anchored after the leading ##, allowing emoji and
-      // whitespace before them. The section list is the closed set of
-      // non-finding sections Ghost emits: Executive Summary, Remediation
-      // Summary (with or without emoji), Risk if Left Unaddressed, Cost
-      // Breakdown, Recommended Next Steps. Custom Partner categories with
-      // any other name are treated as finding categories by default.
-      if (isNonFindingSectionHeader(t)) {
+
+      // Landmark sections are special: when keepLandmarks=true, treat them
+      // as a finding section with severity 'LANDMARK'. When false (default),
+      // skip them entirely as non-finding architectural commentary.
+      const isLandmark = /landmark/i.test(t);
+      if (isLandmark) {
+        if (keepLandmarks) {
+          inNonFindingSection = false;
+          inLandmarkSection = true;
+          currentSectionSeverity = 'LANDMARK';
+          continue;
+        }
         inNonFindingSection = true;
+        inLandmarkSection = false;
         continue;
       }
-      inNonFindingSection = false;
+
+      // Other non-finding sections (architecture overview, executive summary,
+      // recommended fixes, cost breakdown, remediation summary).
+      if (/architecture|summary|recommended|cost breakdown|remediation summary/i.test(t)) {
+        inNonFindingSection = true;
+        inLandmarkSection = false;
+        continue;
+      }
 
       // ##-as-finding peek-ahead (v6.0.1).
       // Some narrator outputs emit each finding as its own top-level ##
@@ -207,49 +176,42 @@ export function extractFindings(reportText, opts = {}) {
       // never fires and saveReport silently skips findings.json (the
       // sidecar write is gated on findings.length > 0).
       //
-      // Peek up to 5 non-empty lines forward for a Severity: line before
-      // the next ## or ### header. Presence of a severity line is the
-      // unambiguous "this ## is a finding header" signal — non-finding
-      // category sections (## 🔴 Red Flags, ## Fault Lines) never have a
-      // Severity line directly under them; they contain ### children that
-      // do, and the ### header stops the peek before we reach those.
+      // Peek up to 5 non-empty lines forward for a `Severity:` line
+      // before the next ## or ### header. Presence of a severity line
+      // is the unambiguous "this ## is a finding header" signal — non-
+      // finding category sections (`## 🔴 Red Flags`, `## Fault Lines`)
+      // never have a Severity line directly under them; they contain
+      // ### children that do.
       //
-      // See TODO-architect-narrator-drift-open-vs-pro.md for the upstream
-      // question this defensive patch is working around.
+      // See TODO-architect-narrator-drift-open-vs-pro.md for the
+      // upstream question this defensive patch is working around.
       let peeksRemaining = 5;
       let isFindingHeader = false;
       for (let i = lineIdx + 1; i < lines.length && peeksRemaining > 0; i++) {
-        const peek = lines[i].trim();
+        const peek = stripBoldMarkdown(lines[i].trim());
         if (!peek) continue;
         if (/^#{2,3}\s+/.test(peek)) break;
         if (SEVERITY_RE.test(peek)) { isFindingHeader = true; break; }
         peeksRemaining--;
       }
       if (isFindingHeader) {
-        if (current) findings.push(finalize(current));
-        const title = t.replace(/^##\s+/, '').replace(/^\d+\.\s+/, '').replace(/\*\*/g, '').trim();
+        const title = t.replace(/^##\s+/, '').replace(/^\d+\.\s+/, '').trim();
         current = {
           title,
-          severity:    currentSectionSeverity, // overwritten by Severity: line; otherwise inherits section context
+          severity:    'MEDIUM',  // overwritten by the Severity: line below
           detail:      '',
           files:       [],
           effortHours: 0,
           confidence:  85,
         };
+        inNonFindingSection = false;
+        inLandmarkSection = false;
         continue;
       }
 
-      // When opts.keepLandmarks is true and the section header matches
-      // /landmark/i, override the section severity to 'LANDMARK' so the
-      // compare-mode caller can identify architectural findings explicitly.
-      // Otherwise, infer severity from the header as usual (Pro's default
-      // behavior, which preserves Partner-defined categories with their
-      // own emoji-derived severity).
-      if (keepLandmarks && /landmark/i.test(t)) {
-        currentSectionSeverity = 'LANDMARK';
-      } else {
-        currentSectionSeverity = inferSeverityFromSection(t);
-      }
+      inNonFindingSection = false;
+      inLandmarkSection = false;
+      currentSectionSeverity = inferSeverityFromSection(tRaw);  // raw — emoji indicators are part of the header
       continue;
     }
 
@@ -257,7 +219,7 @@ export function extractFindings(reportText, opts = {}) {
 
     if (/^###\s+/.test(t)) {
       if (current) findings.push(finalize(current));
-      const title = t.replace(/^###\s+/, '').replace(/^\d+\.\s+/, '').replace(/\*\*/g, '').trim();
+      const title = t.replace(/^###\s+/, '').replace(/^\d+\.\s+/, '').trim();
       current = {
         title,
         severity:    currentSectionSeverity,
@@ -271,33 +233,33 @@ export function extractFindings(reportText, opts = {}) {
 
     if (current) {
       const sm = t.match(SEVERITY_RE);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
-
-      const fim = t.match(FILES_RE);
-      if (fim) {
-        // Strip markdown artifacts that the narrator's Pass 2 sometimes
-        // emits inside the Files line: backticks, bold (**), emphasis (*),
-        // angle brackets <...>, and any leading/trailing whitespace. After
-        // stripping, drop any entry that is empty OR contains nothing but
-        // punctuation (e.g. "**" by itself, which the verifier would treat
-        // as a literal glob and fail every file-existence check). The bug-
-        // firing osc-cap-test scan on April 27 produced files: ["**"] for
-        // every finding because Pass 2 emitted `**Files:** **` with empty
-        // bold; this strips it to nothing and we drop the entry, leaving
-        // current.files = [] which is a more honest signal to downstream.
-        current.files = fim[1]
-          .split(/[,;]/)
-          .map(f => f
-            .trim()
-            .replace(/`/g, '')
-            .replace(/\*+/g, '')
-            .replace(/^<|>$/g, '')
-            .trim()
-          )
-          .filter(f => f && /[a-zA-Z0-9]/.test(f));
+      if (sm) {
+        current.severity = sm[1].toUpperCase();
+        // v5.5.1+: pipe-separated metadata lines often pack severity, effort,
+        // complexity, and cost onto a single line. Try to extract inline
+        // effort from the same line before continuing. Without this, any
+        // report using the format "Severity: X | Effort: Y hours | ..." loses
+        // its effort estimates because the parser already consumed the line.
+        if (current.effortHours === 0) {
+          const eim = t.match(EFFORT_INLINE_RE);
+          if (eim) {
+            const parts = eim[1].split(/[\u2013\-]/);
+            current.effortHours = parseFloat(parts[parts.length - 1]) || 0;
+          }
+        }
         continue;
       }
 
+      const fim = t.match(FILES_RE);
+      if (fim) {
+        // Each file may still have backticks left from the un-stripped raw
+        // form (e.g. `Files: \`pricing.js\`, \`utils.js\``). Strip them after
+        // splitting on commas/semicolons.
+        current.files = fim[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
+        continue;
+      }
+
+      // Line-start "Effort: ..." pattern (each field on its own line)
       const em = t.match(EFFORT_RE);
       if (em) {
         const parts = em[1].split(/[\u2013\-]/);
@@ -305,8 +267,22 @@ export function extractFindings(reportText, opts = {}) {
         continue;
       }
 
-      if (t && t.length > 10 && !t.startsWith('---') && !t.startsWith('===') && !t.startsWith('```') && !t.startsWith('|')) {
-        current.detail += (current.detail ? ' ' : '') + t.replace(/\*\*/g, '');
+      // Inline effort fallback — catches "Effort:" tokens embedded in
+      // pipe-separated metadata or anywhere mid-line. Only fires when we
+      // don't already have an effort value to avoid overwriting a clean
+      // line-anchored match.
+      if (current.effortHours === 0) {
+        const eim = t.match(EFFORT_INLINE_RE);
+        if (eim) {
+          const parts = eim[1].split(/[\u2013\-]/);
+          current.effortHours = parseFloat(parts[parts.length - 1]) || 0;
+          // Don't continue — the line might also contain detail text we
+          // want to capture. Fall through to the detail-accumulation branch.
+        }
+      }
+
+      if (t && t.length > 10 && !t.startsWith('---') && !t.startsWith('===') && !tRaw.startsWith('```') && !t.startsWith('|')) {
+        current.detail += (current.detail ? ' ' : '') + t;
       }
     }
   }
