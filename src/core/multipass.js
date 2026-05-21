@@ -610,7 +610,6 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // upstream of saveReport; if it doesn't, saveReport is the culprit.
   writeSynthesisStageDump(runId, '4-after-regen', finalOutput, options.projectLabel);
 
-  console.error('DEBUG-v7-DIAG: [multipass.js synthesizeFinal pre-return] about to return narrated report');
   return finalOutput;
 }
 
@@ -1036,6 +1035,5 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
   );
 
   deleteSession(projectLabel);
-  console.error('DEBUG-v7-DIAG: [multipass.js runMultiPassPOI pre-return] about to return multipass result');
   return { finalReport, passCount: session.completedPassCount, totalFiles, coverage };
 }

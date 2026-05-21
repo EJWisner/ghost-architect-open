@@ -96,7 +96,6 @@ export async function runPOIMode(codebaseContext, options = {}) {
   let buffer  = '';
   let started = false;
   let spinner = null;
-  let narratingCount = 0;
 
   try {
     if (useMultiPass) {
@@ -112,7 +111,6 @@ export async function runPOIMode(codebaseContext, options = {}) {
         },
         onProgress({ type, ...data }) {
           if (type === 'narrating') {
-            console.error('DEBUG-v7-DIAG: [poi.js narrating-event] received narrating event #' + (++narratingCount));
             if (spinner) { spinner.stop(); spinner = null; }
             spinner = ora({ text: chalk.cyan('  Ghost is writing the final report...'), color: 'cyan' }).start();
           }
@@ -234,7 +232,6 @@ export async function runPOIMode(codebaseContext, options = {}) {
       } else if (multiResult.finalReport) {
         // Stop the narrator spinner cleanly now that the full report is in hand.
         if (spinner) { spinner.succeed(chalk.green('  Report ready')); spinner = null; }
-        console.error('DEBUG-v7-DIAG: [poi.js post-multipass] finalReport in hand, spinner succeeded');
         buffer = multiResult.finalReport;
         // Use multipass total — reflects all files analyzed across all passes
         if (multiResult.totalFiles) {
@@ -293,7 +290,6 @@ export async function runPOIMode(codebaseContext, options = {}) {
     const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 200;
     const outputTokens = Math.ceil(buffer.length / 4);
     showActualCost(inputTokens, outputTokens, model);
-    console.error('DEBUG-v7-DIAG: [poi.js post-showActualCost] cost line printed');
 
     // Project Intelligence — auto-compare against baseline
     let projectIntelResult = null;
@@ -304,15 +300,12 @@ export async function runPOIMode(codebaseContext, options = {}) {
       };
       projectIntelResult = await handleProjectIntelligence(label, buffer, piMeta);
     }
-    console.error('DEBUG-v7-DIAG: [poi.js post-handleProjectIntelligence] returned');
 
     // Save prompt
-    console.error('DEBUG-v7-DIAG: [poi.js pre-save-prompt] about to call inquirer.prompt for save');
     const { doSave } = await inquirer.prompt([{
       type: 'confirm', name: 'doSave',
       message: chalk.cyan('Save this report to ~/Ghost Architect Reports/?'), default: true
     }]);
-    console.error('DEBUG-v7-DIAG: [poi.js post-save-prompt] inquirer resolved');
 
     // Parse severity counts using the finding parser — counts actual findings,
     // not raw word occurrences which over-count due to summary tables/headers
@@ -432,9 +425,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
 
     if (doSave) {
       // Save locally — saveReport also auto-publishes to Ghost Mobile if configured
-      console.error('DEBUG-v7-DIAG: [poi.js pre-saveReport] about to call saveReport');
       const saved = await saveReport(buffer, 'ghost-poi', label, meta);
-      console.error('DEBUG-v7-DIAG: [poi.js post-saveReport] saveReport returned');
       console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
