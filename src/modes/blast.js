@@ -222,9 +222,11 @@ export async function runBlastMode(codebaseContext, options = {}) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard analysis)\n'));
   }
 
-  // Smart project label prompt — mirrors POI. Without this, Blast saves
-  // were always using a synthetic change-set-N-files label that broke
-  // project grouping on the portal.
+  // Smart project label prompt — same UX as POI. The project label is what
+  // groups scans together on the portal and in team-sync. Without this,
+  // Blast was saving under a target-derived synthetic label like
+  // "change-set-4-files" which broke project grouping entirely. The
+  // change-set descriptor is now folded into meta instead.
   const label = await promptProjectLabel();
   console.log('');
 
@@ -287,14 +289,23 @@ export async function runBlastMode(codebaseContext, options = {}) {
     }]);
 
     if (doSave) {
-      // Saved-report label: prefer the user-provided project label so the
-      // file groups with the rest of the project's history on the portal.
-      // Fall back to the synthetic change-set / target name when no
-      // project label was given (one-time scan).
+      // The saveLabel is the project label — this is what groups scans
+      // across modes for the same project on the portal, in team-sync,
+      // and in mobile-publish. When the user gave a label, use it. When
+      // they skipped (label = null = one-time scan), fall back to the
+      // target-derived synthetic label so the file is still uniquely
+      // named on disk.
       const fallbackLabel = targetCount > 1
         ? `change-set-${targetCount}-files`
         : (Array.isArray(target) ? target[0] : target);
       const saveLabel = label || fallbackLabel;
+
+      // changeSet captures what was actually analyzed — the file list or
+      // free-text target — so the report header can show it even though
+      // the file name now uses the project label. The narrator already
+      // bakes this into the report body; meta carries it forward for
+      // downstream renderers (PDF cover page, manifest entry, etc.).
+      const changeSet = Array.isArray(target) ? target : [target];
 
       // Meta drives PDF chrome and markdown branding. The `profile` field is
       // what flips PDF rendering into white-label mode — saveReport calls
@@ -305,9 +316,9 @@ export async function runBlastMode(codebaseContext, options = {}) {
           ? `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`
           : `${codebaseContext.loadedFiles || 0}`,
         totalFiles: codebaseContext.totalFiles,
-        changeSet: targetCount > 1 ? `change-set-${targetCount}-files` : null,
-        targetCount,
         profile,
+        changeSet,
+        targetCount,
       };
 
       const saved = await saveReport(buffer, 'ghost-blast', saveLabel, meta);
