@@ -268,10 +268,30 @@ export async function runAuditMode(codebaseContext, options = {}) {
   if (doSave) {
     const saveSpinner = ora({ text: chalk.cyan('Saving deal-grade report (TXT / MD / PDF)...'), color: 'cyan' }).start();
     try {
+      // v5.6.0: derive structured findings from the programmatic analyzer
+      // outputs (NOT from markdown parsing). Audit's findings are produced
+      // by deterministic analyzers — dependencyMap, stackReality,
+      // keyPersonRisk — so we normalize them directly into the canonical
+      // findings schema rather than asking the model to emit and re-parse.
+      const { findingsFromAuditResults } = await import('./findingsFromResults.js');
+      const parsedFindings = findingsFromAuditResults(results);
+      const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+      const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+      const lowCount      = parsedFindings.filter(f => f.severity === 'LOW').length;
+      const totalHours    = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
+
       saved = await saveReport(reportContent, 'ghost-audit', label, {
         filesAnalyzed: `${codebaseContext.loadedFiles || 0} of ${codebaseContext.totalFiles || 0}`,
         totalFiles: codebaseContext.totalFiles || 0,
         profile,
+        findings: parsedFindings,
+        findingCount: parsedFindings.length,
+        critical: criticalCount,
+        high:     highCount,
+        medium:   mediumCount,
+        low:      lowCount,
+        totalHours,
       });
       saveSpinner.succeed(chalk.green(`  ${SYM.check} Reports saved`));
     } catch (err) {
