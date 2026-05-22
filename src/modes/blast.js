@@ -11,6 +11,11 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { promptProjectLabel } from '../projects.js';
+// Static import: extractFindings is already used by sibling modes (poi.js)
+// so there's no module-loading novelty justifying the dynamic-import pattern
+// audit-mode used for its newly-introduced findingsFromAuditResults. Idiomatic
+// top-level import; the audit-mode dynamic-import precedent doesn't apply here.
+import { extractFindings } from '../utils/finding-parser.js';
 
 // ── Target selection ────────────────────────────────────────────────────────
 //
@@ -307,6 +312,20 @@ export async function runBlastMode(codebaseContext, options = {}) {
       // downstream renderers (PDF cover page, manifest entry, etc.).
       const changeSet = Array.isArray(target) ? target : [target];
 
+      // Sidecar findings: parse the report into structured findings so the
+      // .findings.json sidecar carries real severity counts and effort estimates
+      // instead of the placeholder all-MEDIUM output buildFindingsSidecar produces
+      // when called on raw report text. Same architectural pattern as audit-mode
+      // (commits c2aeaad + dc352b0): mode populates meta.findings, reports.js
+      // Strategy 2 conditional consumes it; falls back to buildFindingsSidecar
+      // for callers that don't supply it.
+      const parsedFindings = extractFindings(buffer);
+      const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+      const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+      const lowCount       = parsedFindings.filter(f => f.severity === 'LOW').length;
+      const totalHours     = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
+
       // Meta drives PDF chrome and markdown branding. The `profile` field is
       // what flips PDF rendering into white-label mode — saveReport calls
       // getBranding(meta.profile) and threads the result into the PDF
@@ -319,6 +338,17 @@ export async function runBlastMode(codebaseContext, options = {}) {
         profile,
         changeSet,
         targetCount,
+        // Sidecar findings — reports.js consumes meta.findings if present
+        // (Strategy 2 conditional from commit dc352b0). Without these, the
+        // .findings.json sidecar would default to all-MEDIUM placeholder
+        // entries from parsing report markdown headers.
+        findings:     parsedFindings,
+        findingCount: parsedFindings.length,
+        critical:     criticalCount,
+        high:         highCount,
+        medium:       mediumCount,
+        low:          lowCount,
+        totalHours,
       };
 
       const saved = await saveReport(buffer, 'ghost-blast', saveLabel, meta);
