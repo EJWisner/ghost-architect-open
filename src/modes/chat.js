@@ -138,16 +138,22 @@ async function saveChatLog(chatLog) {
   let content = `GHOST ARCHITECT — CHAT TRANSCRIPT\n`;
   content += `Saved: ${timestamp}\n`;
   content += `Exchanges: ${chatLog.length}\n`;
-  content += `${'─'.repeat(60)}\n\n`;
+  // ASCII '-' instead of U+2500 box-drawing character because PDFKit's bundled
+  // font has no glyph for U+2500 and substitutes '%' for every cell, rendering
+  // '──────' as '%%%%%%' in saved PDFs. Fix originally in Open `891b440`.
+  const sep = '-'.repeat(60);
+  content += `${sep}\n\n`;
 
   chatLog.forEach((entry, i) => {
     content += `Q${i + 1}: ${entry.q}\n\n`;
     content += `Ghost: ${entry.a}\n\n`;
-    content += `${'─'.repeat(60)}\n\n`;
+    content += `${sep}\n\n`;
   });
 
   const saved = await saveReport(content, 'ghost-chat', label || 'conversation');
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
-  console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)\n`));
+  console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)`));
+  if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
+  console.log('');
 }
