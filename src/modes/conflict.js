@@ -14,6 +14,12 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { promptProjectLabel } from '../projects.js';
+// Static import: extractFindings is already used by sibling modes (poi.js,
+// blast.js) so there's no module-loading novelty justifying the dynamic-import
+// pattern audit-mode used for its newly-introduced findingsFromAuditResults.
+// Idiomatic top-level; matches the Blast-sidecar wiring decision in commit
+// 52e2782.
+import { extractFindings } from '../utils/finding-parser.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -287,6 +293,18 @@ export async function runConflictMode(codebaseContext, options = {}) {
     }]);
 
     if (doSave) {
+      // Sidecar findings: parse the report into structured findings so the
+      // .findings.json sidecar carries real severity counts and effort
+      // estimates instead of the all-MEDIUM placeholder buildFindingsSidecar
+      // produces when called on raw report text. Same architectural pattern
+      // as audit-mode (c2aeaad + dc352b0) and Blast-mode (52e2782).
+      const parsedFindings = extractFindings(buffer);
+      const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+      const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+      const lowCount       = parsedFindings.filter(f => f.severity === 'LOW').length;
+      const totalHours     = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
+
       // Meta drives PDF chrome and markdown branding. The `profile` field
       // is what flips PDF rendering into white-label mode — saveReport
       // calls getBranding(meta.profile) and threads the result into the
@@ -300,6 +318,21 @@ export async function runConflictMode(codebaseContext, options = {}) {
         verified: result.verified || false,
         verificationStats: result.stats || null,
         profile,
+        // Sidecar findings — reports.js Strategy 2 conditional (commit
+        // dc352b0) consumes meta.findings when present. Without these,
+        // the .findings.json sidecar would default to all-MEDIUM
+        // placeholder entries from parsing report markdown headers.
+        // Note: verificationStats (CONFIRMED/POSSIBLE/FALSE_POSITIVE) is
+        // an orthogonal classification signal — distinct from severity
+        // and effortHours. Downstream consumers could fold it into
+        // sidecar finding objects later as an additional dimension.
+        findings:     parsedFindings,
+        findingCount: parsedFindings.length,
+        critical:     criticalCount,
+        high:         highCount,
+        medium:       mediumCount,
+        low:          lowCount,
+        totalHours,
       };
       const saved = await saveReport(buffer, 'ghost-conflict', label, meta);
       console.log(chalk.green(`\n${SYM.check} Conflict report saved to ~/Ghost Architect Reports/`));
