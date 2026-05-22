@@ -112,18 +112,70 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // ── Findings sidecar ──────────────────────────────────────────────
   // Generate findings.json BEFORE any push side-effect so team-sync,
   // mobile-publish, and portal-publish can all reference the same sidecar
-  // file. Build from the raw content (not the MD with its severity-emoji
-  // rewrites) so the parser sees the original tokens. Open users (label
-  // absent) still generate the sidecar with project: null — Jira export
-  // downstream handles null project as "unlabeled scan" fallback.
+  // file. Open users (label absent) still generate the sidecar with
+  // project: null — Jira export downstream handles null project as
+  // "unlabeled scan" fallback.
+  //
+  // Two-path Strategy 2 design (v7 unification, May 22):
+  //   1. If meta.findings is a non-empty array, the mode has already
+  //      produced structured findings (e.g. audit mode's deterministic
+  //      analyzers via findingsFromAuditResults). Use those directly —
+  //      they're the source of truth and carry severity/files/effort
+  //      information the markdown parser cannot recover.
+  //   2. Otherwise, fall back to buildFindingsSidecar(content) which
+  //      runs extractFindings() over the raw report text. Modes that
+  //      haven't been wired to populate meta.findings yet (POI, Recon,
+  //      Chat, Blast, Conflict as of this commit) keep their current
+  //      behavior. Blast and Conflict wirings are queued as follow-up
+  //      commits matching Open's fdfebb3 pattern.
+  //
+  // Wire format on disk is identical regardless of path — same schema,
+  // same field names, same shape downstream consumers (Mobile, Portal,
+  // Jira export) already read. Only the source of finding data differs.
   const findingsJsonPath = path.join(dir, `${baseName}.findings.json`);
   const mode = prefix.replace(/^ghost-/, '');
   let findingsSidecarWritten = false;
   try {
-    const sidecar = buildFindingsSidecar(stripAnsi(content), {
-      project: label || null,
-      mode,
-    });
+    let sidecar;
+    if (Array.isArray(meta.findings) && meta.findings.length > 0) {
+      // Mode supplied structured findings — build sidecar from meta.
+      const findings = meta.findings.map((f) => ({
+        id:          f.id,
+        title:       f.title,
+        severity:    f.severity,
+        files:       Array.isArray(f.files) ? f.files : [],
+        effortHours: typeof f.effortHours === 'number' ? f.effortHours : 0,
+        // Confidence rescale: findingsFromAuditResults produces 0–1 floats;
+        // buildFindingsSidecar and extractFindings produce 0–100 integers.
+        // Detect by magnitude: values <= 1 are float-shaped, multiply by 100.
+        // Edge case: a percentage-shaped confidence of exactly 1 would be
+        // misdetected, but no current source produces this value.
+        confidence:  typeof f.confidence === 'number' && f.confidence <= 1
+                       ? Math.round(f.confidence * 100)
+                       : (typeof f.confidence === 'number' ? f.confidence : 85),
+        detail:      typeof f.detail === 'string' ? f.detail : '',
+      }));
+      const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      for (const f of findings) {
+        const k = (f.severity || '').toLowerCase();
+        if (counts[k] !== undefined) counts[k]++;
+      }
+      sidecar = {
+        schema:         1,
+        generatedAt:    new Date().toISOString(),
+        project:        label || null,
+        mode,
+        totalFindings:  findings.length,
+        severityCounts: counts,
+        findings,
+      };
+    } else {
+      // No structured findings in meta — fall back to markdown parsing.
+      sidecar = buildFindingsSidecar(stripAnsi(content), {
+        project: label || null,
+        mode,
+      });
+    }
     fs.writeFileSync(findingsJsonPath, JSON.stringify(sidecar, null, 2));
     findingsSidecarWritten = true;
   } catch (err) {
