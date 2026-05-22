@@ -115,14 +115,25 @@ const REDACTION_RULES = [
  * Redact sensitive data from a string.
  * Each rule is wrapped in try/catch — a failing rule is skipped, not fatal.
  * Returns partialRedaction: true if any rule failed.
+ *
+ * @param {string} content - The content to redact.
+ * @param {Array} customRules - Optional array of additional rule objects in the
+ *   same { name, regex, replacement } or { name, parser } shape as REDACTION_RULES.
+ *   Empty by default. Used by the loader to inject profile-declared private_patterns
+ *   on top of the built-in rule set. See TODO-architect-redactor-custom-patterns-v7.md.
  */
-export function redactContent(content) {
+export function redactContent(content, customRules = []) {
   let redacted = content;
   const findings        = [];
   const failedRules     = [];
   let   partialRedaction = false;
 
-  for (const rule of REDACTION_RULES) {
+  // Iterate over built-in rules first, then customer-defined patterns.
+  // Custom rules go last so built-in patterns (high-confidence cryptographic
+  // shapes) get applied before any user-defined patterns that might overlap.
+  const allRules = [...REDACTION_RULES, ...customRules];
+
+  for (const rule of allRules) {
     try {
       if (rule.parser) {
         // Stateful parser path (ReDoS-safe)

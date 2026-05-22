@@ -9,6 +9,7 @@ import inquirer from 'inquirer';
 import { getConfig } from '../config.js';
 import { resolveContextCap } from './tierCaps.js';
 import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
+import { redactContent, showRedactionSummary } from '../redactor.js';
 
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
@@ -491,6 +492,22 @@ async function readFiles(filePaths, basePath) {
   return buildContext(fileMap);
 }
 
+// ── Custom-patterns extension hook (stub for v7 GA scope addition) ────────────────────────────────
+// Returns profile-declared private_patterns as rule objects to append to the
+// redactor's built-in rule set. Initial implementation returns an empty array;
+// full feature is sequenced after Stage 3 freemium-to-requireTier conversion.
+// Designed-in extension point: when implemented, this becomes a real loader
+// that reads profile.private_patterns, validates regex/literal entries,
+// tier-gates (Open returns []), and produces { name, regex, replacement }
+// objects shaped like REDACTION_RULES.
+//
+// See TODO-architect-redactor-custom-patterns-v7.md for full design.
+function loadCustomPatterns({ tier, profile }) {
+  // Stub: no custom patterns until the feature lands.
+  // Returning [] is the correct behavior for v7 GA base ship.
+  return [];
+}
+
 function buildContext(fileMap) {
   const config = getConfig();
   const configuredMax = config.get('maxTokensContext') || 50000;
@@ -500,6 +517,76 @@ function buildContext(fileMap) {
   // Tier cap always clamps the final value.
   const userRequested = SCAN_OPTIONS.maxContextOverride ?? configuredMax;
   const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested);
+
+  // ── Redaction ──────────────────────────────────────────────────────────────
+  // Strip API keys, secrets, DB credentials, and private keys before files are
+  // concatenated into the prompt context. Runs per-file so multi-pass scanners
+  // (which work directly off fileMap) also see redacted content. Two-layer
+  // failure model:
+  //   - Rule level (inside redactContent): warn-and-continue. Each rule's
+  //     try/catch lets a single rule fail without aborting the function;
+  //     failedRules collects errors; partialRedaction = true is flagged.
+  //   - File-loop level (this code): try/catch wraps the redactContent call
+  //     itself so a thrown exception (TypeError from non-string input, OOM
+  //     on huge file, etc.) becomes a failed-rule entry rather than a stack
+  //     trace. Required so the fail-closed promise always presents a polite
+  //     user-visible reason for the abort, never a stack trace.
+  //   - Loader level (after the loop): fail-closed. If anyPartial is true,
+  //     abort the scan before any API call. User's secrets are more important
+  //     than completing the scan.
+  //
+  // Custom-patterns extension hook: profile-declared private_patterns will be
+  // appended to the rule set by loadCustomPatterns(). Initial implementation
+  // returns an empty array; full feature is sequenced after Stage 3 freemium-
+  // to-requireTier conversion. See TODO-architect-redactor-custom-patterns-v7.md.
+  const customRules = loadCustomPatterns({ tier: SCAN_OPTIONS.tier, profile: SCAN_OPTIONS.profile });
+
+  const redactedFileMap = {};
+  const allFindings     = [];
+  const allFailedRules  = [];
+  let   anyPartial      = false;
+  for (const [filePath, content] of Object.entries(fileMap)) {
+    try {
+      const { redacted, findings, failedRules, partialRedaction } = redactContent(content, customRules);
+      redactedFileMap[filePath] = redacted;
+      if (findings.length)    allFindings.push(...findings);
+      if (failedRules.length) allFailedRules.push(...failedRules);
+      if (partialRedaction)   anyPartial = true;
+    } catch (err) {
+      // redactContent has internal try/catches around each rule, so a thrown
+      // exception here means something more fundamental failed (TypeError,
+      // OOM, etc.). Treat as a failed-rule entry so the user sees a polite
+      // abort message rather than a stack trace. Fail-closed contract requires
+      // the user understand WHY the scan aborted, not just that something broke.
+      allFailedRules.push({ rule: `<redactContent threw on ${filePath}>`, error: err.message });
+      anyPartial = true;
+    }
+  }
+
+  if (anyPartial) {
+    // Fail-closed: if any redaction rule errored OR redactContent itself threw,
+    // halt before sending anything to Anthropic.
+    console.log(chalk.red('\n  ⚠  Redaction failed on one or more rules. Scan aborted to protect secrets.'));
+    for (const f of allFailedRules) {
+      console.log(chalk.red(`      • ${f.rule}: ${f.error}`));
+    }
+    console.log(chalk.gray('  Investigate the failing rule(s) before re-running. Your codebase was NOT sent to the API.\n'));
+    return null;
+  }
+
+  if (allFindings.length > 0) {
+    showRedactionSummary({
+      findings:         allFindings,
+      totalRedactions:  allFindings.length,
+      failedRules:      [],
+      partialRedaction: false,
+    });
+  }
+
+  // Use the redacted fileMap going forward — modes that read .fileMap directly
+  // (e.g. multi-pass POI / Conflict) need redacted content too, not just the
+  // assembled .context string.
+  fileMap = redactedFileMap;
 
   let context = '';
   let fileIndex = [];
