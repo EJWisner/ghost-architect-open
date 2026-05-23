@@ -10,6 +10,7 @@ import { getConfig } from '../config.js';
 import { resolveContextCap } from './tierCaps.js';
 import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
 import { redactContent, showRedactionSummary } from '../redactor.js';
+import { isBackKeyword } from '../cli/prompt-helpers.js';
 
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
@@ -96,9 +97,15 @@ async function loadFromFiles() {
     const answer = await inquirer.prompt([{
       type: 'input',
       name: 'dirPath',
-      message: chalk.cyan('Path to codebase directory:'),
+      message: chalk.cyan("Path to codebase directory (or 'back' to cancel):"),
     }]);
     const trimmed = answer.dirPath.trim();
+    // Universal-escape: 'back' keyword returns null so the main loop's
+    // `if (!codebaseContext) continue;` re-enters selectInputMethod.
+    if (isBackKeyword(trimmed)) {
+      console.log(chalk.gray('  Cancelled.\n'));
+      return null;
+    }
     if (!trimmed) {
       console.log(chalk.yellow('  Path is required. Try again.\n'));
       continue;
@@ -169,9 +176,20 @@ async function loadFromZip() {
   const { zipPath } = await inquirer.prompt([{
     type: 'input',
     name: 'zipPath',
-    message: chalk.cyan('Path to ZIP file:'),
-    validate: (v) => fs.existsSync(v) ? true : 'File not found'
+    message: chalk.cyan("Path to ZIP file (or 'back' to cancel):"),
+    validate: (v) => {
+      // Universal-escape: allow 'back' through validation; the
+      // post-prompt isBackKeyword() check below routes the cancellation.
+      if (v.trim().toLowerCase() === 'back') return true;
+      return fs.existsSync(v) ? true : 'File not found';
+    }
   }]);
+
+  // Universal-escape: 'back' keyword — return null so main loop re-prompts.
+  if (isBackKeyword(zipPath)) {
+    console.log(chalk.gray('  Cancelled.\n'));
+    return null;
+  }
 
   const spinner = ora('Extracting ZIP...').start();
   const zip = new AdmZip(zipPath);
@@ -238,9 +256,15 @@ async function loadFromGitHub() {
   const { repoUrl } = await inquirer.prompt([{
     type: 'input',
     name: 'repoUrl',
-    message: chalk.cyan('GitHub repo URL or owner/repo:'),
+    message: chalk.cyan("GitHub repo URL or owner/repo (or 'back' to cancel):"),
     validate: (v) => v.length > 0 ? true : 'Required'
   }]);
+
+  // Universal-escape: 'back' keyword — return null so main loop re-prompts.
+  if (isBackKeyword(repoUrl)) {
+    console.log(chalk.gray('  Cancelled.\n'));
+    return null;
+  }
 
   let owner, repo;
   const match = repoUrl.match(/github\.com\/([^/]+)\/([^/\s]+)/);

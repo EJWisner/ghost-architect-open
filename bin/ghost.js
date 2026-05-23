@@ -38,6 +38,7 @@ import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
+import { backChoice, isBack, isBackKeyword } from '../src/cli/prompt-helpers.js';
 
 // ── License enforcement ────────────────────────────────────────────────────
 // v1 ships on the Pro umbrella main branch only. Ghost Open (MIT, public)
@@ -274,7 +275,12 @@ async function selectInputMethod(activeProfileLabel) {
   if (!usingEnvKey()) {
     choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect' : '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
   }
-  choices.push({ name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' });
+  // Universal escape: top-level menu uses a single "← Exit Ghost" choice
+  // (no separate Back vs Exit). Returning BACK_VALUE here means the same
+  // thing as selecting Exit at the top level — there is no higher level
+  // to back out to. Main loop catches isBack(method) and runs confirmExit().
+  choices.push(new inquirer.Separator());
+  choices.push(backChoice(IS_WINDOWS ? '[EXIT] Exit Ghost' : '🚪  Exit Ghost'));
 
   const { method } = await inquirer.prompt([{
     type: 'list',
@@ -311,8 +317,15 @@ async function selectMode(codebaseContext) {
       { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
       { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
       new inquirer.Separator(),
+      // "New Scan" is the explicit back-out here — returns to selectInputMethod
+      // with codebase context cleared. Labeled by intent ("scan a different
+      // directory") rather than the abstract "Back" because the user has a
+      // loaded codebase context and the natural next-thing-up is to load a
+      // different one, not to abandon work entirely.
       { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
-      { name: IS_WINDOWS ? '[EXIT] Exit' : '🚪  Exit', value: 'exit' },
+      // Universal escape: "Exit Ghost" with confirm-exit, consistent with
+      // top-level menu. Caller checks isBack(mode) and runs confirmExit().
+      backChoice(IS_WINDOWS ? '[EXIT] Exit Ghost' : '🚪  Exit Ghost'),
     ]
   }]);
 
@@ -613,6 +626,29 @@ function printProfilesList() {
   if (defaultSlug) {
     console.log(chalk.gray('Clear default: ') + chalk.cyan('ghost --clear-default-profile\n'));
   }
+}
+
+// ── Universal-escape helpers ────────────────────────────────────────────────
+
+/**
+ * Prompt the user to confirm exiting Ghost. Defaults to Yes so an
+ * accidental Enter on the top-level Back/Exit choice does the natural
+ * thing (exit cleanly) rather than trapping the user in a no-op loop.
+ * The default of `true` matches the universal-escape TODO's specification
+ * ("default Y so accidental Enter doesn't trap them").
+ *
+ * Returns true if the user confirms exit, false if they cancel and want
+ * to stay in Ghost.
+ */
+async function confirmExit() {
+  const { reallyExit } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'reallyExit',
+    message: chalk.cyan('Exit Ghost?'),
+    default: true,
+    theme: inquirerTheme,
+  }]);
+  return reallyExit;
 }
 
 // ── Main loop ────────────────────────────────────────────────────────────────
@@ -1138,7 +1174,10 @@ async function main() {
         choices: [
           { name: `🚀  Start ${TRIAL_DURATION_DAYS}-day evaluation trial (one per machine)`, value: 'trial' },
           { name: '🔑  I have a license — show me how to activate it', value: 'activate-instructions' },
-          { name: '🚪  Exit', value: 'exit' },
+          new inquirer.Separator(),
+          // Universal escape: collapses with Exit — no higher level to back
+          // out to from missing-license state. confirmExit() runs below.
+          backChoice('🚪  Exit Ghost'),
         ],
       }]);
       if (choice === 'trial') {
@@ -1151,7 +1190,8 @@ async function main() {
         console.log('\n' + boxen(
           chalk.cyan.bold('Activate your license') + '\n\n' +
           chalk.white('Paste the license key from your purchase email below.') + '\n' +
-          chalk.gray('Format: ') + chalk.cyan('GA-YYYY-TIER-XXXX-XXXX-XXXX'),
+          chalk.gray('Format: ') + chalk.cyan('GA-YYYY-TIER-XXXX-XXXX-XXXX') + '\n\n' +
+          chalk.gray("(type 'back' to return to the previous menu)"),
           { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
         ));
         console.log('');
@@ -1165,6 +1205,17 @@ async function main() {
             return true;
           },
         }]);
+        // Universal-escape: 'back' keyword cancels the activate flow.
+        // From the missing-license interactive prompt there's no useful
+        // higher level to return to (we're pre-mode-loop, no codebase
+        // loaded, no in-flight scan). Cancel = exit, same as picking Exit
+        // from the prior list-prompt would have done. Exit code 1 mirrors
+        // the existing exit-from-missing-license path below.
+        if (isBackKeyword(keyInput)) {
+          console.log(chalk.gray('\nCancelled. Run `ghost --start-trial` or `ghost --activate <license-key>` when ready.\n'));
+          console.log(chalk.gray(`${COPYRIGHT}\n`));
+          process.exit(1);
+        }
         try {
           await runActivateFlow(keyInput.trim());
           // runActivateFlow handles its own exit on failure; if we get here
@@ -1207,11 +1258,15 @@ async function main() {
     if (!codebaseContext) {
       const method = await selectInputMethod(activeProfileLabel);
 
-      if (method === 'exit') {
-        session.showSummary();
-        console.log(chalk.cyan('\nIntel gathered. Go make your move.\n'));
-        console.log(chalk.gray(`${COPYRIGHT}\n`));
-        process.exit(0);
+      // Universal escape: top-level Back/Exit — confirm before leaving.
+      if (isBack(method)) {
+        if (await confirmExit()) {
+          session.showSummary();
+          console.log(chalk.cyan('\nIntel gathered. Go make your move.\n'));
+          console.log(chalk.gray(`${COPYRIGHT}\n`));
+          process.exit(0);
+        }
+        continue;
       }
 
       if (method === 'reconfigure') {
@@ -1258,10 +1313,13 @@ async function main() {
         const { folderPath } = await inquirer.prompt([{
           type: 'input',
           name: 'folderPath',
-          message: chalk.cyan('Folder containing prompt files (absolute path):'),
+          message: chalk.cyan("Folder containing prompt files (absolute path, or 'back' to cancel):"),
           theme: inquirerTheme,
           validate: (input) => {
             if (!input || !input.trim()) return 'Folder path is required.';
+            // Universal-escape: allow 'back' through validation so the
+            // post-prompt isBackKeyword() check can route the cancellation.
+            if (input.trim().toLowerCase() === 'back') return true;
             const abs = path.resolve(input.trim());
             if (!fs.existsSync(abs)) return 'Folder does not exist: ' + abs;
             try {
@@ -1272,6 +1330,11 @@ async function main() {
             return true;
           },
         }]);
+
+        // Universal-escape: 'back' keyword — return to selectInputMethod.
+        if (isBackKeyword(folderPath)) {
+          continue;
+        }
 
         // Optional target-model selection. When specified, length-aware
         // detectors use the correct tokenizer (exact for OpenAI, heuristic
@@ -1290,6 +1353,11 @@ async function main() {
               + m.contextWindow.toLocaleString() + ' tokens)'),
             value: m.id,
           }));
+          // Universal-escape: add Back to the model picker so user isn't
+          // committed to a model just because they answered "yes" to the
+          // confirm above.
+          modelChoices.push(new inquirer.Separator());
+          modelChoices.push(backChoice('←  Back (don\'t specify a model)'));
           const answer = await inquirer.prompt([{
             type: 'list',
             name: 'targetModel',
@@ -1298,7 +1366,10 @@ async function main() {
             pageSize: 12,
             theme: inquirerTheme,
           }]);
-          targetModel = answer.targetModel;
+          // Back leaves targetModel null, same as if user had declined to specify.
+          if (!isBack(answer.targetModel)) {
+            targetModel = answer.targetModel;
+          }
         }
 
         try {
@@ -1326,11 +1397,15 @@ async function main() {
 
     const mode = await selectMode(codebaseContext);
 
-    if (mode === 'exit') {
-      session.showSummary();
-      console.log(chalk.cyan('\nIntel gathered. Go make your move.\n'));
-      console.log(chalk.gray(`${COPYRIGHT}\n`));
-      process.exit(0);
+    // Universal escape: Exit Ghost from mode menu — confirm before leaving.
+    if (isBack(mode)) {
+      if (await confirmExit()) {
+        session.showSummary();
+        console.log(chalk.cyan('\nIntel gathered. Go make your move.\n'));
+        console.log(chalk.gray(`${COPYRIGHT}\n`));
+        process.exit(0);
+      }
+      continue;
     }
 
     if (mode === 'reload') {

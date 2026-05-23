@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import { streamChat } from '../analyst/index.js';
 import { saveReport } from '../reports.js';
+import { isBackKeyword } from '../cli/prompt-helpers.js';
 
 const RETRY_DELAYS = [15, 30, 60];
 
@@ -57,13 +58,31 @@ async function streamChatWithRetry(codebaseContext, conversationHistory, trimmed
   }
 }
 
+/**
+ * Print available chat-mode commands. Invoked via /help. Matches the
+ * universal-escape pattern: slash-prefixed commands are the canonical form,
+ * but bare-word `exit` and `save` are preserved for backward compatibility
+ * with users who learned them before slash support landed.
+ */
+function printChatHelp() {
+  console.log('\n' + boxen(
+    chalk.cyan.bold('Chat commands') + '\n\n' +
+    chalk.yellow('/help') + chalk.gray('         — show this list\n') +
+    chalk.yellow('/save') + chalk.gray('         — save the conversation so far to ~/Ghost Architect Reports/\n') +
+    chalk.yellow('/exit') + chalk.gray(' or ') + chalk.yellow('/quit') + chalk.gray(' — return to the main menu\n') +
+    chalk.yellow('/back') + chalk.gray('         — same as /exit (return to main menu)\n\n') +
+    chalk.gray('Bare-word ') + chalk.yellow('exit') + chalk.gray(', ') + chalk.yellow('quit') + chalk.gray(', and ') + chalk.yellow('save') + chalk.gray(' also work (backward compat).'),
+    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+  ));
+}
+
 export async function runChatMode(codebaseContext) {
   console.log('\n' + boxen(
     chalk.cyan.bold('💬 CHAT MODE') + '\n\n' +
     chalk.gray(`${codebaseContext.loadedFiles} files processed\n`) +
     chalk.gray('Ask anything about this project in plain English.\n\n') +
-    chalk.yellow('save') + chalk.gray('  — save this conversation to ~/Ghost Architect Reports/\n') +
-    chalk.yellow('exit') + chalk.gray('  — return to main menu'),
+    chalk.yellow('/save') + chalk.gray('  — save this conversation to ~/Ghost Architect Reports/\n') +
+    chalk.yellow('/exit') + chalk.gray('  — return to main menu  ') + chalk.gray('(') + chalk.yellow('/help') + chalk.gray(' for all commands)'),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
 
@@ -82,20 +101,32 @@ export async function runChatMode(codebaseContext) {
     const trimmed = userInput.trim();
     if (!trimmed) continue;
 
-    // Exit
-    if (trimmed.toLowerCase() === 'exit' || trimmed.toLowerCase() === 'quit') {
+    const cmd = trimmed.toLowerCase();
+
+    // Universal-escape: slash-prefixed commands are canonical, bare-word
+    // exit/quit/save preserved for muscle-memory backward compat.
+    if (cmd === '/help') {
+      printChatHelp();
+      continue;
+    }
+
+    // Exit — return to main menu (selectMode level, codebase still loaded).
+    if (cmd === 'exit' || cmd === 'quit' || cmd === '/exit' || cmd === '/quit' || cmd === '/back') {
       console.log(chalk.gray('\nReturning to main menu...\n'));
       break;
     }
 
-    // Save
-    if (trimmed.toLowerCase() === 'save') {
+    // Save — save the conversation so far. /save is the canonical form;
+    // bare 'save' is backward compat.
+    if (cmd === 'save' || cmd === '/save') {
       if (chatLog.length === 0) {
         console.log(chalk.gray('\n  Nothing to save yet — ask some questions first.\n'));
         continue;
       }
-      await saveChatLog(chatLog);
-      alreadySaved = true;
+      // saveChatLog returns false if user cancels at the label prompt via
+      // 'back' keyword. Only set alreadySaved when the save actually completed.
+      const saved = await saveChatLog(chatLog);
+      if (saved !== false) alreadySaved = true;
       continue;
     }
 
@@ -131,8 +162,19 @@ async function saveChatLog(chatLog) {
   const { label } = await inquirer.prompt([{
     type: 'input',
     name: 'label',
-    message: chalk.cyan('Chat label') + chalk.gray(' (project name, press Enter to skip):'),
+    message: chalk.cyan('Chat label') + chalk.gray(" (project name, press Enter to skip, or 'back' to cancel save):"),
   }]);
+
+  // Universal-escape: 'back' keyword cancels the save. Caller catches this
+  // by checking the return value — returns false on cancel, true on saved.
+  // The current call sites just await this without checking, which is fine:
+  // on cancel we print a notice and return; the chat loop continues either
+  // way and any "already saved" flag stays false so the exit-prompt will
+  // re-offer save.
+  if (isBackKeyword(label)) {
+    console.log(chalk.gray('\n  Save cancelled.\n'));
+    return false;
+  }
 
   const timestamp = new Date().toLocaleString();
   let content = `GHOST ARCHITECT — CHAT TRANSCRIPT\n`;
