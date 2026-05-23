@@ -46,6 +46,19 @@ export function markTrialUsed(fingerprintHashes) {
   cfg.set(TRIAL_FINGERPRINT_KEY, fingerprintHashes);
 }
 
+// Clear the trial-used marker. ONLY callable from the GHOST_DEBUG=1
+// --reset-trial flag in bin/ghost.js. Customers must never reach this:
+// the flag itself refuses without the env var set, and this function
+// has no other callers. If you find another call site, that's a bug.
+//
+// Deletes both the timestamp AND the fingerprint snapshot so the next
+// `ghost --start-trial` or interactive trial offer sees a clean slate.
+export function clearTrialMarker() {
+  const cfg = getConfig();
+  cfg.delete(TRIAL_USED_KEY);
+  cfg.delete(TRIAL_FINGERPRINT_KEY);
+}
+
 // Eligibility check. Returns one of:
 //   { eligible: true }
 //   { eligible: false, reason: 'license_already_installed' }

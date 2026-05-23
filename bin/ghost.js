@@ -54,8 +54,10 @@ import {
   hasLicense,
   getLicenseRecord,
 } from '../src/license/store.js';
-import { startTrial, checkEligibility, TRIAL_DURATION_DAYS } from '../src/license/trial.js';
-import { setActiveLicense, isTrialActive } from '../src/license/session.js';
+import { startTrial, checkEligibility, TRIAL_DURATION_DAYS, clearTrialMarker } from '../src/license/trial.js';
+import { setActiveLicense, getActiveTier } from '../src/license/session.js';
+import { requireTier } from '../src/license/tier-gates.js';
+import { getScanCount, renderAuditPaywall, renderQuotaPaywall } from '../src/freemium.js';
 
 // Activation server endpoint. Hardcoded so customers can't be tricked into
 // activating against a malicious server (they'd already need to compromise
@@ -65,9 +67,14 @@ const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
   || 'https://license.ghostarchitect.dev/activate';
 
 const VERSION   = '6.0.1-pro';
-// TIER is branch-specific. main = Pro, ghost-team = Team, ghost-open = Open.
-// When cherry-picking this file across branches, change this constant to match.
-const TIER      = 'pro';
+// TIER is resolved at runtime from the active license (post-validateLicense).
+// Defaults to 'open' when no license is present (per D2). The constant
+// declaration is `let` rather than `const` because Phase 1 moved the
+// source of truth from a branch-cherry-picked constant to a license-
+// driven runtime resolution. The pre-resolution placeholder value is
+// 'open' so any code path that reads TIER before main()'s license gate
+// (e.g. printUsage's tier-cap table) shows the most conservative tier.
+let TIER = 'open';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 // ── CLI argument parsing ────────────────────────────────────────────────────
@@ -94,6 +101,7 @@ function parseArgs(argv) {
     licenseStatus: false,
     licenseClear: false,
     startTrial: false,
+    resetTrial: false,
     help: false,
     version: false,
   };
@@ -147,6 +155,10 @@ function parseArgs(argv) {
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--start-trial')      { out.startTrial = true; continue; }
+    // Debug flag, gated by GHOST_DEBUG=1 at handler time. Not advertised in
+    // --help. Used for verification of trial-tier behavior on machines that
+    // have already burned their trial. Customers must never reach this.
+    if (a === '--reset-trial')      { out.resetTrial = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -651,6 +663,28 @@ async function confirmExit() {
   return reallyExit;
 }
 
+/**
+ * Dispatch a paywall payload from requireTier() to the appropriate existing
+ * renderer in src/freemium.js. Per design decision 2a (2026-05-23): tier-gates
+ * emits an enum-like { kind: 'audit' | 'quota' | 'unknown' } and this helper
+ * routes to renderAuditPaywall() or renderQuotaPaywall() so the EARLY20-tuned
+ * paywall copy in freemium.js stays untouched.
+ *
+ * 'unknown' kind = a feature-gate paywall was requested but feature gates
+ * don't have rendered paywalls in Phase 1 (they're soft-gate callouts via
+ * src/cli/session-state.js, wired in Phase 2/3). Logging the gate id makes
+ * accidental misuse visible during testing rather than silently failing.
+ */
+function renderPaywall(paywall) {
+  if (!paywall || !paywall.kind) {
+    console.log(chalk.gray('  (Access denied. No paywall renderer available.)\n'));
+    return;
+  }
+  if (paywall.kind === 'audit')  { renderAuditPaywall(); return; }
+  if (paywall.kind === 'quota')  { renderQuotaPaywall(); return; }
+  console.log(chalk.gray(`  (No paywall renderer for gate: ${paywall.gateId})\n`));
+}
+
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 // ── License helpers ────────────────────────────────────────────────────────
@@ -965,18 +999,31 @@ async function runStartTrialFlow() {
  * Returns false if the run can continue (state was valid or just a warning).
  */
 function renderLicenseStateAndMaybeBlock(result) {
-  // missing — show the offer (trial vs activate vs purchase) and block.
-  // Caller's responsibility to interactively prompt for trial start; this
-  // function only displays the static information.
+  // missing — show the offer (trial vs activate vs purchase) banner and
+  // FALL THROUGH to Open tier behavior. Per D2 (locked 2026-05-23): no
+  // license = Open tier; user can still run Chat, Recon, and up to
+  // SCAN_QUOTA counted scans. Quota wall and audit paywall handle the
+  // actual gating at mode dispatch via tier-gates.js requireTier().
+  //
+  // The interactive trial-offer picker that ran before this function
+  // already handled the "trial-eligible TTY user" case (start trial,
+  // activate, or exit). By the time we get here in 'missing' state,
+  // the user is either:
+  //   - non-eligible for trial (trial already burned, like EJ post-2026-05-18)
+  //   - non-TTY (scripted invocation)
+  //   - eligible but somehow reached this code path (shouldn't happen,
+  //     but if it does, falling through to Open tier is the safe default)
+  // All three paths benefit from running as Open rather than exiting.
   if (result.state === 'missing') {
     const trialElig = checkEligibility();
     const trialAvailable = trialElig.eligible;
     const lines = [
       chalk.yellow.bold('No license installed') + '\n',
-      chalk.white('Ghost Architect Pro requires an active license to run scans.') + '\n',
+      chalk.white('Running as Ghost Open: free quota for POI, Blast, Conflict,') + '\n',
+      chalk.white('and Prompt Triage. Chat and Recon are always free.') + '\n',
     ];
     if (trialAvailable) {
-      lines.push(chalk.white('You\'re eligible for a free ' + TRIAL_DURATION_DAYS + '-day evaluation trial.'));
+      lines.push(chalk.white('You\'re eligible for a free ' + TRIAL_DURATION_DAYS + '-day evaluation trial of Pro.'));
       lines.push(chalk.cyan('  ghost --start-trial') + chalk.gray('    (one trial per machine)'));
       lines.push('');
     } else if (trialElig.reason === 'trial_already_used') {
@@ -991,7 +1038,7 @@ function renderLicenseStateAndMaybeBlock(result) {
     console.log('\n' + boxen(lines.join('\n'),
       { padding: 1, borderColor: 'yellow', borderStyle: 'round' }));
     console.log('');
-    return true;
+    return false;  // fall through to Open tier behavior per D2
   }
   if (isBlocking(result.state)) {
     const headline =
@@ -1065,6 +1112,23 @@ async function main() {
   if (cliOpts.startTrial) {
     const ok = await runStartTrialFlow();
     process.exit(ok ? 0 : 2);
+  }
+
+  // --reset-trial: debug flag for verifying trial-tier behavior on a
+  // machine that has already burned its trial. Gated by GHOST_DEBUG=1
+  // so a customer who stumbles on the flag still can't bypass the trial
+  // limit — they'd need to set the env var themselves, at which point
+  // they're knowingly accepting that this is debug-only behavior.
+  if (cliOpts.resetTrial) {
+    if (process.env.GHOST_DEBUG !== '1') {
+      console.error(chalk.red(`\n${SYM.cross} --reset-trial is a debug flag. Set GHOST_DEBUG=1 to use it.\n`));
+      console.error(chalk.gray("   Customers must never need this. If you're reaching for it, you're testing.\n"));
+      process.exit(2);
+    }
+    clearTrialMarker();
+    console.log(chalk.yellow(`\n${SYM.check} Trial marker cleared. Next \`ghost\` invocation will see a fresh trial-eligible state.\n`));
+    console.log(chalk.gray('   Note: if a license is still installed, --license-clear first, then start a trial.\n'));
+    process.exit(0);
   }
 
   // Headless Ghost Partner profile management flags. Each one performs its
@@ -1238,6 +1302,27 @@ async function main() {
     // Set active license for the session so downstream code (PDF generator
     // watermark, audit-mode block) can consult it without re-parsing the token.
     setActiveLicense(licenseResult);
+
+    // Resolve TIER from the active license now that validation has succeeded.
+    // Per D2 (locked 2026-05-23): no license = open tier. The setScanOptions
+    // call below uses this TIER to seed the loader's tier-cap clamping, so
+    // resolving here (post-license-validation, pre-mode-loop) means the loader
+    // sees the right cap for the user's actual tier on the very first scan.
+    TIER = getActiveTier() || 'open';
+
+    // Re-seed scan options with the resolved tier. The earlier setScanOptions
+    // call (right after parseArgs) ran with TIER='open' as the placeholder
+    // default — it had to, since license validation hadn't happened yet, but
+    // CLI parsing precedes everything. Now that we know the real tier, push
+    // it down to the loader so the very first loadCodebase() call uses the
+    // correct tier-cap (open 50K vs pro/team/enterprise 100K/150K/200K).
+    // setScanOptions is documented as last-write-wins and safe to recall.
+    setScanOptions({
+      tier: TIER,
+      maxContextOverride: cliOpts.maxContext,
+      excludePresets: cliOpts.presets,
+      excludePatterns: cliOpts.excludes,
+    });
 
     const blocked = renderLicenseStateAndMaybeBlock(licenseResult);
     if (blocked) {
@@ -1419,29 +1504,26 @@ async function main() {
     // Scan Modes histogram shows real cross-tier usage (not just Open).
     pingModeUsage(VERSION, TIER, mode).catch(() => {});
 
+    // Tier-gate check at dispatch — wall BEFORE API spend or codebase work.
+    // Per design decision 2026-05-23 (Q4): dispatch-level gating, not
+    // post-proceed-confirm gating. Quota-gated modes consult getScanCount()
+    // for the current count; audit-gated checks the tier alone. Chat, recon,
+    // compare, dashboard — all free across all tiers per D1.
+    if (['poi', 'blast', 'conflict', 'audit'].includes(mode)) {
+      const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
+      if (!verdict.allowed) {
+        renderPaywall(verdict.paywall);
+        continue;
+      }
+    }
+
     switch (mode) {
       case 'chat':      await runChatMode(codebaseContext);             break;
       case 'poi':       await runPOIMode(codebaseContext, { profile });  break;
       case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
       case 'conflict':  await runConflictMode(codebaseContext, { profile });  break;
       case 'recon':     await runReconMode(codebaseContext, { profile });  break;
-      case 'audit':
-        if (isTrialActive()) {
-          console.log('\n' + boxen(
-            chalk.yellow.bold('Inheritance Audit is a paid-tier feature') + '\n\n' +
-            chalk.white('You\'re on a trial license. The deal-grade Inheritance Audit\n') +
-            chalk.white('mode is disabled for trial users because its output is meant\n') +
-            chalk.white('for buyer-side diligence and fractional-CTO deliverables.') + '\n\n' +
-            chalk.white('Trial-available modes: POI, Blast, Conflict, Recon, Chat') + '\n\n' +
-            chalk.white('Upgrade to Pro to unlock Audit:') + '\n' +
-            chalk.cyan('  https://ghostarchitect.dev/pricing'),
-            { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
-          ));
-          console.log('');
-        } else {
-          await runAuditMode(codebaseContext, { profile, tier: TIER });
-        }
-        break;
+      case 'audit':     await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
       case 'compare':   await runCompareMode();                         break;
       case 'dashboard': await showProjectDashboard();                   break;
     }

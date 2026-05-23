@@ -1,9 +1,23 @@
 // src/freemium.js — Ghost Open v6.0.0 freemium gate.
 //
-// Open is free for the first two saved reports. After that, scans that
-// produce a saved report (POI, Blast, Conflict, Prompt Triage) are blocked
-// behind a paywall directing users to ghostarchitect.dev/pricing. Inheritance
-// Audit is always paywalled — it's a Pro-tier deliverable.
+// Open is free for the first FOUR saved reports (bumped from 2 → 4 per
+// D1 locked 2026-05-23). After that, scans that produce a saved report
+// (POI, Blast, Conflict, Prompt Triage) are blocked behind a paywall
+// directing users to ghostarchitect.dev/pricing. Inheritance Audit is
+// always paywalled — it's a Pro-tier deliverable.
+//
+// As of v7-unified Phase 1 (2026-05-23): the gate DECISION moved to
+// src/license/tier-gates.js's requireTier() so all tiers share one
+// policy module. This file keeps the disk I/O (scan count storage) and
+// the two renderers (renderAuditPaywall, renderQuotaPaywall) because
+// their EARLY20-tuned copy is conversion-optimized and not worth
+// re-tuning right now. bin/ghost.js calls requireTier() for the verdict
+// and then dispatches to the appropriate renderer here based on the
+// verdict's paywall.kind ('audit' | 'quota').
+//
+// `shouldBlockMode()` is kept for backward compatibility with any caller
+// outside bin/ghost.js, but bin/ghost.js no longer calls it. New callers
+// should use requireTier() instead.
 //
 // Non-counting modes — Chat and Recon — remain free forever. Chat is
 // interactive exploration with no saved deliverable; Recon is sizing without
@@ -46,7 +60,12 @@ const MODE_TO_PREFIX = {
   'prompt-triage': 'ghost-prompt-triage',
 };
 
-export const FREE_QUOTA = 2;
+// Per D1 (locked 2026-05-23): bumped from 2 to 4 free saved reports. The
+// SCAN_QUOTA constant in src/license/tier-gates.js MUST stay in sync with
+// this value. Both live with the value 4; tier-gates is the policy source
+// of truth, this is the legacy backward-compat reference used by the quota
+// paywall copy below.
+export const FREE_QUOTA = 4;
 
 function getStore() {
   return new Configstore(CONFIGSTORE_NAME);
