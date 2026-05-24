@@ -66,7 +66,7 @@ import { getScanCount, renderAuditPaywall, renderQuotaPaywall } from '../src/fre
 const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
   || 'https://license.ghostarchitect.dev/activate';
 
-const VERSION   = '6.0.1-pro';
+const VERSION   = '6.0.1';
 // TIER is resolved at runtime from the active license (post-validateLicense).
 // Defaults to 'open' when no license is present (per D2). The constant
 // declaration is `let` rather than `const` because Phase 1 moved the
@@ -234,7 +234,7 @@ function printBanner() {
     chalk.gray('  ') +
     chalk.cyan.bold('ARCHITECT') +
     chalk.gray('  —  AI-powered codebase archaeology') +
-    chalk.gray(`  v${VERSION}\n`)
+    chalk.gray(`  v${VERSION}  [${TIER.charAt(0).toUpperCase() + TIER.slice(1)}]\n`)
   );
 
   // Copyright line
@@ -1091,6 +1091,21 @@ async function main() {
   const argv = process.argv.slice(2);
   const cliOpts = parseArgs(argv);
 
+  // Early license-tier resolve for display surfaces (--help, --version, banner).
+  // validateLicense({ skipNetworkClock: true }) skips the worldtimeapi roundtrip
+  // so documentation flags stay fast. The main-flow validateLicense() later still
+  // runs the full clock check; both calls are idempotent (updateLastSeenUtc is a
+  // monotonic ratchet, setActiveLicense is last-write-wins). Blocking states are
+  // NOT enforced here — display surfaces must always work; enforcement happens
+  // at the main-flow gate.
+  try {
+    const earlyLicenseResult = await validateLicense({ skipNetworkClock: true });
+    setActiveLicense(earlyLicenseResult);
+    TIER = getActiveTier() || 'open';
+  } catch (_) {
+    // Non-fatal: fall through with TIER='open'. Main-flow error rendering catches real issues.
+  }
+
   if (cliOpts.help)    { printUsage(); process.exit(0); }
   if (cliOpts.version) { console.log(`ghost-architect v${VERSION} (${TIER})`); process.exit(0); }
 
@@ -1174,15 +1189,6 @@ async function main() {
     process.exit(0);
   }
 
-  // Seed the loader with this run's tier + CLI-driven options.
-  // Caps get clamped; excludes get merged with presets at scan time.
-  setScanOptions({
-    tier: TIER,
-    maxContextOverride: cliOpts.maxContext,
-    excludePresets: cliOpts.presets,
-    excludePatterns: cliOpts.excludes,
-  });
-
   // Resolve which profile to load for this session.
   // Priority: --no-profile > --profile path > config defaultProfileSlug > none.
   // Explicit --profile failures are fatal; default-profile failures degrade
@@ -1198,8 +1204,6 @@ async function main() {
     process.exit(2);
   }
 
-  printBanner();
-
   if (!isConfigured()) {
     console.log(boxen(
       chalk.yellow.bold('Welcome to Ghost Architect!') + '\n' +
@@ -1208,7 +1212,6 @@ async function main() {
     ));
     console.log('');
     await runSetupWizard();
-    printBanner();
   }
 
   // ── License enforcement gate ─────────────────────────────────────────────
@@ -1309,6 +1312,13 @@ async function main() {
     // resolving here (post-license-validation, pre-mode-loop) means the loader
     // sees the right cap for the user's actual tier on the very first scan.
     TIER = getActiveTier() || 'open';
+
+    // Banner emission happens here, AFTER tier resolution, so the title-case
+    // `[Pro]` / `[Team]` / `[Open]` token in the banner reflects the active
+    // license. All three CLI display surfaces (banner, --help, --version)
+    // run post-license per meta-arb decision 2026-05-24: trust on display
+    // surfaces is binary; partial fix is worse than no fix.
+    printBanner();
 
     // Re-seed scan options with the resolved tier. The earlier setScanOptions
     // call (right after parseArgs) ran with TIER='open' as the placeholder
