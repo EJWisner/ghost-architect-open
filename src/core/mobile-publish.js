@@ -16,7 +16,7 @@
  *   - Code never leaves the machine — only structured JSON is published
  */
 
-import { Octokit } from 'octokit';
+import { createOctokit } from '../utils/octokit-client.js';
 import Configstore from 'configstore';
 import fs from 'fs';
 import path from 'path';
@@ -45,7 +45,7 @@ export function isPublishConfigured() {
 function getOctokit() {
   const cfg = getPublishConfig();
   if (!cfg) throw new Error('Ghost Mobile publish not configured. Run ghost --configure-publish.');
-  return new Octokit({ auth: cfg.token });
+  return createOctokit({ auth: cfg.token });
 }
 
 function parseRepo(repoUrl) {

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { glob } from 'glob';
 import AdmZip from 'adm-zip';
-import { Octokit } from 'octokit';
+import { createOctokit } from '../utils/octokit-client.js';
 import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
@@ -282,7 +282,7 @@ async function loadFromGitHub() {
 
   // Helper: attempt fetch with given auth (or none)
   async function tryFetch(auth) {
-    const octokit = new Octokit({ auth: auth || undefined });
+    const octokit = createOctokit({ auth: auth || undefined });
     const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
     return { octokit, repoData };
   }

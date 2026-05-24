@@ -11,14 +11,14 @@
  *     audit.json        ← scan activity log
  */
 
-import { Octokit } from 'octokit';
+import { createOctokit } from '../utils/octokit-client.js';
 import { getDefaultTeamSync, resolveTeamSync } from '../config.js';
 import os from 'os';
 
 // ── Octokit helpers ───────────────────────────────────────────────────────────
 
 function getOctokit(entry) {
-  return new Octokit({ auth: entry.token });
+  return createOctokit({ auth: entry.token });
 }
 
 function parseRepo(repoUrl) {

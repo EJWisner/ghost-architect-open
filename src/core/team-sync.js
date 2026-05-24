@@ -15,7 +15,7 @@
  *       <filename>.pdf     ← binary, base64 encoded
  */
 
-import { Octokit } from 'octokit';
+import { createOctokit } from '../utils/octokit-client.js';
 import { getDefaultTeamSync, resolveTeamSync } from '../config.js';
 import fs from 'fs';
 import path from 'path';
@@ -26,7 +26,7 @@ const LOCAL_SYNC_DIR = path.join(os.homedir(), 'Ghost Architect Reports', 'team-
 // ── Octokit instance ──────────────────────────────────────────────────────────
 
 function getOctokit(syncEntry) {
-  return new Octokit({ auth: syncEntry.token });
+  return createOctokit({ auth: syncEntry.token });
 }
 
 function parseRepo(repoUrl) {

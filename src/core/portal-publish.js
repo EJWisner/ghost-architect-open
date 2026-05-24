@@ -17,7 +17,7 @@
  * different payload shapes, so we have two publishers.
  */
 
-import { Octokit } from 'octokit';
+import { createOctokit } from '../utils/octokit-client.js';
 import Configstore from 'configstore';
 import fs           from 'fs';
 import path         from 'path';
@@ -46,7 +46,7 @@ export function isPortalConfigured() {
 function getOctokit() {
   const cfg = getPortalConfig();
   if (!cfg) throw new Error('Portal publish not configured. Run ghost --configure-portal.');
-  return new Octokit({ auth: cfg.token });
+  return createOctokit({ auth: cfg.token });
 }
 
 function parseRepo(repoUrl) {
