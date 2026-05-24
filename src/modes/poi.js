@@ -12,12 +12,54 @@ import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
+import { requireTier } from '../license/tier-gates.js';
+import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { mergeRates } from '../profile/index.js';
 
 export async function runPOIMode(codebaseContext, options = {}) {
   // Ghost Partner — consultant profile (null when --profile was not passed).
   const profile = options.profile || null;
+
+  // Tier resolution. Defaults to 'open' (fail-closed) so any caller that
+  // forgets to pass tier does not leak the paid project-tracking feature.
+  // bin/ghost.js is the single source of truth — it passes TIER (resolved
+  // from active license at line 1311) into this options object. Mirrors
+  // the Phase 2 adoption pattern from commits 2d813bb (prompt-triage),
+  // 5cfe7db (conflict), b38c0cb (blast), 2ff4cc6 (chat).
+  const tier = options.tier || 'open';
+
+  // D4 gate: project-tracking is Pro+ only. POI has THREE D4 leak
+  // surfaces, all naturally gated by `if (label)` checks downstream:
+  //   1. handleProjectIntelligence at line ~301 (gated by `if (label)` at ~295)
+  //      — writes project-tracking state (project.json, baseline snapshots,
+  //      comparison data) to ~/Ghost Architect Reports/projects/{slug}/.
+  //      This is the unique D4 surface no prior Phase 2 cycle had.
+  //   2. saveReport's four `if (label && isXConfigured())` side-effect
+  //      blocks (team-sync, mobile-publish, portal-publish, audit log) at
+  //      the saveReport call ~line 428. Same shape as conflict (5cfe7db).
+  //   3. publishProject fallback at ~line 442 (gated by `else if (label)`
+  //      at ~434, further gated by `if (isPublishConfigured())` at ~437).
+  //      The "user declined local save but we still publish to mobile if
+  //      configured" path — a leak surface no prior cycle had.
+  // When projectIntelEnabled is false on Open, label stays null through to
+  // all three sites and they short-circuit cleanly without further changes.
+  // No saveLabel-fallback fix needed here (unlike blast b38c0cb and chat
+  // 2ff4cc6 which had synthetic fallbacks — `change-set-N-files` and
+  // `'conversation'` respectively) because POI passes raw `label`
+  // everywhere. The label-gate at the top of this function is the ONE
+  // intervention. Gate ID is shared with prompt-triage, conflict, blast,
+  // and chat (five modes coalesce D3 callout to one display per ghost
+  // invocation).
+  //
+  // Internal-scan keying note: the `label || 'project'` fallbacks at lines
+  // ~105 (multipass sessionKey) and ~281 (single-pass projectLabel option)
+  // are deliberately NOT gated. They feed scan internals (session-resume
+  // checkpoint keying for multipass orchestration; analyst scan tracking)
+  // and never reach saveReport's labeled-save machinery. Same architectural
+  // role as conflict's projectLabel arg to runConflictScan.
+  const projectIntelGate = requireTier('feature:project-tracking', { tier });
+  const projectIntelEnabled = projectIntelGate.allowed;
 
   const fileMap      = codebaseContext.fileMap || {};
   const passes       = Object.keys(fileMap).length > 0 ? buildPasses(fileMap) : [];
@@ -83,9 +125,27 @@ export async function runPOIMode(codebaseContext, options = {}) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
   }
 
-  // Smart project label prompt — shows existing projects, fuzzy matches, confirms
-  const label = await promptProjectLabel();
-  console.log('');
+  // Smart project label prompt — shows existing projects, fuzzy matches, confirms.
+  // Gated on Pro+ per D4: Open users skip labeling, label stays null through
+  // to all three downstream D4-sensitive sites (handleProjectIntelligence,
+  // saveReport, publishProject fallback), all of which short-circuit cleanly
+  // on null label per the if-label checks in each branch. The function-entry
+  // comment block above enumerates these three leak surfaces in detail.
+  let label = null;
+  if (projectIntelEnabled) {
+    label = await promptProjectLabel();
+    console.log('');
+  } else if (!hasShownCallout('feature:project-tracking')) {
+    // D3 soft-gate callout: one line, once per session. Open users still
+    // get the full POI scan and saved report — this just signals what
+    // they'd gain on Pro. Shared gate ID coalesces with all other Phase 2
+    // modes that surface project-tracking (prompt-triage, conflict, blast,
+    // chat) so the callout displays once per ghost invocation across the
+    // five-mode set.
+    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
+    console.log('');
+    markCalloutShown('feature:project-tracking');
+  }
 
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
