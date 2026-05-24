@@ -131,6 +131,31 @@ async function runAuditOpenPaywall() {
 export async function runAuditMode(codebaseContext, options = {}) {
   const profile = options.profile || null;
 
+  // Tier policy: audit is the original Phase 1 tier-gating pattern source.
+  // The `const tier = options.tier || 'open'` plus early-return-on-Open
+  // shape established here was adopted by prompt-triage (commit 2d813bb),
+  // conflict (commit 5cfe7db), and blast (commit b38c0cb) during Phase 2
+  // mode-file reconciliation. Audit's gating is mode-wide rather than
+  // feature-specific: TIER_POLICY in src/license/tier-gates.js sets
+  // 'mode:audit' to false for Open (hard block, not 'quota'), and the
+  // dispatch gate at bin/ghost.js line ~1522 walls Open users via
+  // renderAuditPaywall before they reach this function. The
+  // runAuditOpenPaywall panel above is the in-mode-file second gate for
+  // any caller that bypasses dispatch (defense in depth). All four
+  // D-decisions (D1 quota, D2 no-license-equals-Open, D3 soft-gate
+  // callout, D4 labeled-save gating) are automatically satisfied by
+  // audit being Pro+ entirely; there is no Open code path through this
+  // mode. The 'ghost-audit' prefix is intentionally absent from
+  // COUNTED_PREFIXES in src/freemium.js because audit doesn't need
+  // quota accrual: it cannot run on Open at all, so there are no Open
+  // scans to count.
+  //
+  // If audit ever becomes partially available on Open (e.g. a stripped-
+  // down preview tier), four coordinates must change together: this
+  // comment, the TIER_POLICY 'mode:audit' entry, the dispatch gate
+  // array at bin/ghost.js line ~1522, and the COUNTED_PREFIXES set in
+  // src/freemium.js (to start counting Open audit runs against quota).
+
   // Feature gating. Audit Mode is Pro+ only. Default to 'open' (fail-closed)
   // so any caller that forgets to pass tier does not leak the paid feature.
   // The bin/ghost.js for each branch is the source of truth for TIER and
