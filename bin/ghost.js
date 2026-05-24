@@ -1531,7 +1531,7 @@ async function main() {
       case 'chat':      await runChatMode(codebaseContext);             break;
       case 'poi':       await runPOIMode(codebaseContext, { profile });  break;
       case 'blast':     await runBlastMode(codebaseContext, { profile });  break;
-      case 'conflict':  await runConflictMode(codebaseContext, { profile });  break;
+      case 'conflict':  await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
       case 'recon':     await runReconMode(codebaseContext, { profile });  break;
       case 'audit':     await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
       case 'compare':   await runCompareMode();                         break;

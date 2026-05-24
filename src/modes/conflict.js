@@ -14,6 +14,8 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { promptProjectLabel } from '../projects.js';
+import { requireTier } from '../license/tier-gates.js';
+import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 // Static import: extractFindings is already used by sibling modes (poi.js,
 // blast.js) so there's no module-loading novelty justifying the dynamic-import
 // pattern audit-mode used for its newly-introduced findingsFromAuditResults.
@@ -30,6 +32,22 @@ export async function runConflictMode(codebaseContext, options = {}) {
   // narrator) and through saveReport meta (white-label cover + chrome in
   // the PDF). Mirrors the runPOIMode and runBlastMode pattern.
   const profile = options.profile || null;
+
+  // Tier resolution. Defaults to 'open' (fail-closed) so any caller that
+  // forgets to pass tier does not leak the paid project-tracking feature.
+  // bin/ghost.js is the single source of truth — it passes TIER (resolved
+  // from active license at line 1311) into this options object. Mirrors
+  // the prompt-triage Phase 2 adoption pattern from commit 2d813bb.
+  const tier = options.tier || 'open';
+
+  // D4 gate: project-tracking is Pro+ only. Wraps the label prompt below
+  // so Open users skip labeling entirely, which keeps the label null
+  // through to saveReport and short-circuits all four labeled-save
+  // side-effect blocks (team-sync, mobile-publish, portal-publish, audit
+  // log) in src/reports.js. Gate ID is shared with prompt-triage so D3
+  // callout suppression spans both modes per session.
+  const projectIntelGate = requireTier('feature:project-tracking', { tier });
+  const projectIntelEnabled = projectIntelGate.allowed;
 
   const fileMap    = codebaseContext.fileMap || {};
   const projectLabel = (codebaseContext.fileIndex?.[0] || 'project')
@@ -95,11 +113,23 @@ export async function runConflictMode(codebaseContext, options = {}) {
 
   // Smart project label prompt — same UX as POI/Blast/Recon/Audit. The label
   // is what groups Conflict scans with the rest of a project's history on
-  // the portal, in team-sync, and in mobile-publish. Without this, Conflict
-  // was saving with no label (null was passed verbatim to saveReport) and
-  // every Conflict scan ended up orphaned from its project.
-  const label = await promptProjectLabel();
-  console.log('');
+  // the portal, in team-sync, and in mobile-publish. Gated on Pro+ per D4:
+  // Open users get unlabeled saves (bare-filename via saveReport's no-label
+  // branch), no project-tracking machinery fires.
+  let label = null;
+  if (projectIntelEnabled) {
+    label = await promptProjectLabel();
+    console.log('');
+  } else if (!hasShownCallout('feature:project-tracking')) {
+    // D3 soft-gate callout: one line, once per session, gentle. Open users
+    // still get the full conflict scan and saved report — this just signals
+    // what they'd gain on Pro (label-driven baselines, comparison, velocity).
+    // Shared gate ID with prompt-triage so a user who runs both modes in one
+    // ghost invocation sees the callout exactly once across them.
+    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
+    console.log('');
+    markCalloutShown('feature:project-tracking');
+  }
 
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
