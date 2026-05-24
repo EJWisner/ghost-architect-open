@@ -11,6 +11,8 @@ import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { promptProjectLabel } from '../projects.js';
+import { requireTier } from '../license/tier-gates.js';
+import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 // Static import: extractFindings is already used by sibling modes (poi.js)
 // so there's no module-loading novelty justifying the dynamic-import pattern
 // audit-mode used for its newly-introduced findingsFromAuditResults. Idiomatic
@@ -167,6 +169,21 @@ export async function runBlastMode(codebaseContext, options = {}) {
   // and through saveReport meta (white-label cover + chrome in the PDF).
   const profile = options.profile || null;
 
+  // Tier resolution. Defaults to 'open' (fail-closed) so any caller that
+  // forgets to pass tier does not leak the paid project-tracking feature.
+  // bin/ghost.js is the single source of truth — it passes TIER (resolved
+  // from active license at line 1311) into this options object. Mirrors
+  // the conflict Phase 2 adoption pattern from commit 5cfe7db.
+  const tier = options.tier || 'open';
+
+  // D4 gate: project-tracking is Pro+ only. Drives both the label prompt
+  // below AND the saveLabel-fallback fix at the saveReport call site (the
+  // synthetic fallback that would otherwise re-leak the four side-effect
+  // blocks even after gating the label prompt). Gate ID is shared with
+  // prompt-triage and conflict so D3 callout suppression spans all three.
+  const projectIntelGate = requireTier('feature:project-tracking', { tier });
+  const projectIntelEnabled = projectIntelGate.allowed;
+
   console.log('\n' + boxen(
     chalk.cyan.bold('💥 BLAST RADIUS ANALYSIS') + '\n' +
     chalk.gray('Pick one or more files to analyze, or type a class/method name.\nMulti-file selection produces ONE combined impact map.') +
@@ -232,8 +249,24 @@ export async function runBlastMode(codebaseContext, options = {}) {
   // Blast was saving under a target-derived synthetic label like
   // "change-set-4-files" which broke project grouping entirely. The
   // change-set descriptor is now folded into meta instead.
-  const label = await promptProjectLabel();
-  console.log('');
+  // Gated on Pro+ per D4: Open users skip labeling, label stays null
+  // through to the saveLabel derivation below, which then resolves to
+  // null (not the synthetic fallback) so saveReport's four side-effect
+  // blocks short-circuit cleanly.
+  let label = null;
+  if (projectIntelEnabled) {
+    label = await promptProjectLabel();
+    console.log('');
+  } else if (!hasShownCallout('feature:project-tracking')) {
+    // D3 soft-gate callout: one line, once per session, gentle. Open users
+    // still get the full blast scan and saved report — this just signals
+    // what they'd gain on Pro. Shared gate ID with prompt-triage and
+    // conflict so the callout coalesces to one display per ghost invocation
+    // across all three modes.
+    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
+    console.log('');
+    markCalloutShown('feature:project-tracking');
+  }
 
   const { proceed } = await inquirer.prompt([{
     type: 'confirm',
@@ -297,13 +330,20 @@ export async function runBlastMode(codebaseContext, options = {}) {
       // The saveLabel is the project label — this is what groups scans
       // across modes for the same project on the portal, in team-sync,
       // and in mobile-publish. When the user gave a label, use it. When
-      // they skipped (label = null = one-time scan), fall back to the
-      // target-derived synthetic label so the file is still uniquely
-      // named on disk.
+      // they skipped (label = null = one-time scan) on a paid tier, fall
+      // back to the target-derived synthetic label so the file is still
+      // uniquely named on disk. On Open (projectIntelEnabled false),
+      // saveLabel stays null so the four `if (label && isXConfigured())`
+      // side-effect blocks in saveReport (team-sync, mobile-publish,
+      // portal-publish, audit log) short-circuit. The synthetic fallback
+      // is a UX nicety for paid tiers, not a freshness mechanism that
+      // should override D4. Without this gating, Open users with a multi-
+      // file selection would have fallbackLabel = "change-set-N-files"
+      // (truthy), defeating the label-prompt gate above.
       const fallbackLabel = targetCount > 1
         ? `change-set-${targetCount}-files`
         : (Array.isArray(target) ? target[0] : target);
-      const saveLabel = label || fallbackLabel;
+      const saveLabel = projectIntelEnabled ? (label || fallbackLabel) : null;
 
       // changeSet captures what was actually analyzed — the file list or
       // free-text target — so the report header can show it even though
