@@ -33,6 +33,17 @@ const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓' };
 
 export async function runReconMode(codebaseContext, options = {}) {
+  // Tier policy: recon is intentionally tier-blind. TIER_POLICY in
+  // src/license/tier-gates.js blesses 'mode:recon' for all tiers
+  // (open/trial/pro/team/enterprise), because recon runs the planner
+  // only (~$0.05, no analysis passes) and serves as a pre-engagement
+  // scoping artifact. COUNTED_PREFIXES in src/freemium.js excludes
+  // 'ghost-recon', so recon does not accrue against the 4-scan Open
+  // quota even when saveReport forwards the prefix correctly. No
+  // requireTier call, no D3 callout site, no D4 save-semantics branch.
+  // If recon ever becomes quota-counted or tier-conditional, this
+  // comment, TIER_POLICY, and COUNTED_PREFIXES must all change together.
+
   // Ghost Partner — consultant profile (null when --profile was not passed).
   const profile = options.profile || null;
 
