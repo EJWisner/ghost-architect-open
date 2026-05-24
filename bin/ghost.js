@@ -1528,7 +1528,7 @@ async function main() {
     }
 
     switch (mode) {
-      case 'chat':      await runChatMode(codebaseContext);             break;
+      case 'chat':      await runChatMode(codebaseContext, { tier: TIER });             break;
       case 'poi':       await runPOIMode(codebaseContext, { profile });  break;
       case 'blast':     await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
       case 'conflict':  await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
