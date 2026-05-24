@@ -316,7 +316,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // mechanism — decision deferred to Stage 3). Current behavior preserved
   // for Open users running v7 without an activated license.
   try {
-    incrementScanCount();
+    incrementScanCount(prefix);
   } catch {
     // Freemium counter is non-essential; never block the save on it.
   }

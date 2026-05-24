@@ -1458,6 +1458,16 @@ async function main() {
         }
 
         try {
+          // Tier-gate check at dispatch — wall BEFORE telemetry ping and
+          // before any prompt loading or LLM call. Mirrors the dispatch
+          // gate below for POI/Blast/Conflict/Audit. Per D1: prompt-triage
+          // shares the 4-scan quota with the other counted modes.
+          const ptVerdict = requireTier('mode:prompt-triage', { scansUsed: getScanCount() });
+          if (!ptVerdict.allowed) {
+            renderPaywall(ptVerdict.paywall);
+            continue;
+          }
+
           // Telemetry — fire BEFORE the run so a long Prompt Triage doesn't
           // delay the ping landing in Pulse. Fire-and-forget; if the network
           // is slow, the user shouldn't wait. Lands as `mode-prompt-triage`

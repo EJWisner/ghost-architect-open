@@ -53,6 +53,9 @@ import {
   formatCostRange,
   calcActualCost,
 } from '../core/estimator.js';
+import { requireTier } from '../license/tier-gates.js';
+import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
+import { incrementScanCount } from '../freemium.js';
 
 function defaultReportsDir() {
   return path.join(os.homedir(), 'Ghost Architect Reports', 'prompt-triage');
@@ -101,7 +104,8 @@ export async function runPromptTriageMode(options = {}) {
   // (fail-closed) so any caller that forgets to pass tier does not leak the
   // paid feature. The bin/ghost.js for each branch is the source of truth.
   const tier = options.tier || 'open';
-  const projectIntelEnabled = tier !== 'open';
+  const projectIntelGate = requireTier('feature:project-tracking', { tier });
+  const projectIntelEnabled = projectIntelGate.allowed;
 
   // ── Banner ──────────────────────────────────────────────────────────────
   console.log('');
@@ -210,6 +214,13 @@ export async function runPromptTriageMode(options = {}) {
   if (projectIntelEnabled) {
     projectLabel = await promptProjectLabel();
     console.log('');
+  } else if (!hasShownCallout('feature:project-tracking')) {
+    // D3 soft-gate callout: one line, once per session, gentle. Open users
+    // still get the full prompt-triage report — this just signals what they'd
+    // gain on Pro (label-driven baselines, comparison, velocity).
+    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
+    console.log('');
+    markCalloutShown('feature:project-tracking');
   }
 
   // ── Scan ────────────────────────────────────────────────────────────────
@@ -268,6 +279,13 @@ export async function runPromptTriageMode(options = {}) {
     fs.writeFileSync(reportPath, markdown, 'utf8');
     console.log('');
     console.log(chalk.gray('Report saved to: ') + reportPath);
+    // Bump the freemium counter for Open tier. Prompt-triage doesn't go
+    // through saveReport() (different report-folder layout, no PDF), so
+    // we increment explicitly here using the same 'ghost-prompt-triage'
+    // prefix that saveReport would use. Mirrors D1: prompt-triage counts
+    // toward the 4-scan quota alongside POI/Blast/Conflict. Non-fatal on
+    // failure — the counter is honor-system, the scan completed.
+    try { incrementScanCount('ghost-prompt-triage'); } catch {}
   } catch (err) {
     console.log(chalk.red('  ✗ Could not save report: ' + err.message));
   }
