@@ -34,31 +34,42 @@ export function ensureReportsDir() {
 // to pass a label based on tier and user input. saveReport itself is tier-blind
 // on filename behavior — the parameter shape captures intent.
 //
-//   label present → history-tracked: ${prefix}-${label}-${timestamp}.{ext}
+//   label present → history-tracked + grouped: ${prefix}-${slug}-${timestamp}.{ext}
 //                   Pro/Team/Enterprise project intelligence flow.
 //
-//   label absent  → one-off scan: ${prefix}.{ext}, overwrites on every run.
-//                   Open's freemium flow. Also used by Pro/Team users running
-//                   throwaway scans they don't want cluttering their reports
-//                   dir with timestamps.
+//   label absent  → unlabeled scan: ${prefix}-${timestamp}.{ext}
+//                   Open's freemium flow (label prompt gated per D4 in Phase 2).
+//                   Also paid-tier users who skipped labeling for a one-off run.
+//                   Each scan gets a unique filename; no silent overwrites.
 //
 // Per-tier side effects (team-sync, mobile-publish, portal-publish) are gated
-// by their existing isXConfigured() checks below. Stage 3 of v7 unification
-// will rewire those gates as requireTier() calls; until then, behavior
-// matches v6.0.1 exactly for each tier's already-configured customer.
+// by their existing `if (label && isXConfigured())` checks below — null label
+// still short-circuits all three even though filenames now always carry
+// a timestamp. The D4 architectural decision (Phase 2: gate at mode-file
+// level, not in saveReport) remains intact. Phase 3 owns defense-in-depth
+// gating per TODO-architect-savereport-defense-in-depth-tier-gating-phase3.md.
 export async function saveReport(content, prefix, label, meta = {}) {
   const dir = ensureReportsDir();
 
-  // ── Filename: dispatch by label presence ──────────────────────────
+  // ── Filename: always timestamp; label adds slug when present ──────
+  // Pre-Phase-2 design treated bare-prefix filenames as a deliberate
+  // "one-off throwaway" UX choice — users who wanted history typed a
+  // label, users who wanted no-clutter pressed Enter. Phase 2 gated the
+  // label prompt on Open (D4 leak fix), removing Open users' opt-in
+  // path. The bare-prefix behavior then ALWAYS fired on Open scans,
+  // silently overwriting prior reports on every re-scan. Data loss
+  // beats disk clutter; timestamps now always append. Paid-tier users
+  // who skip the label prompt get ${prefix}-${timestamp} instead of
+  // overwriting — slightly more files in the reports dir, no data loss.
+  // Closes TODO-architect-conflict-bare-filename.md (filed 2026-05-22,
+  // expanded to 5 modes 2026-05-24 during Phase 2 mode-file work).
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   let baseName;
-  let timestamp;
   if (label) {
-    timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const safeName = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
     baseName = `${prefix}-${safeName}-${timestamp}`;
   } else {
-    timestamp = null;
-    baseName = prefix;
+    baseName = `${prefix}-${timestamp}`;
   }
 
   // Save TXT — plain text, terminal-friendly
