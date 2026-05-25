@@ -18,7 +18,8 @@
  * Differs from src/modes/chat.js by:
  *   - Single iteration (no while-loop, no slash commands, no exit semantics)
  *   - Always offers save after the answer (rather than save-on-/save-command)
- *   - No project-label prompt (Open-tier flow, simpler save path)
+ *   - Optional project-label prompt on Pro+ tier (Open users skip, no
+ *     prompt at all — gated via requireTier('feature:project-tracking'))
  *   - Optional D3 callout pointing Pro users toward follow-up support
  */
 
@@ -28,6 +29,8 @@ import boxen from 'boxen';
 import { streamChat } from '../analyst/index.js';
 import { saveReport } from '../reports.js';
 import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
+import { requireTier } from '../license/tier-gates.js';
+import { isBackKeyword } from '../cli/prompt-helpers.js';
 
 const RETRY_DELAYS = [10, 30];
 
@@ -142,6 +145,40 @@ export async function runQuestionMode(codebaseContext, options = {}) {
     return;
   }
 
+  // Optional project-label prompt. Mirrors src/modes/chat.js's saveChatLog
+  // pattern. D4 gate: feature:project-tracking is Pro+ only. On Pro+, the
+  // prompt fires and accepts a label, 'back' for cancel, or Enter to skip.
+  // On Open, no prompt at all (the D3 callout above already signals the
+  // Pro upsell for multi-turn; the project-label tracking pitch lives on
+  // the heavier modes' callouts and isn't worth re-displaying here —
+  // intentionally keeping Question's Open flow lean per file-header
+  // design contract).
+  //
+  // saveLabel resolution mirrors chat.js exactly: Pro+ falls back to
+  // 'question' if user skipped (preserves UX nicety — bare-prefix save
+  // would otherwise produce filenames like 'ghost-question-2026-...md'
+  // and portal entries of 'question' rather than '(untitled)'); Open
+  // stays null so label-gated side-effect blocks (team-sync,
+  // mobile-publish, audit-log) in saveReport short-circuit. Portal-
+  // publish is NOT label-gated post-Cycle-5 commit f481398 — it fires
+  // whenever portal is configured, and a labeled Question save lands as
+  // the project name instead of the '(untitled)' fallback that
+  // buildManifestEntry would otherwise apply.
+  const projectIntelGate = requireTier('feature:project-tracking', { tier });
+  let label = null;
+  if (projectIntelGate.allowed) {
+    const promptResult = await inquirer.prompt([{
+      type: 'input',
+      name: 'label',
+      message: chalk.cyan('Project label') + chalk.gray(" (publishes to your portal under this name; press Enter to skip, or 'back' to cancel save):"),
+    }]);
+    if (isBackKeyword(promptResult.label)) {
+      console.log(chalk.gray('\n  Save cancelled.\n'));
+      return;
+    }
+    label = promptResult.label;
+  }
+
   // Build transcript content. Vocabulary discipline: header reads "QUESTION
   // AND ANSWER" not "chat transcript". Uses the same ASCII separator that
   // chat.js uses (PDFKit-safe — U+2500 box-drawing characters render as
@@ -155,11 +192,12 @@ export async function runQuestionMode(codebaseContext, options = {}) {
   content += `Answer: ${answer}\n\n`;
   content += `${sep}\n`;
 
-  // Open-tier save: no label, prefix 'ghost-question'. saveReport produces
-  // .txt / .md / .pdf in one call; the `null` label means the bare-prefix
-  // filename path applies (always-timestamped post-Phase-2, so no overwrite
-  // risk on repeat saves).
-  const saved = await saveReport(content, 'ghost-question', null);
+  // saveLabel resolution: Pro+ gets 'question' fallback for UX nicety,
+  // Open stays null so label-gated side-effects (team-sync, mobile-
+  // publish, audit-log) short-circuit. Same D4 invariant shape as
+  // chat.js's saveLabel ternary.
+  const saveLabel = projectIntelGate.allowed ? (label || 'question') : null;
+  const saved = await saveReport(content, 'ghost-question', saveLabel);
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)`));
