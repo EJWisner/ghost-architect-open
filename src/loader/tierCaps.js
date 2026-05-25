@@ -24,9 +24,17 @@ const UPGRADE_HINTS = {
  *
  * @param {string} tier - 'open' | 'pro' | 'team' | 'enterprise'
  * @param {number|null|undefined} userRequested - value from --max-context, or null/undefined
+ * @param {'cli'|'config'|'default'} [source='cli'] - where userRequested came from.
+ *   'cli' = --max-context flag (the visible user action).
+ *   'config' = configstore.maxTokensContext (saved settings, often leftover
+ *              from a prior `ghost reconfigure` on a higher tier).
+ *   'default' = the hardcoded 50000 fallback.
+ *   Used to phrase the over-cap warning so it names the actual provenance
+ *   rather than always pointing at --max-context. See
+ *   TODO-architect-open-clamp-message-misleading.md for context.
  * @returns {{ effective: number, clamped: boolean, tierCap: number, tier: string }}
  */
-export function resolveContextCap(tier, userRequested) {
+export function resolveContextCap(tier, userRequested, source = 'cli') {
   const normalizedTier = (tier || 'open').toLowerCase();
   const tierCap = TIER_CAPS[normalizedTier] ?? TIER_CAPS.open;
 
@@ -41,7 +49,22 @@ export function resolveContextCap(tier, userRequested) {
 
   if (userRequested > tierCap) {
     const hint = UPGRADE_HINTS[normalizedTier];
-    console.warn(chalk.yellow(`⚠ --max-context ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`));
+    // Branch the warning by source so the user knows where the request came from.
+    // Prior wording ("--max-context X exceeds...") was misleading when the value
+    // came from configstore (a prior `ghost reconfigure` from a higher tier) and
+    // the user never passed a flag — they'd see a warning naming a CLI surface
+    // they hadn't touched. Filed under TODO-architect-open-clamp-message-misleading.md.
+    let msg;
+    if (source === 'config') {
+      msg = `⚠ Context cap clamped from ${userRequested.toLocaleString()} (from saved settings) to ${tierCap.toLocaleString()} on the ${normalizedTier} tier. Run \`ghost --reconfigure\` to update your default.`;
+    } else {
+      // 'cli' (the common case) or 'default' fallback — both reference --max-context
+      // as the visible source. 'default' is a defensive case that shouldn't occur in
+      // practice (default = 50000 = Open's cap, never exceeds), but the wording is
+      // safe if it ever does.
+      msg = `⚠ --max-context ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
+    }
+    console.warn(chalk.yellow(msg));
     if (hint) console.warn(chalk.gray(`  ${hint}`));
     return { effective: tierCap, clamped: true, tierCap, tier: normalizedTier };
   }

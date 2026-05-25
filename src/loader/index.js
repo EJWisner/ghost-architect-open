@@ -540,7 +540,14 @@ function buildContext(fileMap) {
   // Precedence: CLI --max-context (if provided) > config.maxTokensContext > 50000 default.
   // Tier cap always clamps the final value.
   const userRequested = SCAN_OPTIONS.maxContextOverride ?? configuredMax;
-  const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested);
+  // Source distinction so the clamp warning names the actual provenance.
+  // CLI: user passed --max-context. Config: value came from configstore (often
+  // a prior `ghost reconfigure` from a different tier). Default: hardcoded 50K.
+  // See TODO-architect-open-clamp-message-misleading.md.
+  const source = SCAN_OPTIONS.maxContextOverride != null
+    ? 'cli'
+    : (configuredMax !== 50000 ? 'config' : 'default');
+  const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested, source);
 
   // ── Redaction ──────────────────────────────────────────────────────────────
   // Strip API keys, secrets, DB credentials, and private keys before files are
