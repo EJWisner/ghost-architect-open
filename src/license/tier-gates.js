@@ -33,18 +33,24 @@ import { getActiveTier } from './session.js';
 // Per-tier feature matrix.
 //
 // Per D1 (locked 2026-05-23): scan quota for Open is 4 scans across
-// {poi, blast, conflict, prompt-triage} in any combination. Chat and
-// Recon free across all tiers. Audit Pro-gated for everyone including
-// trial (matches the existing trial-block banner in bin/ghost.js that
-// this module replaces).
+// {poi, blast, conflict, prompt-triage} in any combination. Question
+// and Recon free across all tiers. Chat and Audit Pro-gated for
+// everyone including trial (matches the existing trial-block banner in
+// bin/ghost.js that this module replaces).
 //
-// Trial tier behaves like Pro for mode access (POI/Blast/Conflict/
-// Prompt-Triage/Recon/Chat all available, no quota). Audit blocked.
-// PDF watermark + audit block are the two trial-specific behaviors;
-// everything else mirrors Pro.
+// Cycle 14 (2026-05-25): Question mode added as the Open-tier Q&A
+// surface; Chat moved to Pro+ as the multi-turn conversational surface.
+// The two modes share underlying analyst/index.js streamChat machinery
+// but present as separate products at the menu level.
+//
+// Trial tier behaves like Pro for mode access (Question/POI/Blast/
+// Conflict/Prompt-Triage/Recon/Chat all available, no quota). Audit
+// blocked. PDF watermark + audit block are the two trial-specific
+// behaviors; everything else mirrors Pro.
 const TIER_POLICY = {
   // Modes
-  'mode:chat':          { open: true,    trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:question':      { open: true,    trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:chat':          { open: false,   trial: true,  pro: true,  team: true,  enterprise: true  },
   'mode:recon':         { open: true,    trial: true,  pro: true,  team: true,  enterprise: true  },
   'mode:poi':           { open: 'quota', trial: true,  pro: true,  team: true,  enterprise: true  },
   'mode:blast':         { open: 'quota', trial: true,  pro: true,  team: true,  enterprise: true  },

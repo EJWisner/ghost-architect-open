@@ -8,6 +8,7 @@ import inquirer from 'inquirer';
 import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug } from '../src/config.js';
 import { loadCodebase, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
+import { runQuestionMode } from '../src/modes/question.js';
 import { runPOIMode } from '../src/modes/poi.js';
 import { runBlastMode } from '../src/modes/blast.js';
 import { runReconMode } from '../src/modes/recon.js';
@@ -307,38 +308,50 @@ async function selectInputMethod(activeProfileLabel) {
 
 // ── Mode selector ───────────────────────────────────────────────────────────
 
-async function selectMode(codebaseContext) {
+async function selectMode(codebaseContext, tier = 'open') {
   console.log('\n' + boxen(
     chalk.green.bold(SYM.check + ' Project processed') + '\n' +
     chalk.gray(`${codebaseContext.loadedFiles} files | ${codebaseContext.fileIndex.slice(0, 3).join(', ')}${codebaseContext.fileIndex.length > 3 ? '...' : ''}`),
     { padding: { top: 0, bottom: 0, left: 1, right: 1 }, borderColor: 'green', borderStyle: 'round' }
   ));
 
+  // Cycle 14: Question is Open-tier inclusive; Chat is Pro+ (mode:chat
+  // gated at dispatch). Hide Chat from the menu on Open so Open users
+  // never read the word "Chat" in their tier's flow — the vocabulary
+  // rule is part of the clean tier-product story. Pro+ tiers see both
+  // Question (one-shot Q&A) and Chat (multi-turn) as distinct choices.
+  const choices = [
+    { name: IS_WINDOWS ? '[ASK] Ask a Question  ' : '❓  Ask a Question  ' + chalk.gray('— Single Q&A, save the answer if you like'), value: 'question' },
+  ];
+  if (tier !== 'open') {
+    choices.push({ name: IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ' + chalk.gray('— Ongoing conversation about this project'), value: 'chat' });
+  }
+  choices.push(
+    { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
+    { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
+    { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
+    { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
+    { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
+    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
+    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
+    new inquirer.Separator(),
+    // "New Scan" is the explicit back-out here — returns to selectInputMethod
+    // with codebase context cleared. Labeled by intent ("scan a different
+    // directory") rather than the abstract "Back" because the user has a
+    // loaded codebase context and the natural next-thing-up is to load a
+    // different one, not to abandon work entirely.
+    { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
+    // Universal escape: "Exit Ghost" with confirm-exit, consistent with
+    // top-level menu. Caller checks isBack(mode) and runs confirmExit().
+    backChoice(IS_WINDOWS ? '[EXIT] Exit Ghost' : '🚪  Exit Ghost'),
+  );
+
   const { mode } = await inquirer.prompt([{
     type: 'list',
     name: 'mode',
     message: chalk.cyan('\nWhat do you want to do?'),
     theme: inquirerTheme,
-    choices: [
-      { name: IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ' + chalk.gray('— Ask anything about this project'), value: 'chat' },
-      { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
-      { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
-      { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
-      { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
-      { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
-      { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
-      { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
-      new inquirer.Separator(),
-      // "New Scan" is the explicit back-out here — returns to selectInputMethod
-      // with codebase context cleared. Labeled by intent ("scan a different
-      // directory") rather than the abstract "Back" because the user has a
-      // loaded codebase context and the natural next-thing-up is to load a
-      // different one, not to abandon work entirely.
-      { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
-      // Universal escape: "Exit Ghost" with confirm-exit, consistent with
-      // top-level menu. Caller checks isBack(mode) and runs confirmExit().
-      backChoice(IS_WINDOWS ? '[EXIT] Exit Ghost' : '🚪  Exit Ghost'),
-    ]
+    choices,
   }]);
 
   return mode;
@@ -1500,7 +1513,7 @@ async function main() {
       if (!codebaseContext) { codebaseContext = null; continue; }
     }
 
-    const mode = await selectMode(codebaseContext);
+    const mode = await selectMode(codebaseContext, TIER);
 
     // Universal escape: Exit Ghost from mode menu — confirm before leaving.
     if (isBack(mode)) {
@@ -1527,9 +1540,11 @@ async function main() {
     // Tier-gate check at dispatch — wall BEFORE API spend or codebase work.
     // Per design decision 2026-05-23 (Q4): dispatch-level gating, not
     // post-proceed-confirm gating. Quota-gated modes consult getScanCount()
-    // for the current count; audit-gated checks the tier alone. Chat, recon,
-    // compare, dashboard — all free across all tiers per D1.
-    if (['poi', 'blast', 'conflict', 'audit'].includes(mode)) {
+    // for the current count; audit-gated checks the tier alone. Cycle 14
+    // adds chat to this list (mode:chat went from open:true to open:false
+    // when Question mode launched as the Open-tier Q&A surface). Question,
+    // recon, compare, dashboard — free across all tiers.
+    if (['chat', 'poi', 'blast', 'conflict', 'audit'].includes(mode)) {
       const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
       if (!verdict.allowed) {
         renderPaywall(verdict.paywall);
@@ -1538,6 +1553,7 @@ async function main() {
     }
 
     switch (mode) {
+      case 'question':  await runQuestionMode(codebaseContext, { tier: TIER });         break;
       case 'chat':      await runChatMode(codebaseContext, { tier: TIER });             break;
       case 'poi':       await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
       case 'blast':     await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
