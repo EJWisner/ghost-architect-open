@@ -39,6 +39,18 @@ export async function promptProjectLabel() {
     return null;
   }
 
+  // Layer 1 input validation: reject labels with path separators, parent-directory
+  // references, or characters outside a conservative whitelist. Layer 2 (the
+  // slugify + path-containment check in core/projects.js projectDir()) catches
+  // the storage-side damage even without this, but Layer 1 prevents the
+  // surface-level UX nastiness of "../../etc/passwd" appearing in the
+  // existing-projects autocomplete display.
+  if (!/^[A-Za-z0-9 _.-]{1,80}$/.test(input)) {
+    console.log(chalk.yellow('  Invalid label: use letters, digits, spaces, dots, hyphens, underscores only (max 80 chars).'));
+    console.log(chalk.gray('  Running as one-time scan instead.\n'));
+    return null;
+  }
+
   if (projects.length > 0) {
     const match = fuzzyMatch(input, projects);
     if (match && slugify(match.label) !== slugify(input)) {
@@ -61,7 +73,7 @@ export async function promptProjectLabel() {
     }
   }
 
-  console.log(chalk.green(`  ✓ New project "${input}" — this scan will establish the baseline\n`));
+  console.log(chalk.green(`  ✓ New project "${input}" — tracking started\n`));
   return input;
 }
 
