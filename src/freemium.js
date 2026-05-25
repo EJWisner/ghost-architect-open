@@ -19,9 +19,11 @@
 // outside bin/ghost.js, but bin/ghost.js no longer calls it. New callers
 // should use requireTier() instead.
 //
-// Non-counting modes — Chat and Recon — remain free forever. Chat is
-// interactive exploration with no saved deliverable; Recon is sizing without
-// analysis. Neither competes with the paid product.
+// Non-counting modes — Question and Recon — remain free forever for Open.
+// Question is single-shot Q&A with an optional save; Recon is sizing without
+// analysis. Neither competes with the paid product. Chat (multi-turn
+// conversation) moved to Pro+ in Cycle 14 — it's gated at dispatch in
+// bin/ghost.js via requireTier('mode:chat') and is not Open-reachable.
 //
 // State is stored in configstore under key 'ghostOpenScanCount'. The counter
 // is bumped in src/reports.js's saveReport() AFTER a successful save, so a
@@ -42,8 +44,10 @@ const CONFIGSTORE_NAME = 'ghost-architect';
 const COUNT_KEY = 'ghostOpenScanCount';
 
 // Modes whose successful saved-report runs count toward the free quota.
-// Chat (no save), Recon (no save), and Audit (always paywalled separately)
-// are intentionally excluded.
+// Question (single-shot Q&A — separate Open-tier free mode), Recon (no
+// save), and Audit (always paywalled separately) are intentionally excluded.
+// Chat is excluded because Cycle 14 moved it to Pro+ — it's gated at
+// dispatch and never reaches saveReport on an Open license.
 const COUNTED_PREFIXES = new Set([
   'ghost-poi',
   'ghost-blast',
@@ -98,7 +102,8 @@ export function shouldBlockMode(modeId) {
   if (modeId === 'audit') {
     return { block: true, reason: 'audit' };
   }
-  // Non-counted modes (chat, recon) are unlimited.
+  // Non-counted modes (question, recon) are unlimited on Open. Chat moved
+  // to Pro+ in Cycle 14 — dispatch gates it before reaching this function.
   const prefix = MODE_TO_PREFIX[modeId];
   if (!prefix) return { block: false };
   // Counted modes hit the quota gate.
@@ -158,7 +163,7 @@ export function renderQuotaPaywall() {
     chalk.yellow('month on any tier.'),
     chalk.yellow.bold('Limited time. Limited number of discounts available.'),
     '',
-    chalk.white('Chat and Recon modes remain free.'),
+    chalk.white('Question and Recon modes remain free.'),
   ];
   console.log('\n' + boxen(lines.join('\n'), {
     padding: 1,

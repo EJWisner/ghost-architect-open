@@ -22,7 +22,7 @@
 // Companion pattern for text-input prompts: the 'back' keyword. Inquirer
 // v9 has no built-in Esc-to-cancel mechanism (verified 2026-05-23: no
 // AbortController support, no keypress hook documented in the public API).
-// For the highest-pain text inputs (loader paths, license key, chat label),
+// For the highest-pain text inputs (loader paths, license key, project label),
 // callers accept the literal string 'back' (case-insensitive) and treat
 // it as the back-out signal. Discoverable via the prompt's message text:
 //   "Path to codebase (or 'back' to return)"

@@ -252,7 +252,7 @@ function printBanner() {
 // Grouped by what the user is analyzing, not just where the input comes from.
 // Prompt Triage was previously stacked alongside Local/ZIP/GitHub which made
 // it look like just another way to load a code project — users couldn't find
-// it because they were looking in the mode menu (Chat/POI/Blast/Conflict/
+// it because they were looking in the mode menu (Question/POI/Blast/Conflict/
 // Recon) instead. Now the menu is grouped by analysis target with named
 // separators so Prompt Triage is visually distinct from code-loading options.
 //
@@ -1014,7 +1014,7 @@ async function runStartTrialFlow() {
 function renderLicenseStateAndMaybeBlock(result) {
   // missing — show the offer (trial vs activate vs purchase) banner and
   // FALL THROUGH to Open tier behavior. Per D2 (locked 2026-05-23): no
-  // license = Open tier; user can still run Chat, Recon, and up to
+  // license = Open tier; user can still run Question, Recon, and up to
   // SCAN_QUOTA counted scans. Quota wall and audit paywall handle the
   // actual gating at mode dispatch via tier-gates.js requireTier().
   //
@@ -1033,7 +1033,7 @@ function renderLicenseStateAndMaybeBlock(result) {
     const lines = [
       chalk.yellow.bold('No license installed') + '\n',
       chalk.white('Running as Ghost Open: free quota for POI, Blast, Conflict,') + '\n',
-      chalk.white('and Prompt Triage. Chat and Recon are always free.') + '\n',
+      chalk.white('and Prompt Triage. Question and Recon are always free.') + '\n',
     ];
     if (trialAvailable) {
       lines.push(chalk.white('You\'re eligible for a free ' + TRIAL_DURATION_DAYS + '-day evaluation trial of Pro.'));

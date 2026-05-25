@@ -64,7 +64,7 @@ function getOrCreateUserId() {
  *
  * @param {string} version  the CLI version (e.g. '6.0.0-pro')
  * @param {string} tier     'pro' or 'team' (used in the X-Ghost-Client header)
- * @param {string} mode     'poi' | 'blast' | 'conflict' | 'recon' | 'audit' | 'chat' | 'compare' | 'dashboard'
+ * @param {string} mode     'question' | 'poi' | 'blast' | 'conflict' | 'recon' | 'audit' | 'chat' | 'compare' | 'dashboard'
  * @returns {Promise<void>} resolves after the POST completes or fails (never throws)
  */
 export function pingModeUsage(version, tier, mode) {
