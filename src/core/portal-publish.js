@@ -628,6 +628,21 @@ export async function publishDashboardToPortal({
   const ag = dashboardSidecar?.aggregateCounts || {};
   const projectCount = dashboardSidecar?.projectCount || 0;
 
+  // Tally real per-severity counts from the sidecar's remainingFindings array.
+  // Each entry already carries severity (set at the build site around line 203);
+  // the prior placeholder dumped everything into 'medium' which caused the Level 1
+  // portal to suppress chip display via the guard at portal-ejwisner.html:878.
+  // The Level 1 guard STAYS IN PLACE as defense in depth — see
+  // TODO-publisher-dashboard-severity.md. Unknown/missing severity is silently
+  // dropped (not bucketed into 'medium' or 'low') so displayed counts strictly
+  // reflect findings the parser successfully classified. findingsTotal below
+  // still uses ag.totalRemaining, which counts everything regardless.
+  const dashSev = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  for (const f of (dashboardSidecar?.remainingFindings || [])) {
+    const k = String(f.severity || '').toLowerCase().trim();
+    if (dashSev[k] !== undefined) dashSev[k]++;
+  }
+
   const entry = {
     id:                    'dashboard__rollup__canonical',
     mode:                  'dashboard',
@@ -641,18 +656,7 @@ export async function publishDashboardToPortal({
     summary:               projectCount > 0
       ? `Cross-project remediation rollup. ${projectCount} project${projectCount === 1 ? '' : 's'} tracked, ${ag.totalRemaining || 0} findings remaining of ${ag.totalBaseline || 0} baseline (${ag.avgProgress || 0}% average remediation).`
       : 'No labeled projects yet. Run a scan with a project label to start tracking remediation.',
-    // For the dashboard, severityCounts holds the open-finding rollup so the
-    // existing portal renderer can show it the same way it shows per-scan
-    // severity. There's no per-severity tracking in the dashboard data model
-    // yet, so all open findings land in 'medium' as a placeholder. (Future
-    // improvement: tag each remaining finding with its actual severity.)
-    severityCounts: {
-      critical: 0,
-      high:     0,
-      medium:   ag.totalRemaining || 0,
-      low:      0,
-      info:     0,
-    },
+    severityCounts:        dashSev,
     findingsTotal:         ag.totalRemaining || 0,
     hasStructuredFindings: true,
     // Custom dashboard fields the portal will look for when mode==='dashboard'.
