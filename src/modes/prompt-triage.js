@@ -290,17 +290,21 @@ export async function runPromptTriageMode(options = {}) {
     console.log(chalk.red('  ✗ Could not save report: ' + err.message));
   }
 
-  // ── Portal publish (Pro+) ─────────────────────────────────────────────
+  // ── Portal publish ────────────────────────────────────────────────────
   // Push the Prompt Triage results to the web portal alongside POI/Blast/
   // Conflict/Recon/Audit. Mirror the saveReport contract: write standard-
   // naming files (ghost-prompt-triage-{label}-{ts}.{md,findings.json}) to
   // the main reports dir, build a findings.json sidecar that powers Jira
   // export, and call publishToPortal. Non-fatal on failure — the primary
   // report at prompt-triage/ is already saved.
-  if (projectLabel && isPortalConfigured()) {
+  //
+  // Fires whenever portal is configured. No-label scans synthesize a
+  // 'untitled' filename slug and land in the manifest as project
+  // '(untitled)' — same convention as src/reports.js portal block.
+  if (isPortalConfigured()) {
     try {
       const mainReportsDir = path.join(os.homedir(), 'Ghost Architect Reports');
-      const safeLabel = projectLabel.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
+      const safeLabel = (projectLabel || 'untitled').replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const baseName = `ghost-prompt-triage-${safeLabel}-${ts}`;
 
@@ -332,7 +336,7 @@ export async function runPromptTriageMode(options = {}) {
       const sidecar = {
         schema:         1,
         generatedAt:    new Date().toISOString(),
-        project:        projectLabel,
+        project:        projectLabel || '(untitled)',
         mode:           'prompt-triage',
         totalFindings:  sidecarFindings.length,
         severityCounts: counts,

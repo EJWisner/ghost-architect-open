@@ -296,7 +296,14 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // reads from this repo via the signup.ghostarchitect.dev Worker. This
   // is what makes scans appear on the portal (and what makes the Jira
   // export buttons render — they only show when findings.json exists).
-  if (label && isPortalConfigured()) {
+  //
+  // Fires whenever portal is configured, regardless of label presence.
+  // Anonymous (one-time) scans land in the manifest as project
+  // "(untitled)" via buildManifestEntry fallbacks in core/portal-publish.js.
+  // Team-sync, mobile-publish, and audit-log above remain label-gated
+  // (paid-tier integrations); portal is broadly available so should reach
+  // every scan including Open tier where labels are never prompted.
+  if (isPortalConfigured()) {
     try {
       const portalTimeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('portal-publish timeout after 120s')), 120000)
