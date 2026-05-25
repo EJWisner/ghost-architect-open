@@ -19,8 +19,19 @@ import { verifyConflicts } from './agent/verifier.js';
 import { narrateConflictReport } from './agent/narrator.js';
 import { loadSession, saveSession, deleteSession } from './multipass.js';
 import { mergeRates } from '../profile/index.js';
+import { getTierCap } from '../loader/tierCaps.js';
 
-const PASS_TOKEN_LIMIT  = 50000;
+// Per-pass token budget for conflict detection. Scales with tier cap to leave
+// uniform 20% headroom across all tiers. Setting this equal to or near the
+// tier cap caused 'context length' errors on dense passes where file content
+// alone consumed the entire budget. Pre-Cycle-13 this was hardcoded at 50K,
+// which gave Open users (50K tier cap) zero headroom and Pro/Team/Enterprise
+// massive over-restriction (50%/67%/75% headroom). See
+// TODO-core-conflict-pass-token-limit-tier-scaling-stage3.md.
+function getPassTokenLimit(tier) {
+  return Math.floor(getTierCap(tier) * 0.8);
+}
+
 const MAX_SINGLE_PASS   = 60000;
 const SESSION_PREFIX    = 'conflict-';
 
@@ -48,14 +59,15 @@ async function callClaude(prompt, system, maxTokens = 8096, onChunk = null) {
 
 // ── Pass builder ───────────────────────────────────────────────────────────────
 
-export function buildConflictPasses(fileMap) {
+export function buildConflictPasses(fileMap, tier = 'open') {
   const ordered = prioritizeFileMap(fileMap);
   const passes  = [];
   let current   = { files: {}, tokens: 0 };
+  const passTokenLimit = getPassTokenLimit(tier);
 
   for (const [filePath, content] of Object.entries(ordered)) {
     const t = Math.ceil(content.length / 4);
-    if (current.tokens + t > PASS_TOKEN_LIMIT && current.tokens > 0) {
+    if (current.tokens + t > passTokenLimit && current.tokens > 0) {
       passes.push(current);
       current = { files: {}, tokens: 0 };
     }
@@ -66,10 +78,10 @@ export function buildConflictPasses(fileMap) {
   return passes;
 }
 
-export function getConflictPassInfo(fileMap) {
+export function getConflictPassInfo(fileMap, tier = 'open') {
   const totalTokens = Object.values(fileMap).reduce((sum, c) => sum + Math.ceil(c.length / 4), 0);
   const singlePass  = totalTokens <= MAX_SINGLE_PASS;
-  const passes      = singlePass ? [{ files: fileMap, tokens: totalTokens }] : buildConflictPasses(fileMap);
+  const passes      = singlePass ? [{ files: fileMap, tokens: totalTokens }] : buildConflictPasses(fileMap, tier);
   const estCost     = (passes.length * 0.30).toFixed(2);
   const estMinutes  = Math.max(1, Math.round(passes.length * 0.5));
   return { passes, totalTokens, singlePass, estCost, estMinutes, totalFiles: Object.keys(fileMap).length };
@@ -332,7 +344,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   // TODO-verifier-agent-stage3-evaluate.md.
   const tier = options.tier || 'open';
 
-  const info       = getConflictPassInfo(fileMap);
+  const info       = getConflictPassInfo(fileMap, tier);
   const totalFiles = info.totalFiles;
   const rates      = mergeRates({
     junior: getConfig().get('rateJunior') || 85,

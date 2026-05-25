@@ -54,7 +54,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
     .split('/').slice(0, 2).join('-')
     .replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40) || 'conflict-default';
   const model      = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
-  const info       = getConflictPassInfo(fileMap);
+  const info       = getConflictPassInfo(fileMap, tier);
   const multiPass  = !info.singlePass;
 
   console.log('\n' + boxen(
