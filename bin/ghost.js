@@ -19,8 +19,9 @@ import { listPresets } from '../src/loader/excludes.js';
 import { loadProfile } from '../src/profile/index.js';
 import { runProfileWizard } from '../src/profile/wizard.js';
 import { writeProfile, listProfiles, deleteProfile, profilePathFor, getProfilesDir } from '../src/profile/writer.js';
-import fs from 'fs';
+import fs, { realpathSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -995,12 +996,49 @@ async function runStartTrialFlow() {
     chalk.gray('Trial mode notes:') + '\n' +
     chalk.gray('  • Inheritance Audit mode is disabled (paid tiers only)') + '\n' +
     chalk.gray('  • PDF output is watermarked "TRIAL — NOT FOR DISTRIBUTION"') + '\n' +
-    chalk.gray('  • All other modes (POI, Blast, Conflict, Recon, Chat) work fully') + '\n\n' +
+    chalk.gray('  • All other modes (POI, Blast, Conflict, Recon, Question) work fully') + '\n\n' +
     chalk.gray('Upgrade at any time: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
     { padding: 1, borderColor: 'green', borderStyle: 'round' }
   ));
   console.log('');
   return true;
+}
+
+/**
+ * Server-driven promo text fetcher. Reads `promo` field from /pulse-stats
+ * on the signup worker. Worker is the source of truth — change the constant
+ * in the worker, redeploy, every Open install on next run sees new text.
+ * Decoupled from CLI release cycle by design.
+ *
+ * Failure modes: all silent. Returns empty string on any error so the
+ * banner just renders without a promo line. Never throws.
+ *   • Worker down / network error     → ''
+ *   • Timeout (2s)                    → ''
+ *   • Non-2xx HTTP response           → ''
+ *   • Malformed JSON                  → ''
+ *   • Missing `promo` field           → ''
+ *   • `promo` is null or non-string   → ''
+ */
+async function fetchPromoText() {
+  const PROMO_TIMEOUT_MS = 2000;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROMO_TIMEOUT_MS);
+    let resp;
+    try {
+      resp = await fetch('https://signup.ghostarchitect.dev/pulse-stats', {
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    if (!data || typeof data.promo !== 'string') return '';
+    return data.promo.trim();
+  } catch (_) {
+    return '';
+  }
 }
 
 /**
@@ -1011,7 +1049,7 @@ async function runStartTrialFlow() {
  * Returns true if the run should be blocked (caller should not proceed).
  * Returns false if the run can continue (state was valid or just a warning).
  */
-function renderLicenseStateAndMaybeBlock(result) {
+function renderLicenseStateAndMaybeBlock(result, promoText = '') {
   // missing — show the offer (trial vs activate vs purchase) banner and
   // FALL THROUGH to Open tier behavior. Per D2 (locked 2026-05-23): no
   // license = Open tier; user can still run Question, Recon, and up to
@@ -1046,6 +1084,9 @@ function renderLicenseStateAndMaybeBlock(result) {
     lines.push(chalk.white('Already have a license? Install it:'));
     lines.push(chalk.cyan('  ghost --activate <GA-YYYY-TIER-XXXX-XXXX-XXXX>'));
     lines.push('');
+    if (promoText) {
+      lines.push(chalk.cyan.bold(promoText));
+    }
     lines.push(chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pricing'));
     lines.push(chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'));
     console.log('\n' + boxen(lines.join('\n'),
@@ -1347,7 +1388,12 @@ async function main() {
       excludePatterns: cliOpts.excludes,
     });
 
-    const blocked = renderLicenseStateAndMaybeBlock(licenseResult);
+    // Fire promo fetch only when we'll actually render the no-license banner.
+    // For any other state, skip the network call — it adds nothing.
+    const promoText = licenseResult.state === 'missing'
+      ? await fetchPromoText()
+      : '';
+    const blocked = renderLicenseStateAndMaybeBlock(licenseResult, promoText);
     if (blocked) {
       console.log(chalk.gray(`${COPYRIGHT}\n`));
       process.exit(1);
@@ -1566,7 +1612,26 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error(chalk.red('\n' + SYM.cross + ' Fatal error:'), err.message);
-  process.exit(1);
-});
+// Resolve symlinks on both sides so the `ghost` global-install symlink
+// (which points at this file via realpath) is recognized as the entry
+// point and triggers main(). The fallback catches edge cases where
+// realpathSync throws (unusual but cheap to guard against).
+const isMain = () => {
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return import.meta.url === `file://${process.argv[1]}`;
+  }
+};
+
+if (isMain()) {
+  main().catch(err => {
+    console.error(chalk.red('\n' + SYM.cross + ' Fatal error:'), err.message);
+    process.exit(1);
+  });
+}
+
+// Exports for testing. The guard above ensures importing this module
+// from a test file (e.g. tests/banner-promo.smoke.mjs) does NOT execute
+// main() — tests get clean access to the underlying helpers.
+export { fetchPromoText, renderLicenseStateAndMaybeBlock };
