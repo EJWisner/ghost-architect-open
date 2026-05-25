@@ -255,7 +255,18 @@ export function extractFindings(reportText, opts = {}) {
         // Each file may still have backticks left from the un-stripped raw
         // form (e.g. `Files: \`pricing.js\`, \`utils.js\``). Strip them after
         // splitting on commas/semicolons.
-        current.files = fim[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
+        //
+        // Final filter drops narrator-emitted placeholders like
+        //   "Files: *(None specified in candidate data)*"  (Conflict mode)
+        //   "Files: (N/A)"
+        //   "Files: not applicable"
+        // which the parser would otherwise capture as a single bogus file
+        // entry and ship downstream to portal/mobile/Jira export. See
+        // TODO-architect-extractfindings-severity-detection-v7.md.
+        current.files = fim[1].split(/[,;]/)
+          .map(f => f.trim().replace(/`/g, '').replace(/^\(|\)$/g, '').trim())
+          .filter(Boolean)
+          .filter(f => !/^(none|n\/a|not\s+(specified|applicable))/i.test(f));
         continue;
       }
 
