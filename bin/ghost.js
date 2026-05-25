@@ -67,7 +67,7 @@ import { getScanCount, renderAuditPaywall, renderQuotaPaywall } from '../src/fre
 const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
   || 'https://license.ghostarchitect.dev/activate';
 
-const VERSION   = '6.0.1';
+const VERSION   = '7.0.0';
 // TIER is resolved at runtime from the active license (post-validateLicense).
 // Defaults to 'open' when no license is present (per D2). The constant
 // declaration is `let` rather than `const` because Phase 1 moved the
