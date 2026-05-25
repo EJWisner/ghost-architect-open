@@ -40,13 +40,17 @@ export async function promptProjectLabel() {
   }
 
   // Layer 1 input validation: reject labels with path separators, parent-directory
-  // references, or characters outside a conservative whitelist. Layer 2 (the
-  // slugify + path-containment check in core/projects.js projectDir()) catches
-  // the storage-side damage even without this, but Layer 1 prevents the
-  // surface-level UX nastiness of "../../etc/passwd" appearing in the
-  // existing-projects autocomplete display.
-  if (!/^[A-Za-z0-9 _.-]{1,80}$/.test(input)) {
-    console.log(chalk.yellow('  Invalid label: use letters, digits, spaces, dots, hyphens, underscores only (max 80 chars).'));
+  // references, control characters, or length over 80. Layer 2 (the slugify +
+  // path-containment check in core/projects.js projectDir()) catches the
+  // storage-side damage even without this; Layer 1 prevents the surface-level
+  // UX nastiness of "../../etc/passwd" appearing in the existing-projects
+  // autocomplete display. Blacklist (not whitelist) so legitimate labels with
+  // em-dashes, accents, apostrophes, or non-Latin scripts work — the original
+  // whitelist (commit aa6a4d1) was too restrictive and rejected real project
+  // names like "Blue Acorn iCi — magento-cli".
+  const INVALID_LABEL_PATTERN = /[\/\\\x00-\x1f\x7f]|\.\./;
+  if (input.length > 80 || INVALID_LABEL_PATTERN.test(input)) {
+    console.log(chalk.yellow('  Invalid label: avoid slashes, ".." sequences, control characters, and labels over 80 chars.'));
     console.log(chalk.gray('  Running as one-time scan instead.\n'));
     return null;
   }
