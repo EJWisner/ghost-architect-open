@@ -317,6 +317,7 @@ const MODE_LABELS = {
   audit:         { label: 'Inheritance Audit',  order: 5 },
   inheritance:   { label: 'Inheritance Audit',  order: 5 },
   'prompt-triage':{ label: 'Prompt Triage',     order: 6 },
+  question:      { label: 'Question and Answer', order: 6.5 },
   chat:          { label: 'Chat',               order: 7 },
   compare:       { label: 'Compare',            order: 8 },
   dashboard:     { label: 'Dashboard',          order: 9 },
