@@ -297,7 +297,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       },
     };
 
-    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, profile });
+    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, profile, tier });
 
     if (!result?.finalReport) return;
     buffer = result.finalReport;

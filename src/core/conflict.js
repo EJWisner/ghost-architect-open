@@ -326,6 +326,12 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   // the original system prompt unchanged.
   const profile = options.profile || null;
 
+  // Tier threads through for Stage 3 gates (currently: verifier-fallback in
+  // quickVerify). Defaults to 'open' (fail-closed) so any caller that
+  // forgets to pass tier does not leak a paid-tier privilege. See
+  // TODO-verifier-agent-stage3-evaluate.md.
+  const tier = options.tier || 'open';
+
   const info       = getConflictPassInfo(fileMap);
   const totalFiles = info.totalFiles;
   const rates      = mergeRates({
@@ -457,7 +463,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
       onProgress({ type: 'verified', title: verified.title, verdict: verified.verdict }),
     onProgress: ({ current, total }) =>
       onProgress({ type: 'verification_progress', current, total }),
-  }, verifyChoice);
+  }, verifyChoice, tier);
 
   onProgress({
     type:  'verification_done',

@@ -101,7 +101,7 @@ export async function runAgent(mode, fileMap, options = {}, callbacks = {}) {
       ...callbacks,
       onVerifying: ({ candidate }) => onProgress({ type: 'verifying', candidate }),
       onVerified:  ({ verified  }) => onProgress({ type: 'verified',  verified  }),
-    });
+    }, 'full', tier);
     onProgress({ type: 'verification_done', stats: verificationResult.stats });
 
     onProgress({ type: 'narrating' });

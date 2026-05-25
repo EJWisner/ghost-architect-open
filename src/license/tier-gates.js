@@ -58,6 +58,13 @@ const TIER_POLICY = {
   'feature:profiles':           { open: false, trial: true,  pro: true, team: true, enterprise: true },
   'feature:project-tracking':   { open: false, trial: true,  pro: true, team: true, enterprise: true },
   'feature:ghost-partner-pdf':  { open: false, trial: true,  pro: true, team: true, enterprise: true },
+  // verifier-fallback: when a conflict-detection candidate has no usable file
+  // references, quickVerify() can fall back to loading ~5K tokens of project
+  // context to still produce a verdict. Costs ~5K extra tokens per ambiguous
+  // verification. Open gets the cheaper INSUFFICIENT verdict instead; trial+
+  // get the fallback. See TODO-verifier-agent-stage3-evaluate.md (closed
+  // 2026-05-25 via Cycle 13 Block 2).
+  'feature:verifier-fallback':  { open: false, trial: true,  pro: true, team: true, enterprise: true },
   // pdf-watermark-free: trial gets watermarked PDFs, others get clean PDFs.
   // Open gets clean PDFs too — the freemium gate is quota-based, not
   // watermark-based. Trial is the only "watermarked" tier.
