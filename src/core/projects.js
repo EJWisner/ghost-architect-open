@@ -99,8 +99,13 @@ function similarFinding(a, b) {
   if (na === nb) return true;
   const wa = new Set(na.split(' ').filter(w => w.length > 3));
   const wb = new Set(nb.split(' ').filter(w => w.length > 3));
-  if (wa.size === 0) return false;
-  return [...wa].filter(w => wb.has(w)).length / wa.size >= 0.6;
+  if (wa.size === 0 || wb.size === 0) return false;
+  const intersection = [...wa].filter(w => wb.has(w)).length;
+  // Symmetric: use min(|wa|, |wb|) as denominator so similarFinding(a, b) === similarFinding(b, a).
+  // The previous wa.size-only denominator made matching depend on argument order, producing
+  // user-visible "math doesn't add up" between the resolved/remaining filters (baseline-anchored)
+  // and the newIssues filter (current-anchored). See TODO-projects-similar-finding-asymmetry.md.
+  return intersection / Math.min(wa.size, wb.size) >= 0.6;
 }
 
 // ── Project intelligence ──────────────────────────────────────────────────────
