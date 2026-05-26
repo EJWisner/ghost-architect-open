@@ -20,7 +20,7 @@ function getClient() {
 }
 
 function getModel() {
-  return getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  return getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 }
 
 function getRates() {
@@ -71,7 +71,25 @@ export async function streamChat(codebaseContext, conversationHistory, userMessa
   }
 
   console.log('\n');
-  return fullResponse;
+
+  // Capture usage from the SDK's final message. The answer already streamed
+  // successfully by this point; if usage capture fails (network drop after
+  // stream, malformed final message, SDK version mismatch), return null
+  // tokens rather than block the response. Callers must handle null values
+  // (skip cost display, not throw).
+  let inputTokens = null;
+  let outputTokens = null;
+  try {
+    const finalMsg = await stream.finalMessage();
+    if (finalMsg?.usage) {
+      inputTokens  = finalMsg.usage.input_tokens  ?? null;
+      outputTokens = finalMsg.usage.output_tokens ?? null;
+    }
+  } catch (_) {
+    // Usage capture failed. Answer was already delivered. Return null tokens.
+  }
+
+  return { text: fullResponse, inputTokens, outputTokens };
 }
 
 // ── POI Scan — single pass with narrator ─────────────────────────────────────

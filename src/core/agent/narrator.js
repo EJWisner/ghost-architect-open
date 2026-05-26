@@ -30,7 +30,7 @@ import os from 'os';
 import { getConfig, resolveApiKey } from '../../config.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
-function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
 const DOLLAR = '\u0024';
 

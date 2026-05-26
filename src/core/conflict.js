@@ -38,7 +38,7 @@ const SESSION_PREFIX    = 'conflict-';
 // ── Claude helpers ─────────────────────────────────────────────────────────────
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
-function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
 async function callClaude(prompt, system, maxTokens = 8096, onChunk = null) {
   const anthropic = getClient();

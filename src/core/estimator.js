@@ -42,6 +42,7 @@ const MODE_OUTPUT_ESTIMATES = {
   blast:         { tokens: 1200, label: 'Blast Radius Analysis'   },
   conflict:      { tokens: 1500, label: 'Conflict Detection'      },
   chat:          { tokens: 600,  label: 'Chat (per exchange)'     },
+  question:      { tokens: 1200, label: 'Question'                },
   recon:         { tokens: 800,  label: 'Recon (sizing only)'     },
   'prompt-triage': { tokens: 400, label: 'Prompt Triage Audit'    },
   audit:         { tokens: 1500, label: 'Inheritance Audit'       },

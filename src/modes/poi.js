@@ -64,7 +64,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
   const fileMap      = codebaseContext.fileMap || {};
   const passes       = Object.keys(fileMap).length > 0 ? buildPasses(fileMap) : [];
   const useMultiPass = passes.length > 1;
-  const model        = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  const model        = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   // Rates shown in the scan banner reflect what the report itself will
   // use, so per-profile rate overrides apply here too. Without this, an
   // OSC scan would show $85/$125/$200 in the banner but render the

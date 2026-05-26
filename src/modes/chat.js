@@ -142,9 +142,10 @@ export async function runChatMode(codebaseContext, options = {}) {
       continue;
     }
 
-    const response = await streamChatWithRetry(codebaseContext, conversationHistory, trimmed);
+    const result = await streamChatWithRetry(codebaseContext, conversationHistory, trimmed);
 
-    if (response) {
+    if (result) {
+      const response = result.text;
       if (conversationHistory.length === 0) {
         conversationHistory.push({
           role: 'user',

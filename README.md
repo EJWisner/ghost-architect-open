@@ -1,10 +1,28 @@
-# 👻 Ghost Architect
+# 👻 Ghost Architect™
 
-> AI-powered codebase intelligence — understand any complex system you've inherited
+> AI-powered codebase archaeology: understand what you inherited.
 
-Ghost Architect is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases — not generate new code, but illuminate what's already there. It works on any platform, any language, any stack.
+Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
-The most expensive moments in any engagement are not writing new code — they are the first weeks on an inherited codebase, and the gut-check before every risky change. A senior architect spending 2-3 days reading legacy code before contributing costs $3,000–$5,000 in billable time. Ghost Architect compresses that to minutes.
+The most expensive moments in any engagement are not writing new code. They are the first weeks on an inherited codebase, and the gut-check before every risky change. A senior architect spending 2-3 days reading legacy code before contributing costs $3,000 to $5,000 in billable time. Ghost Architect compresses that to minutes.
+
+---
+
+## Install
+
+```bash
+npm install -g ghost-architect-open
+```
+
+Then run it from any directory:
+
+```bash
+ghost
+```
+
+That's it. On first run, Ghost walks you through a one-time setup wizard (API key, optional GitHub token, model preference, billing rates, context size). Your config is saved locally and every future run goes straight to the main menu.
+
+**Requirements:** Node.js 18 or higher, an Anthropic API key (pay-as-you-go, not the same as a Claude.ai subscription), and optionally a GitHub Personal Access Token for private repos.
 
 ---
 
@@ -17,18 +35,18 @@ Ghost is platform agnostic and language agnostic. Used in production on:
 - **Oracle Commerce / ATG**
 - **SAP Commerce (Hybris)**
 - **Salesforce Commerce Cloud**
-- **Microservices architectures** — distributed systems, event-driven platforms
-- **Mobile apps** — React Native, Expo, Swift, Kotlin
-- **Game engines and runtimes** — Unreal, raylib, EASTL
-- **Any language** — PHP, Java, Python, Node.js, TypeScript, Ruby, Go, C++, C#, Swift, Kotlin
+- **Microservices architectures**: distributed systems, event-driven platforms
+- **Mobile apps**: React Native, Expo, Swift, Kotlin
+- **Game engines and runtimes**: Unreal, raylib, EASTL
+- **Any language**: PHP, Java, Python, Node.js, TypeScript, Ruby, Go, C++, C#, Swift, Kotlin
 
 If it's code, Ghost reads it.
 
 ---
 
-## Five core modes
+## Six modes
 
-**💬 Chat**
+**💬 Question**
 Ask anything about the codebase in plain English. Ghost answers like a senior architect who has read every file.
 
 > *"Why does this integration use synchronous SOAP calls?"*
@@ -37,31 +55,34 @@ Ask anything about the codebase in plain English. Ghost answers like a senior ar
 
 **🗺 Points of Interest Scan**
 Auto-generates a structured intelligence report organized into four categories:
-- 🔴 **Red Flags** — load-bearing technical debt, ticking time bombs, security risks
-- 🏛️ **Landmarks** — core logic everything else orbits around
-- ⚰️ **Dead Zones** — abandoned code nobody knows if they still need
-- ⚡ **Fault Lines** — fragile seams where assumptions don't match
+- 🔴 **Red Flags**: load-bearing technical debt, ticking time bombs, security risks
+- 🏛️ **Landmarks**: core logic everything else orbits around
+- ⚰️ **Dead Zones**: abandoned code nobody knows if they still need
+- ⚡ **Fault Lines**: fragile seams where assumptions don't match
 
-Every finding is severity-rated, includes effort and complexity estimates, a dollar-cost remediation range, and concrete fix steps. Findings are verified against actual source code — false positives are dropped or flagged before they reach the report.
+Every finding is severity-rated, includes effort and complexity estimates, a dollar-cost remediation range, and concrete fix steps. Findings are verified against actual source code; false positives are dropped or flagged before they reach the report.
 
 **💥 Blast Radius Analysis + Rollback Plan**
-Pick any file, class, method, or coordinated change set. Ghost maps the full impact — direct dependencies, ripple effects, danger zones, silent-failure risks — and produces a complete rollback plan so your team is protected if anything goes wrong.
+Pick any file, class, method, or coordinated change set. Ghost maps the full impact (direct dependencies, ripple effects, danger zones, silent-failure risks) and produces a complete rollback plan so your team is protected if anything goes wrong.
 
 The rollback plan includes:
 - Pre-change snapshot of critical state
 - Numbered step-by-step rollback instructions with time estimates
 - Total rollback time estimate
-- Point of No Return — exactly when rollback becomes harder or impossible
+- Point of No Return: exactly when rollback becomes harder or impossible
 - Who to notify and what action they must take
 - Smoke test checklist to confirm rollback succeeded
 
 **⚡ Conflict Detection**
-Scan a codebase for places where two or more parts make conflicting assumptions about the same thing — shared config keys, API contracts, database schemas, data shapes, constants. Each candidate conflict is verified against the source code and rated as confirmed, possible, or false positive.
+Scan a codebase for places where two or more parts make conflicting assumptions about the same thing: shared config keys, API contracts, database schemas, data shapes, constants. Each candidate conflict is verified against the source code and rated as confirmed, possible, or false positive.
 
 Useful before deployments, integration work, or migrations.
 
-**🔍 Recon — Sizing Only**
-A pre-engagement sizing report. Single planner call (~$0.05), no full scan. Produces a markdown/PDF deliverable describing what a full scan would surface, sized against the actual codebase. Useful for:
+**🩹 Prompt Triage**
+Audit prompts and prompt-driven workflows in your codebase for structural issues: missing context, ambiguous instructions, brittle assumptions, token bloat. Designed for teams building LLM-integrated applications who need to catch prompt drift before it reaches production.
+
+**🔍 Recon (sizing only)**
+A pre-engagement sizing report. Single planner call (~$0.05), no full scan. Produces a markdown or PDF deliverable describing what a full scan would surface, sized against the actual codebase. Useful for:
 
 - Quoting a fixed-fee engagement before committing scan budget
 - Showing a prospect what pre-engagement diligence looks like
@@ -71,18 +92,18 @@ When a Ghost Partner™ profile is loaded, recon reads in the consultant's voice
 
 ---
 
-## 👥 Ghost Partner™ — White-label consultant profiles
+## 👥 Ghost Partner™: White-label consultant profiles
 
 Consultants and agencies can run scans on behalf of their client engagements with their own branding, methodology, and rates baked into the report.
 
-A **Ghost Partner profile** is a YAML file describing the consultant — their priorities, anti-patterns, red flags, billing rates, brand color, and contact info. When a profile is loaded with `--profile`, Ghost:
+A **Ghost Partner™ profile** is a YAML file describing the consultant: their priorities, anti-patterns, red flags, billing rates, brand color, and contact info. When a profile is loaded with `--profile`, Ghost:
 
 - Applies the consultant's lens to the analysis (findings reflect their methodology)
 - Renders the report in the consultant's voice (no Ghost Architect branding in the output)
 - Uses the consultant's billing rates for cost estimates (per-tier overrides supported)
 - Produces a fully white-labeled PDF with the consultant's logo, accent color, and footer
 
-### Creating a profile — the easy way
+### Creating a profile: the easy way
 
 Don't hand-write YAML. Use the built-in profile wizard:
 
@@ -108,7 +129,7 @@ Three ways, in priority order:
 # 1. Per-run, explicit path
 ghost --profile ~/.ghost/profiles/my-profile.yaml
 
-# 2. Set a default — auto-applied to every scan
+# 2. Set a default: auto-applied to every scan
 ghost --set-default-profile my-profile
 ghost                                 # default profile loads automatically
 ghost --no-profile                    # opt out of the default for one run
@@ -122,26 +143,26 @@ When a profile is active, the main-menu input options show a `[profile: <name> �
 
 ### Editing a profile by hand
 
-Profiles are plain YAML files in `~/.ghost/profiles/`. You can edit them in any editor. Save your changes and the next scan picks them up — no rebuild step.
+Profiles are plain YAML files in `~/.ghost/profiles/`. You can edit them in any editor. Save your changes and the next scan picks them up: no rebuild step.
 
 ### Bring your own methodology document
 
-If you already have a written methodology — a Google Doc, a one-pager, a Notion page, a markdown audit guide — you don't need to use the wizard. Save the document as a `.md` or `.txt` file anywhere on your machine and point Ghost at it directly:
+If you already have a written methodology (a Google Doc, a one-pager, a Notion page, a markdown audit guide) you don't need to use the wizard. Save the document as a `.md` or `.txt` file anywhere on your machine and point Ghost at it directly:
 
 ```bash
-# Markdown methodology — Ghost looks for ## Priorities, ## Anti-patterns,
+# Markdown methodology: Ghost looks for ## Priorities, ## Anti-patterns,
 # ## Red flags, and ## Branding sections, plus optional YAML frontmatter
 ghost --profile ~/Documents/my-audit-methodology.md
 
-# Plain text — Ghost extracts the structure via Claude and caches the result
+# Plain text: Ghost extracts the structure via Claude and caches the result
 ghost --profile ~/Documents/my-audit-methodology.txt
 ```
 
 Ghost auto-detects the format from the file extension:
 
-- **`.yaml` / `.yml`** — parsed directly. Free, instant. (This is what the wizard produces.)
-- **`.md` / `.markdown`** — Ghost looks for YAML frontmatter (between `---` markers at the top) and recognized section headings (`## Priorities`, `## Anti-patterns`, `## Red flags`, `## Branding`). Bullets under those headings become list entries; key/value lines under `## Branding` become the branding object. Anything else is preserved as prose context for the scan. Free, instant.
-- **`.txt` / anything else** — full prose extraction via Claude. Ghost reads the document, extracts the canonical schema, and caches the result at `~/.ghost/profiles/.cache/{hash}.json`. The extraction LLM call costs a few cents the first time; subsequent scans with the same file are free (the cache is keyed on content hash, so editing the file invalidates the cache automatically).
+- **`.yaml` / `.yml`**: parsed directly. Free, instant. (This is what the wizard produces.)
+- **`.md` / `.markdown`**: Ghost looks for YAML frontmatter (between `---` markers at the top) and recognized section headings (`## Priorities`, `## Anti-patterns`, `## Red flags`, `## Branding`). Bullets under those headings become list entries; key/value lines under `## Branding` become the branding object. Anything else is preserved as prose context for the scan. Free, instant.
+- **`.txt` / anything else**: full prose extraction via Claude. Ghost reads the document, extracts the canonical schema, and caches the result at `~/.ghost/profiles/.cache/{hash}.json`. The extraction LLM call costs a few cents the first time; subsequent scans with the same file are free (the cache is keyed on content hash, so editing the file invalidates the cache automatically).
 
 **Recommended location:** save imported methodology files in `~/.ghost/profiles/` alongside wizard-generated profiles. They'll show up in `ghost --list-profiles` and in the menu's profile picker, and you can manage them all from the same place.
 
@@ -160,7 +181,7 @@ priorities:
   - Site speed and Core Web Vitals on category and product pages
   - Server cost efficiency
   - Security exposure
-  - Database query efficiency — N+1 patterns, missing indexes
+  - Database query efficiency: N+1 patterns, missing indexes
   # ...
 
 anti_patterns:
@@ -183,13 +204,13 @@ rates:
 branding:
   company_name: "OSCProfessionals"
   accent_color: "#0B5394"
-  footer_text: "OSCProfessionals — Performance, Security & Server Cost Audit"
-  confidentiality: "Confidential — Prepared for client engagement use only"
+  footer_text: "OSCProfessionals: Performance, Security & Server Cost Audit"
+  confidentiality: "Confidential: Prepared for client engagement use only"
 ```
 
 Profiles can be authored as `.yaml`, `.yml`, `.md`, or `.txt`. Markdown and plain-text profiles are extracted via Claude into the canonical schema and cached locally.
 
-**Ghost Partner profiles are a paid-tier feature** (Pro, Team, Enterprise). The free Open tier produces neutral Ghost-branded reports.
+**Ghost Partner™ profiles are a paid-tier feature** (Pro, Team, Enterprise). The free Open tier produces neutral Ghost-branded reports.
 
 ---
 
@@ -197,13 +218,13 @@ Profiles can be authored as `.yaml`, `.yml`, `.md`, or `.txt`. Markdown and plai
 
 **Your code never leaves the analysis moment.**
 
-Ghost Architect works like a filter: your codebase goes in, the analysis comes out, and the code itself is immediately discarded. It is never stored on any server, never written to any database, never retained between sessions. Think of it as running your code through an expert analyst who reads it, gives you the report, and forgets everything they saw.
+Ghost Architect™ works like a filter: your codebase goes in, the analysis comes out, and the code itself is immediately discarded. It is never stored on any server, never written to any database, never retained between sessions. Think of it as running your code through an expert analyst who reads it, gives you the report, and forgets everything they saw.
 
-- **No code retention** — your codebase passes through Claude's analysis and is gone. Anthropic does not store API call content for training under standard API terms.
-- **Local config only** — your API key and all settings are stored exclusively in a config file on your own machine. They are never transmitted anywhere except to Anthropic's API to authenticate your calls.
-- **No third-party sharing** — Ghost connects only to Anthropic's API (and optionally GitHub for repo loading). No telemetry, no analytics, no phone-home.
-- **Reports stay local** — saved reports are written to your machine only.
-- **Source-available** — you can read every line of Ghost Architect's code and verify these claims yourself.
+- **No code retention:** your codebase passes through Claude's analysis and is gone. Anthropic does not store API call content for training under standard API terms.
+- **Local config only:** your API key and all settings are stored exclusively in a config file on your own machine. They are never transmitted anywhere except to Anthropic's API to authenticate your calls.
+- **No third-party sharing:** Ghost connects only to Anthropic's API (and optionally GitHub for repo loading). No telemetry, no analytics, no phone-home.
+- **Reports stay local:** saved reports are written to your machine only.
+- **Source-available:** you can read every line of Ghost Architect's code and verify these claims yourself.
 
 This makes Ghost safe to use on proprietary enterprise codebases, client work, and confidential systems.
 
@@ -213,41 +234,43 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 
 | Feature | Open (free) | Pro | Team | Enterprise |
 |---|---|---|---|---|
-| Chat | ✅ | ✅ | ✅ | ✅ |
+| Question | ✅ | ✅ | ✅ | ✅ |
 | Points of Interest scan | ✅ | ✅ | ✅ | ✅ |
 | Blast Radius + Rollback | ✅ | ✅ | ✅ | ✅ |
 | Conflict Detection | ✅ | ✅ | ✅ | ✅ |
+| Prompt Triage | ✅ | ✅ | ✅ | ✅ |
 | Recon sizing | ✅ | ✅ | ✅ | ✅ |
 | Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ |
 | Project labels + history tracking | — | ✅ | ✅ | ✅ |
 | Project Dashboard | — | ✅ | ✅ | ✅ |
 | Compare Reports (before/after) | — | ✅ | ✅ | ✅ |
+| Inheritance Audit (deal-grade) | — | ✅ | ✅ | ✅ |
 | Ghost Partner™ profiles | — | ✅ | ✅ | ✅ |
 | White-label PDF rendering | — | ✅ | ✅ | ✅ |
 | Per-profile billing rate overrides | — | ✅ | ✅ | ✅ |
 | Team sync features | — | — | ✅ | ✅ |
 | Custom enterprise gating | — | — | — | ✅ |
 | Context cap | 50K tokens | 100K | 150K | 200K |
-| Pricing | Free, BYOK | $99/mo | $399/mo | $1,200–$2,000/mo |
+| Pricing | Free, BYOK | $99/mo | $399/mo | $1,200/mo+ |
 
-The free Open tier is fully featured for individual scans. Project history, before/after comparison, white-label consultant rendering, and team sync are paid-tier capabilities.
+The free Open tier is fully featured for individual scans. Project history, before/after comparison, white-label consultant rendering, deal-grade Inheritance Audit, and team sync are paid-tier capabilities.
 
 Pricing details and sign-up at [ghostarchitect.dev](https://ghostarchitect.dev).
 
 ---
 
-## Before you install — getting your API key
+## Before you install: getting your API key
 
-Ghost Architect uses the Anthropic API directly. This is **not** the same as a Claude.ai subscription — it is a separate pay-as-you-go developer account with no monthly fee.
+Ghost Architect™ uses the Anthropic API directly. This is **not** the same as a Claude.ai subscription: it is a separate pay-as-you-go developer account with no monthly fee.
 
-**Step 1 — Create an Anthropic API account.**
-Go to [console.anthropic.com](https://console.anthropic.com) and sign up. You can use the same email as a Claude.ai account — they are separate accounts under the same company.
+**Step 1: Create an Anthropic API account.**
+Go to [console.anthropic.com](https://console.anthropic.com) and sign up. You can use the same email as a Claude.ai account: they are separate accounts under the same company.
 
-**Step 2 — Add a payment method and load credits.**
-The API is pay-as-you-go. Add $5–$10 to get started — that's enough for many full sessions.
+**Step 2: Add a payment method and load credits.**
+The API is pay-as-you-go. Add $5 to $10 to get started: that's enough for many full sessions.
 
-**Step 3 — Generate an API key.**
-In the console, go to **API Keys → Create Key**. Name it (e.g. `ghost-architect`). Copy the key — it starts with `sk-ant-` and is only shown once.
+**Step 3: Generate an API key.**
+In the console, go to **API Keys → Create Key**. Name it (e.g. `ghost-architect`). Copy the key: it starts with `sk-ant-` and is only shown once.
 
 > **Important:** Your Claude.ai subscription balance and your API credits are separate billing accounts. One does not fund the other even if you use the same email address.
 
@@ -255,10 +278,10 @@ In the console, go to **API Keys → Create Key**. Name it (e.g. `ghost-architec
 
 ## Two ways to provide your API key
 
-**Method 1 — Setup wizard (recommended for most users).**
+**Method 1: Setup wizard (recommended for most users).**
 Run `ghost` and the interactive wizard handles everything on first launch. Your key is stored locally, masked during entry, and never displayed again.
 
-**Method 2 — Environment variable (power users and CI/CD).**
+**Method 2: Environment variable (power users and CI/CD).**
 Set `ANTHROPIC_API_KEY` before running and Ghost skips the wizard entirely.
 
 ```bash
@@ -269,7 +292,7 @@ ghost
 # Inline for a single run
 ANTHROPIC_API_KEY=sk-ant-xxxx ghost
 
-# Permanent — add to your shell profile
+# Permanent: add to your shell profile
 echo 'export ANTHROPIC_API_KEY=sk-ant-xxxx' >> ~/.zshrc
 source ~/.zshrc
 ```
@@ -286,56 +309,31 @@ export GITHUB_TOKEN=ghp_xxxx
 
 ## What does it cost to use?
 
-Ghost shows a cost estimate **before** every scan and the actual cost **after** — no surprises.
+Ghost shows a cost estimate **before** every scan and the actual cost **after**. No surprises.
 
-| Operation | Codebase size | Est. cost (Sonnet) |
+| Operation | Codebase size | Est. cost (Sonnet 4.6) |
 |---|---|---|
 | Recon (sizing only) | Any | ~$0.05 |
 | Points of Interest scan | Small (~50 files) | ~$0.15 |
 | Points of Interest scan | Medium (~150 files) | ~$1.50 |
 | Points of Interest scan | Large (~500 files) | ~$4.00 |
-| Blast Radius Analysis | Any | ~$0.10–$0.30 |
-| Conflict Detection | Medium | ~$0.50–$1.50 |
-| Chat exchange | Any | ~$0.02–$0.08 |
+| Blast Radius Analysis | Any | ~$0.10 to $0.30 |
+| Conflict Detection | Medium | ~$0.50 to $1.50 |
+| Question exchange | Any | ~$0.02 to $0.08 |
 
-**The real comparison:** A senior architect doing the same analysis manually bills $3,000–$5,000. Ghost delivers comparable depth in minutes for under a few dollars.
+**The real comparison:** a senior architect doing the same analysis manually bills $3,000 to $5,000. Ghost delivers comparable depth in minutes for under a few dollars.
 
-A typical full session — one POI scan, two blast radius analyses, and several chat questions on a medium enterprise codebase — runs roughly **$1.50 to $3.00 total.**
+A typical full session (one POI scan, two blast radius analyses, and several questions on a medium enterprise codebase) runs roughly **$1.50 to $3.00 total.**
 
-Ghost uses **Claude Sonnet 4.5** by default. Switch to **Claude Opus** in settings for maximum analytical depth on the most complex codebases.
+Ghost uses **Claude Sonnet 4.6** by default. Switch to **Claude Opus 4.7** in settings for maximum analytical depth on the most complex codebases.
 
 At the end of every session, Ghost displays a summary of every operation run and the total session cost.
 
 ---
 
-## Installation
+## Command-line flags
 
-```bash
-git clone https://github.com/EJWisner/ghost-architect.git
-cd ghost-architect
-npm install
-npm link        # makes 'ghost' available globally on your machine
-```
-
-## Usage
-
-```bash
-ghost
-```
-
-On first run, Ghost walks you through a one-time setup wizard:
-
-- Anthropic API key (required)
-- GitHub token (optional — for private repos)
-- Model preference (Sonnet recommended)
-- Default billing rates (junior / mid / senior — used in remediation cost estimates)
-- Context size limit (controls cost vs. coverage tradeoff)
-
-After setup, your config is saved locally and every future run goes straight to the main menu.
-
-### Command-line flags
-
-For a complete, always-current flag reference, run `ghost --help` in your terminal — `--help` is the source of truth for every supported flag.
+For a complete, always-current flag reference, run `ghost --help` in your terminal. `--help` is the source of truth for every supported flag.
 
 ```bash
 ghost [options]
@@ -350,7 +348,7 @@ Options:
   --exclude-presets a,b      Apply named exclusion preset(s).
                              Run `ghost --help` to see available presets.
 
-Ghost Partner™ — white-label consultant profiles:
+Ghost Partner™: white-label consultant profiles:
   --profile <path>           Load a profile from .yaml/.yml/.md/.txt and apply
                              the consultant's lens + branding to all scans.
   --no-profile               Run without any profile, even if a default is set.
@@ -382,16 +380,16 @@ You've inherited a codebase you've never seen.
 1. Clone or download to your machine
 2. Run Ghost → Local directory or ZIP
 3. Run Points of Interest scan
-4. Save the report — label it with the project name
+4. Save the report, label it with the project name
 5. Read the findings before writing a line of code
 ```
 
-**Result:** In minutes you understand what's fragile, what's critical, what's dead weight, and where not to touch without a plan. Two weeks of senior-architect ramp-up, compressed.
+**Result:** in minutes you understand what's fragile, what's critical, what's dead weight, and where not to touch without a plan. Two weeks of senior-architect ramp-up, compressed.
 
 ---
 
-### Pre-Engagement Diligence (Consultants) *(Pro+)*
-Before quoting an engagement, run Recon to size the codebase and identify high-risk areas. Then if the prospect commits, run a full scan with your Ghost Partner profile loaded.
+### Pre-Engagement Diligence (consultants) *(Pro+)*
+Before quoting an engagement, run Recon to size the codebase and identify high-risk areas. Then if the prospect commits, run a full scan with your Ghost Partner™ profile loaded.
 
 ```
 1. Recon scan with --profile loaded → ~$0.05, ~30 seconds
@@ -400,21 +398,21 @@ Before quoting an engagement, run Recon to size the codebase and identify high-r
 4. Reports go to the client carrying your name, your methodology, your rates
 ```
 
-**Result:** A pre-engagement deliverable that establishes your value before you've billed an hour. Ghost's planner reads the codebase through your methodology lens and produces a sizing report the prospect can use to scope the engagement.
+**Result:** a pre-engagement deliverable that establishes your value before you've billed an hour. Ghost's planner reads the codebase through your methodology lens and produces a sizing report the prospect can use to scope the engagement.
 
 ---
 
 ### Before / After Validation *(Pro+ for the Compare feature)*
-Confirm changes actually improved the codebase — and didn't introduce new problems.
+Confirm changes actually improved the codebase, and didn't introduce new problems.
 
 ```
-Round 1 — Before:
+Round 1, Before:
 1. Run POI scan, save report with label "pre-refactor"
 2. Note all findings and their severity
 
 Make your code changes.
 
-Round 2 — After:
+Round 2, After:
 1. Run POI scan on the same project
 2. Save report with label "post-refactor"
 3. Open both MD reports side by side (or use Compare Reports)
@@ -422,12 +420,12 @@ Round 2 — After:
 5. Check no new issues were introduced
 ```
 
-**Result:** A clear before/after record of code quality improvement. Every finding resolved is documented. Every new issue introduced is caught before it reaches production.
+**Result:** a clear before/after record of code quality improvement. Every finding resolved is documented. Every new issue introduced is caught before it reaches production.
 
 ---
 
 ### Pre-Change Risk Assessment
-Before touching anything significant — a shared interface, a payment class, a core configuration file — run a Blast Radius Analysis first.
+Before touching anything significant (a shared interface, a payment class, a core configuration file) run a Blast Radius Analysis first.
 
 ```
 1. Run Ghost → Blast Radius Analysis
@@ -437,7 +435,7 @@ Before touching anything significant — a shared interface, a payment class, a 
 5. Follow the rollback plan if anything goes wrong
 ```
 
-**Result:** No more surprise production incidents from "minor" changes. The rollback plan means you're never stuck at 2am with no path back.
+**Result:** no more surprise production incidents from "minor" changes. The rollback plan means you're never stuck at 2am with no path back.
 
 ---
 
@@ -451,7 +449,7 @@ Run Conflict Detection before any major release, integration, or migration.
 4. Save the report as part of the release record
 ```
 
-**Result:** Catches contract drift, config-key mismatches, and schema disagreements before they become production incidents.
+**Result:** catches contract drift, config-key mismatches, and schema disagreements before they become production incidents.
 
 ---
 
@@ -464,15 +462,15 @@ ghost-poi-project-name-sprint-5-2026-05-01.txt
 ghost-poi-project-name-sprint-10-2026-07-01.txt
 ```
 
-**Result:** A timestamped record of how technical debt is growing or shrinking. Useful for client reporting, delivery reviews, and justifying refactoring investment.
+**Result:** a timestamped record of how technical debt is growing or shrinking. Useful for client reporting, delivery reviews, and justifying refactoring investment.
 
 ---
 
 ## Input methods
 
-- **Local directory** — point at any folder using a path or drag-and-drop into Terminal
-- **ZIP file** — load a codebase archive directly
-- **GitHub repo** — any public repo, or private with a GitHub token
+- **Local directory:** point at any folder using a path or drag-and-drop into Terminal
+- **ZIP file:** load a codebase archive directly
+- **GitHub repo:** any public repo, or private with a GitHub token
 
 ---
 
@@ -480,11 +478,11 @@ ghost-poi-project-name-sprint-10-2026-07-01.txt
 
 Every scan saves three formats simultaneously to `~/Ghost Architect Reports/`:
 
-**📄 Plain text (.txt)** — terminal-friendly raw output. Opens anywhere, works in any system.
+**📄 Plain text (.txt):** terminal-friendly raw output. Opens anywhere, works in any system.
 
-**📋 Markdown (.md)** — beautifully formatted document with severity badges, tables, and proper structure. Renders in VS Code, GitHub, Obsidian, Notion, or any Markdown viewer.
+**📋 Markdown (.md):** beautifully formatted document with severity badges, tables, and proper structure. Renders in VS Code, GitHub, Obsidian, Notion, or any Markdown viewer.
 
-**📑 PDF (.pdf)** — branded professional report with cover page, color-coded severity sections, formatted remediation table, page numbers, and footer. The client-ready deliverable. When a Ghost Partner profile is loaded, the PDF is fully white-labeled with the consultant's branding.
+**📑 PDF (.pdf):** branded professional report with cover page, color-coded severity sections, formatted remediation table, page numbers, and footer. The client-ready deliverable. When a Ghost Partner™ profile is loaded, the PDF is fully white-labeled with the consultant's branding.
 
 Every report is timestamped. Reports are automatically organized by project label (paid tiers) for easy comparison across scans.
 
@@ -503,23 +501,15 @@ Ghost supports private GitHub repositories via a Personal Access Token.
 
 Your token is stored locally and never transmitted anywhere except GitHub's API.
 
-**Alternative:** For very large or sensitive private repos, download as ZIP and use the ZIP file loader. No authentication required and often faster.
-
----
-
-## Requirements
-
-- Node.js 18+
-- Anthropic API key ([console.anthropic.com](https://console.anthropic.com)) — pay-as-you-go, no subscription
-- GitHub token (optional — only needed for private repos)
+**Alternative:** for very large or sensitive private repos, download as ZIP and use the ZIP file loader. No authentication required and often faster.
 
 ---
 
 ## Philosophy
 
-Ghost Architect is a **thinking accelerator**, not a code generator.
+Ghost Architect™ is a **thinking accelerator**, not a code generator.
 
-The goal is to help developers and their organizations think more deeply about systems they own. Every enterprise codebase contains institutional knowledge — patterns, decisions, warnings, traps — that lives nowhere but the code itself. When the developer who built it leaves, that knowledge disappears. Ghost surfaces it before it's gone, and makes it available to everyone who comes after.
+The goal is to help developers and their organizations think more deeply about systems they own. Every enterprise codebase contains institutional knowledge (patterns, decisions, warnings, traps) that lives nowhere but the code itself. When the developer who built it leaves, that knowledge disappears. Ghost surfaces it before it's gone, and makes it available to everyone who comes after.
 
 It is not here to replace senior architects. It is here to give them a running start.
 
@@ -527,14 +517,23 @@ It is not here to replace senior architects. It is here to give them a running s
 
 ## Built with
 
-- [Claude API](https://anthropic.com) — Anthropic Sonnet 4.5
-- [Inquirer.js](https://github.com/SBoudrias/Inquirer.js) — interactive CLI prompts
-- [Octokit](https://github.com/octokit/octokit.js) — GitHub API integration
-- [Chalk](https://github.com/chalk/chalk) + [Figlet](https://github.com/patorjk/figlet.js) — terminal UI
-- [Configstore](https://github.com/yeoman/configstore) — local config management
-- [Ora](https://github.com/sindresorhus/ora) — terminal spinners
-- [ADM-ZIP](https://github.com/cthackers/adm-zip) — ZIP file extraction
-- [PDFKit](https://github.com/foliojs/pdfkit) — PDF report generation
+- [Claude API](https://docs.claude.com) by Anthropic
+- [Inquirer.js](https://github.com/SBoudrias/Inquirer.js) for interactive CLI prompts
+- [Octokit](https://github.com/octokit/octokit.js) for GitHub API integration
+- [Chalk](https://github.com/chalk/chalk) and [Figlet](https://github.com/patorjk/figlet.js) for terminal UI
+- [Boxen](https://github.com/sindresorhus/boxen) for terminal panels
+- [Configstore](https://github.com/yeoman/configstore) for local config management
+- [Ora](https://github.com/sindresorhus/ora) for terminal spinners
+- [ADM-ZIP](https://github.com/cthackers/adm-zip) for ZIP file extraction
+- [PDFKit](https://github.com/foliojs/pdfkit) for PDF report generation
+
+---
+
+## Support
+
+Questions: [support@ghostarchitect.dev](mailto:support@ghostarchitect.dev)
+Pricing and upgrades: [ghostarchitect.dev/pricing](https://ghostarchitect.dev/pricing)
+Documentation and product info: [ghostarchitect.dev](https://ghostarchitect.dev)
 
 ---
 
@@ -544,20 +543,18 @@ It is not here to replace senior architects. It is here to give them a running s
 
 ## License
 
-Ghost Architect is licensed under the Business Source License 1.1 (BUSL-1.1).
+Ghost Architect™ is licensed under the Business Source License 1.1 (BUSL-1.1).
 
 Free for personal, non-commercial, and small team use (up to 5 users).
-Commercial use beyond these limits requires a paid license — see [ghostarchitect.dev](https://ghostarchitect.dev).
+Commercial use beyond these limits requires a paid license: see [ghostarchitect.dev](https://ghostarchitect.dev).
 After 4 years from each version's release date, the code converts to GPL v3.
 
 See [LICENSE](./LICENSE) for full terms.
 
 ---
 
-**Copyright © 2026 Ernst J. Wisner. All rights reserved.**
+**Copyright © 2026 Ghost Architect. All rights reserved.**
 
-Ghost Architect is proprietary software. Unauthorized use, reproduction, or distribution is strictly prohibited.
+Ghost Architect™ is proprietary software. Unauthorized use, reproduction, or distribution is strictly prohibited.
 
 *Not a code generator. A thinking accelerator.*
-
-*Ghost Architect v4.9.0 — Pro tier*

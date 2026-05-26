@@ -12,7 +12,7 @@ import { getConfig, resolveApiKey } from '../../config.js';
 import { buildToolDescriptions }    from './tools.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
-function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
 function buildAgentSystemPrompt(tools, context = '') {
   return `You are Ghost Architect's autonomous analysis agent — a senior software architect AI.

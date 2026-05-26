@@ -34,7 +34,7 @@ function getClient() {
 }
 
 function getModel() {
-  return getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  return getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 }
 
 // Extraction prompt. Schema matches spec §6.1 field names exactly so a

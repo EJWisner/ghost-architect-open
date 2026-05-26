@@ -10,7 +10,7 @@ import path      from 'path';
 import { getConfig, resolveApiKey } from '../../config.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
-function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
 // ── Structural scan ───────────────────────────────────────────────────────────
 // Lightweight — reads file paths and first 20 lines only. No full content.

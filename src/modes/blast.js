@@ -210,7 +210,7 @@ export async function runBlastMode(codebaseContext, options = {}) {
     console.log('');
   }
 
-  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   showCostEstimate(codebaseContext, 'blast', model);
 
   // ── Agent Planner ─────────────────────────────────────────────────────────

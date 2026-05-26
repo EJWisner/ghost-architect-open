@@ -9,9 +9,10 @@
 // As of v7-unified Phase 1 (2026-05-23): the gate DECISION moved to
 // src/license/tier-gates.js's requireTier() so all tiers share one
 // policy module. This file keeps the disk I/O (scan count storage) and
-// the two renderers (renderAuditPaywall, renderQuotaPaywall) because
-// their EARLY20-tuned copy is conversion-optimized and not worth
-// re-tuning right now. bin/ghost.js calls requireTier() for the verdict
+// the two renderers (renderAuditPaywall, renderQuotaPaywall). Paywall
+// copy is server-driven via PAYWALL_PROMO_TEXT in the signup worker;
+// freemium.js owns the box structure and static body text, the worker
+// owns the promo line. bin/ghost.js calls requireTier() for the verdict
 // and then dispatches to the appropriate renderer here based on the
 // verdict's paywall.kind ('audit' | 'quota').
 //
@@ -31,10 +32,11 @@
 // only (no server sync) — Open is an honor-system free tier; we don't want
 // to track usage server-side for privacy reasons.
 //
-// Existing Open users get 20% off their first month on any paid tier via
-// promotion code EARLY20 at Stripe checkout. The discount is presented in
-// the paywall copy with limited-time framing to drive conversion urgency.
-// The code itself is configured on Stripe Dashboard with duration=once.
+// Paywall promo copy is server-driven via PAYWALL_PROMO_TEXT in
+// signup-worker; fetched alongside the welcome banner promo on each CLI
+// invocation. Empty string in the worker = no promo block rendered. EJ
+// edits the worker constant and redeploys to change paywall messaging
+// without a CLI republish.
 
 import Configstore from 'configstore';
 import chalk from 'chalk';
@@ -116,24 +118,26 @@ export function shouldBlockMode(modeId) {
 
 // Render the Audit-specific paywall. Shown when user picks Audit from the
 // mode menu in Open. Caller (bin/ghost.js) should `continue` the menu loop
-// after this returns so the user can pick a different mode.
-export function renderAuditPaywall() {
+// after this returns so the user can pick a different mode. paywallPromo
+// is worker-driven; when empty the promo block is not rendered.
+export function renderAuditPaywall(paywallPromo = '') {
   const lines = [
     chalk.cyan.bold('📋  Inheritance Audit — Pro feature'),
     '',
     chalk.white('The Inheritance Audit produces a deal-grade report for'),
     chalk.white('buyer diligence, fractional CTO onboarding, and'),
-    chalk.white('modernization scoping. It is a paid Pro+ feature.'),
-    '',
-    chalk.white('Upgrade to Pro for unlimited Audit + all other modes:'),
-    chalk.cyan('  https://ghostarchitect.dev/pricing'),
-    '',
-    chalk.yellow.bold('Existing Ghost Open users:'),
-    chalk.yellow('Use code ') + chalk.yellow.bold('EARLY20') +
-      chalk.yellow(' at checkout for 20% off your first'),
-    chalk.yellow('month on any tier (Pro, Team, or Enterprise).'),
-    chalk.yellow.bold('Limited time. Limited number of discounts available.'),
+    chalk.white('modernization scoping.'),
   ];
+  if (paywallPromo) {
+    lines.push('');
+    lines.push(chalk.cyan.bold(paywallPromo));
+  }
+  lines.push('');
+  lines.push(chalk.white('Upgrade to Pro for unlimited Audit + all other modes:'));
+  lines.push(chalk.cyan('  https://ghostarchitect.dev/pricing'));
+  lines.push('');
+  lines.push(chalk.white('Have a license? Activate it:'));
+  lines.push(chalk.cyan('  ghost --activate <your key here>'));
   console.log('\n' + boxen(lines.join('\n'), {
     padding: 1,
     borderColor: 'cyan',
@@ -144,27 +148,29 @@ export function renderAuditPaywall() {
 
 // Render the quota-exhausted paywall. Shown when user picks a counted mode
 // (POI / Blast / Conflict / Prompt Triage) and has already used 2 free runs.
-export function renderQuotaPaywall() {
+// paywallPromo is worker-driven; when empty the promo block is not rendered.
+export function renderQuotaPaywall(paywallPromo = '') {
   const lines = [
     chalk.yellow.bold(`You've used your ${FREE_QUOTA} free Ghost Architect reports.`),
     '',
-    chalk.white('Upgrade to keep going — unlimited reports, all modes'),
+    chalk.white('Upgrade to keep going: unlimited reports, all modes'),
     chalk.white('including Inheritance Audit, hardware-bound license,'),
     chalk.white('and email support.'),
-    '',
-    chalk.white('Tiers available at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'),
-    chalk.gray('  • Pro        — $99/mo'),
-    chalk.gray('  • Team       — $399/mo'),
-    chalk.gray('  • Enterprise — $1,200/mo'),
-    '',
-    chalk.yellow.bold('Existing Ghost Open users:'),
-    chalk.yellow('Use code ') + chalk.yellow.bold('EARLY20') +
-      chalk.yellow(' at checkout for 20% off your first'),
-    chalk.yellow('month on any tier.'),
-    chalk.yellow.bold('Limited time. Limited number of discounts available.'),
-    '',
-    chalk.white('Question and Recon modes remain free.'),
   ];
+  if (paywallPromo) {
+    lines.push('');
+    lines.push(chalk.cyan.bold(paywallPromo));
+  }
+  lines.push('');
+  lines.push(chalk.white('Tiers available at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'));
+  lines.push(chalk.gray('  Pro        $99/mo'));
+  lines.push(chalk.gray('  Team       $399/mo'));
+  lines.push(chalk.gray('  Enterprise $1,200/mo'));
+  lines.push('');
+  lines.push(chalk.white('Have a license? Activate it:'));
+  lines.push(chalk.cyan('  ghost --activate <your key here>'));
+  lines.push('');
+  lines.push(chalk.white('Question and Recon modes remain free.'));
   console.log('\n' + boxen(lines.join('\n'), {
     padding: 1,
     borderColor: 'yellow',

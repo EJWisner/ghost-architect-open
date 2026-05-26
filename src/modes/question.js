@@ -27,6 +27,8 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import { streamChat } from '../analyst/index.js';
+import { showCostEstimate, showActualCost } from '../estimator.js';
+import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 import { requireTier } from '../license/tier-gates.js';
@@ -59,9 +61,11 @@ function friendlyError(err) {
 }
 
 // Inline retry wrapper. Same shape as src/modes/chat.js's streamChatWithRetry
-// but kept local here for low coupling — Question mode is intentionally
-// self-contained. A future post-v7-GA refactor can promote this to a shared
-// helper; see TODO-promote-llm-retry-wrapper-shared.md.
+// but kept local here for low coupling (Question mode is intentionally
+// self-contained). Returns the streamChat result object
+// { text, inputTokens, outputTokens } on success, null on terminal error.
+// A future post-v7-GA refactor can promote this to a shared helper;
+// see TODO-promote-llm-retry-wrapper-shared.md.
 async function streamAnswerWithRetry(codebaseContext, userQuestion) {
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
     try {
@@ -111,14 +115,46 @@ export async function runQuestionMode(codebaseContext, options = {}) {
     return;
   }
 
-  const answer = await streamAnswerWithRetry(codebaseContext, trimmed);
+  // Cost estimate + proceed-confirm. Matches the contract documented in
+  // README ("Ghost shows a cost estimate before every scan and the actual
+  // cost after. No surprises.") that other modes (POI, Blast, Conflict,
+  // Audit) honor via showCostEstimate() + a Proceed gate. Mode-id is
+  // 'question' (not 'chat') to preserve the vocabulary discipline
+  // documented in this file's header — see MODE_OUTPUT_ESTIMATES in
+  // src/core/estimator.js for the matching entry.
+  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
+  showCostEstimate(codebaseContext, 'question', model);
+
+  const { proceed } = await inquirer.prompt([{
+    type: 'confirm', name: 'proceed',
+    message: chalk.cyan('Proceed?'), default: true
+  }]);
+  if (!proceed) {
+    console.log(chalk.gray('\n  Cancelled. Returning to menu.\n'));
+    return;
+  }
+
+  const result = await streamAnswerWithRetry(codebaseContext, trimmed);
 
   // Trailing newline after the streamed answer for visual separation.
   console.log('\n');
 
-  if (!answer) {
+  if (!result) {
     // streamAnswerWithRetry already printed the friendly error message.
     return;
+  }
+
+  const answer = result.text;
+
+  // Actual cost after the LLM call. Completes the README contract
+  // ("Ghost shows a cost estimate before every scan and the actual cost
+  // after. No surprises.") for Question mode. Graceful degradation: if
+  // the SDK failed to surface usage data (null inputTokens or
+  // outputTokens), skip the display silently. The user got their answer;
+  // session cost summary at exit will be missing this run's spend but
+  // nothing breaks.
+  if (result.inputTokens != null && result.outputTokens != null) {
+    showActualCost(result.inputTokens, result.outputTokens, model);
   }
 
   // D3 soft-gate callout: only fires for tiers that would benefit from the

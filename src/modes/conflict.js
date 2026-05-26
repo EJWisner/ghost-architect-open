@@ -53,7 +53,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
   const projectLabel = (codebaseContext.fileIndex?.[0] || 'project')
     .split('/').slice(0, 2).join('-')
     .replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40) || 'conflict-default';
-  const model      = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  const model      = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   const info       = getConflictPassInfo(fileMap, tier);
   const multiPass  = !info.singlePass;
 

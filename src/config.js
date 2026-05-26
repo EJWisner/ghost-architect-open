@@ -135,8 +135,8 @@ export async function runSetupWizard() {
       name: 'defaultModel',
       message: chalk.cyan('Default Claude model:'),
       choices: [
-        { name: 'claude-sonnet-4-5 (recommended)', value: 'claude-sonnet-4-5' },
-        { name: 'claude-opus-4-5 (slower, costlier)', value: 'claude-opus-4-5' },
+        { name: 'claude-sonnet-4-6 (recommended)', value: 'claude-sonnet-4-6' },
+        { name: 'claude-opus-4-7 (slower, costlier, more capable)', value: 'claude-opus-4-7' },
       ],
       default: 0
     },

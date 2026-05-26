@@ -17,8 +17,10 @@
 //   - requireTier(gateId, opts) returns { allowed, reason?, paywall?, quotaRemaining? }
 //   - paywallFor(gateId, tier) returns { kind: 'audit' | 'quota', ... } so
 //     callers can dispatch to the appropriate existing renderer in
-//     src/freemium.js (renderAuditPaywall / renderQuotaPaywall). This
-//     preserves the EARLY20 paywall copy without forcing a re-tuning pass.
+//     src/freemium.js (renderAuditPaywall / renderQuotaPaywall). The
+//     renderers receive a worker-driven paywallPromo string so promo
+//     copy can change without a CLI republish; freemium.js owns the box
+//     structure and static body text.
 //
 // Storage coupling: ZERO. This module is pure policy. Callers look up the
 // scan count via src/freemium.js's getScanCount() and pass it in via
@@ -144,16 +146,17 @@ export function requireTier(gateId, opts = {}) {
  *
  * Per design decision 2a (2026-05-23): tier-gates emits an enum-like kind,
  * caller routes to existing renderAuditPaywall or renderQuotaPaywall in
- * src/freemium.js. This preserves the EARLY20-tuned copy without forcing
- * a re-tuning pass. Full-payload rendering (kind=2b) is post-GA work if
- * the two-renderer split becomes painful.
+ * src/freemium.js. Renderers receive a worker-driven paywallPromo string
+ * so launch-time promo messaging can change without a CLI republish.
+ * Full-payload rendering (kind=2b) is post-GA work if the two-renderer
+ * split becomes painful.
  *
  * @param {string} gateId
  * @param {string} tier
  * @returns {{ kind: 'audit' | 'quota' | 'unknown', gateId: string, tier: string }}
  */
 export function paywallFor(gateId, tier) {
-  // Audit-tier-blocked → audit-specific copy (EARLY20 messaging + Pro feature framing).
+  // Audit-tier-blocked → audit-specific copy (worker-driven promo + Pro feature framing).
   if (gateId === 'mode:audit') {
     return { kind: 'audit', gateId, tier };
   }

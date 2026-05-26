@@ -186,10 +186,10 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // pressing Enter respects their global preference. Audit is a high-stakes
   // deliverable; users may want Opus for an important deal even if they
   // run POI on Sonnet day-to-day. Same two choices the config picker offers.
-  const configuredModel = getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  const configuredModel = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   const modelChoices = [
-    { name: 'claude-sonnet-4-5 (recommended — best balance)', value: 'claude-sonnet-4-5' },
-    { name: 'claude-opus-4-5 (most powerful — slower/costlier)', value: 'claude-opus-4-5' },
+    { name: 'claude-sonnet-4-6 (recommended — best balance)', value: 'claude-sonnet-4-6' },
+    { name: 'claude-opus-4-7 (most powerful — slower/costlier)', value: 'claude-opus-4-7' },
   ];
   const defaultChoiceIdx = modelChoices.findIndex(c => c.value === configuredModel);
   const { model } = await inquirer.prompt([{

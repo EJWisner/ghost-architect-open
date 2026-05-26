@@ -160,7 +160,7 @@ function isRateLimitErr(err) {
 }
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
-function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 function getRates()  {
   const cfg = getConfig();
   return { junior: cfg.get('rateJunior') || 85, mid: cfg.get('rateMid') || 125, senior: cfg.get('rateSenior') || 200 };

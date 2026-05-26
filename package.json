@@ -2,15 +2,40 @@
   "name": "ghost-architect-open",
   "private": false,
   "version": "7.0.0",
-  "description": "AI-powered codebase archaeology — understand what you inherited",
+  "description": "AI-powered codebase archaeology: understand what you inherited",
   "author": "Ghost Architect",
   "license": "SEE LICENSE IN LICENSE",
   "copyright": "Copyright © 2026 Ghost Architect. All rights reserved.",
   "main": "bin/ghost.js",
   "bin": {
-    "ghost": "./bin/ghost.js"
+    "ghost": "bin/ghost.js"
   },
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "code-review",
+    "codebase-analysis",
+    "ai",
+    "claude",
+    "cli",
+    "static-analysis",
+    "triage",
+    "audit",
+    "pre-engagement"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EJWisner/ghost-architect-open.git"
+  },
   "scripts": {
     "start": "node bin/ghost.js",
     "dev": "node bin/ghost.js"

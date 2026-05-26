@@ -5,6 +5,134 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [7.0.0] - 2026-05-26
+
+First public release of `ghost-architect-open` on npm. Install with
+`npm install -g ghost-architect-open`.
+
+### Added
+
+- **Question mode.**
+  Single-question Q&A surface for Open users. Ask anything about
+  the codebase in plain English, get an answer, optionally save it.
+  Replaces the prior Chat surface on the Open tier (Chat remains
+  available on Pro+ for ongoing multi-turn conversation). Vocabulary
+  is unified across all seven Open-facing surfaces: menu items,
+  cost telemetry, saved reports, and documentation all use
+  "Question and Answer" consistently.
+
+- **Worker-driven promo banner.**
+  The no-license banner shown to Open users can now display a
+  server-driven promotional line that updates without a CLI
+  redeploy. EJ edits the `PROMO_TEXT` constant in the signup
+  worker, runs `wrangler deploy`, and every Open install on next
+  run sees the new text within the 60-second edge cache window.
+  Empty, null, missing, or malformed responses suppress the line
+  silently — the banner renders cleanly without it. Two-second
+  timeout on the fetch. The CLI is a passive renderer; the worker
+  is the source of truth.
+
+- **Prompt Triage mode visible at top level.**
+  Now grouped under its own "Prompt analysis" header in the input
+  method menu so users can find it without searching the mode
+  menu. Audits a folder of LLM prompts for structural defects:
+  missing context, ambiguous instructions, brittle assumptions,
+  token bloat.
+
+- **Inheritance Audit mode (Pro+).**
+  Deal-grade codebase audit for buyers, PE diligence teams,
+  fractional CTOs onboarding to engagements, and modernization
+  consultancies scoping rebuilds. Four analyzers (Stack Reality
+  Check, Key-Person Risk, Hidden Dependency Map, Modernization
+  Roadmap) combine into a 5-page deal-grade PDF plus TXT and MD.
+  Runs 30 to 60 seconds at $0.02 to $0.04 in API charges. Open
+  tier shows an information panel; no partial run.
+
+- **Ghost Partner™ white-label consultant profiles.**
+  Consultants and agencies can run scans with their own branding,
+  methodology, and rates baked into the report. Profiles are
+  YAML, Markdown, or plain-text documents loaded with `--profile`.
+  The profile wizard (`ghost --create-profile`) walks users
+  through priorities, anti-patterns, red flags, billing rates,
+  and branding interactively. Default-profile support means a
+  loaded profile auto-applies to every scan unless overridden
+  per-run. Paid-tier feature; Open produces neutral Ghost-branded
+  reports.
+
+- **CLI flag set for context, exclusion, and profile control.**
+  `--max-context <N>` clamps to tier limit. `--exclude <glob>`
+  is repeatable. `--exclude-presets` applies named exclusion
+  bundles (test-data, generated, vendor-cache). `--profile`,
+  `--no-profile`, `--create-profile`, `--list-profiles`,
+  `--set-default-profile`, and `--clear-default-profile` cover
+  the consultant-profile lifecycle.
+
+- **License activation flow.**
+  `ghost --activate <key-or-token>` handles both human-typeable
+  keys (POST to activation server, signed token returned) and
+  pre-signed tokens (verified locally, no network). Fingerprint
+  binding ensures licenses can't be moved between machines
+  without reissuance. `ghost --license` shows current status
+  offline. `ghost --license-clear` removes the installed license.
+  `ghost --start-trial` activates a 14-day evaluation trial,
+  one per machine.
+
+### Changed
+
+- **Default model: Claude Sonnet 4.6 (was Sonnet 4.5).**
+  All new wizard configurations pick Sonnet 4.6 as the recommended
+  default. Existing users with a saved configuration keep their
+  previously-selected model until they reconfigure. Pricing
+  unchanged ($3 input / $15 output per million tokens).
+
+- **Premium model: Claude Opus 4.7 (was Opus 4.5).**
+  Wizard and audit-mode model picker now offer Opus 4.7 as the
+  premium choice. Pricing: $5 input / $25 output per million tokens.
+
+- **Pricing table consolidated.**
+  `src/core/estimator.js` is the single source of truth for
+  per-model pricing across the entire codebase. Modes and detector
+  infrastructure all import from this table. Includes current
+  generation (Opus 4.7/4.6, Sonnet 4.6, Haiku 4.5) plus backward
+  compat entries for users still on prior models.
+
+- **README rewritten for npm.**
+  Install command (`npm install -g ghost-architect-open`)
+  prominently positioned at the top. Six modes documented
+  (Question, POI, Blast, Conflict, Prompt Triage, Recon) plus
+  the Pro+ Inheritance Audit. Tier comparison table reflects
+  current capabilities. Cost expectations and pricing table
+  updated to Sonnet 4.6.
+
+### Fixed
+
+- **`bin` field validation.**
+  `package.json` `bin` value normalized from `"./bin/ghost.js"`
+  to `"bin/ghost.js"` so npm doesn't strip the entry during
+  publish. Earlier 7.0.0 ship attempts triggered an npm warning
+  about the leading `./` being invalid; the binary would have
+  been removed from the installed package on platforms where the
+  warning escalated to an error. Users who install 7.0.0 from npm
+  now get `ghost` correctly available on their PATH.
+
+- **Vocabulary leak in trial-start banner.**
+  The trial-start success banner previously listed `Recon, Chat`
+  as still-working modes. Now correctly lists `Recon, Question`
+  in line with Question mode being the Open-tier Q&A surface.
+
+### Notes
+
+- Three-tier internal release: Open (`7.0.0`, public npm), Pro
+  and Team (via git+https from umbrella repo). Pro and Team will
+  receive the v7.0.0 promo banner and model-default updates in a
+  follow-up release; today's launch is Open-only on npm.
+- Cumulative changes since v5.4.0 (the last documented version)
+  represent the v6.x series (License Worker, Stripe integration,
+  enterprise customer flow) plus the v7 series unifications
+  (Question mode rename, Inheritance Audit launch, promo banner).
+  Intermediate version entries will be backfilled in a future
+  CHANGELOG pass.
+
 ## [5.4.0] - 2026-05-12
 
 ### Added

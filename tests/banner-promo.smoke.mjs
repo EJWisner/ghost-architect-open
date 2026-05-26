@@ -84,6 +84,20 @@ const PROMO_FIXTURE = 'Launch special: 50% off first month. 100 spots remaining.
 // no false positives against the rest of the banner.
 const PROMO_SENTINEL = 'Launch special';
 
+// Banner-header sentinel. The new welcome banner leads with 'Ghost Open'
+// in cyan-bold. Asserting on the literal string proves the new copy
+// landed and (paired with the OLD_HEADLINE_SENTINEL negative check) that
+// the pre-fix headline is fully gone.
+const HEADER_SENTINEL = 'Ghost Open';
+
+// Old headline that must NOT appear anywhere in the new banner. Catches
+// regressions where pre-fix copy leaks back in.
+const OLD_HEADLINE_SENTINEL = 'No license installed';
+
+// CTA sentinel. The new banner uses 'Pricing:' adjacent to the
+// ghostarchitect.dev/pricing URL. Pre-fix banner used 'Purchase at:'.
+const PRICING_CTA_SENTINEL = 'Pricing:';
+
 // ── Test 1: positive render — non-empty promo + missing license state
 console.log('Test 1: non-empty promoText + state=missing → banner contains promo string');
 {
@@ -99,22 +113,36 @@ console.log('Test 1: non-empty promoText + state=missing → banner contains pro
   );
 
   checkPredicate(
-    "banner output contains 'Purchase at:' (adjacency preserved)",
+    "banner output contains the 'Ghost Open' header",
     output,
-    s => s.includes('Purchase at:'),
-    "output should include the Purchase CTA"
+    s => s.includes(HEADER_SENTINEL),
+    "output should include the new welcome-banner header"
   );
 
-  // Adjacency check: promo must appear BEFORE 'Purchase at:' in the
-  // output. The intentional placement is promo-then-purchase so the
-  // discount visually anchors to the purchase URL.
-  const promoIdx    = output.indexOf(PROMO_FIXTURE);
-  const purchaseIdx = output.indexOf('Purchase at:');
   checkPredicate(
-    'promo appears BEFORE Purchase at: in banner (anchored to purchase CTA)',
-    { promoIdx, purchaseIdx },
-    v => v.promoIdx >= 0 && v.purchaseIdx >= 0 && v.promoIdx < v.purchaseIdx,
-    'promoIdx should be >= 0, purchaseIdx should be >= 0, and promoIdx < purchaseIdx'
+    "banner output does NOT contain 'No license installed' (pre-fix headline gone)",
+    output,
+    s => !s.includes(OLD_HEADLINE_SENTINEL),
+    "the pre-fix yellow-headline copy must not leak back in"
+  );
+
+  checkPredicate(
+    "banner output contains 'Pricing:' (purchase CTA replacement)",
+    output,
+    s => s.includes(PRICING_CTA_SENTINEL),
+    "output should include the Pricing CTA"
+  );
+
+  // Adjacency check: promo must appear BEFORE 'Pricing:' in the output.
+  // The intentional placement is promo-then-pricing so the discount
+  // visually anchors to the pricing URL.
+  const promoIdx   = output.indexOf(PROMO_FIXTURE);
+  const pricingIdx = output.indexOf(PRICING_CTA_SENTINEL);
+  checkPredicate(
+    'promo appears BEFORE Pricing: in banner (anchored to pricing CTA)',
+    { promoIdx, pricingIdx },
+    v => v.promoIdx >= 0 && v.pricingIdx >= 0 && v.promoIdx < v.pricingIdx,
+    'promoIdx should be >= 0, pricingIdx should be >= 0, and promoIdx < pricingIdx'
   );
 }
 console.log('');
@@ -140,20 +168,27 @@ console.log('Test 2: empty promoText + state=missing → no sentinel, banner sti
     "output should not include the promo code"
   );
 
-  // The rest of the banner must still render normally — empty promo
+  // The rest of the banner must still render normally. Empty promo
   // is a render-skip, not a banner-skip.
   checkPredicate(
-    "banner output still contains 'Purchase at:' (banner intact)",
+    "banner output still contains 'Pricing:' (banner intact)",
     output,
-    s => s.includes('Purchase at:'),
-    "output should still include the Purchase CTA"
+    s => s.includes(PRICING_CTA_SENTINEL),
+    "output should still include the Pricing CTA"
   );
 
   checkPredicate(
-    "banner output still contains 'No license installed' headline",
+    "banner output still contains the 'Ghost Open' header",
     output,
-    s => s.includes('No license installed'),
-    "output should still include the banner headline"
+    s => s.includes(HEADER_SENTINEL),
+    "output should still include the welcome-banner header"
+  );
+
+  checkPredicate(
+    "banner output does NOT contain 'No license installed' (pre-fix headline gone)",
+    output,
+    s => !s.includes(OLD_HEADLINE_SENTINEL),
+    "the pre-fix yellow-headline copy must not leak back in"
   );
 }
 console.log('');
@@ -166,7 +201,7 @@ console.log('');
 // AbortError-shaped error. This tests the contract ("any error → '' ")
 // against the right error shape, in case fetchPromoText is ever tightened
 // to discriminate on err.name (forward-compat).
-console.log('Test 5: fetch rejects with AbortError → fetchPromoText returns empty string');
+console.log('Test 5: fetch rejects with AbortError → fetchPromoText returns empty fields');
 {
   try {
     globalThis.fetch = async () => {
@@ -176,8 +211,10 @@ console.log('Test 5: fetch rejects with AbortError → fetchPromoText returns em
     };
 
     const result = await fetchPromoText();
-    check('AbortError → empty string', result, '');
-    check('result is exactly type string', typeof result, 'string');
+    check('AbortError → both fields empty', result, { promo: '', paywallPromo: '' });
+    check('result is exactly type object', typeof result, 'object');
+    check('result.promo is empty string', result.promo, '');
+    check('result.paywallPromo is empty string', result.paywallPromo, '');
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -188,16 +225,16 @@ console.log('');
 //
 // Four sub-shapes that all violate the typeof === 'string' guard. Each
 // is stubbed independently; each should return '' without throwing.
-console.log('Test 6: malformed response shapes → fetchPromoText returns empty string for each');
+console.log('Test 6: malformed response shapes → fetchPromoText returns empty fields for each');
 {
   // 6a: response missing promo field entirely
   try {
     globalThis.fetch = async () => ({
       ok: true,
-      json: async () => ({ latestVersion: '7.0.0' }),  // no promo key
+      json: async () => ({ latestVersion: '7.0.0' }),  // no promo key, no paywallPromo key
     });
     const result = await fetchPromoText();
-    check('missing promo field → empty string', result, '');
+    check('missing both fields → both empty', result, { promo: '', paywallPromo: '' });
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -209,7 +246,7 @@ console.log('Test 6: malformed response shapes → fetchPromoText returns empty 
       json: async () => ({ promo: null }),
     });
     const result = await fetchPromoText();
-    check('promo is null → empty string', result, '');
+    check('promo is null → both empty', result, { promo: '', paywallPromo: '' });
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -221,7 +258,7 @@ console.log('Test 6: malformed response shapes → fetchPromoText returns empty 
       json: async () => ({ promo: 42 }),
     });
     const result = await fetchPromoText();
-    check('promo is number → empty string', result, '');
+    check('promo is number → both empty', result, { promo: '', paywallPromo: '' });
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -231,10 +268,30 @@ console.log('Test 6: malformed response shapes → fetchPromoText returns empty 
     globalThis.fetch = async () => ({
       ok: false,
       status: 500,
-      json: async () => ({ promo: PROMO_FIXTURE }),  // even if body had promo
+      json: async () => ({ promo: PROMO_FIXTURE, paywallPromo: 'should be ignored' }),
     });
     const result = await fetchPromoText();
-    check('non-2xx HTTP response → empty string (body ignored)', result, '');
+    check('non-2xx HTTP response → both empty (body ignored)', result, { promo: '', paywallPromo: '' });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // 6e: backward compatibility. Worker has promo but not yet paywallPromo
+  // (CLI deployed before worker redeploy with Fix 4). Each field defaults
+  // independently: promo passes through, paywallPromo falls back to ''.
+  // This locks the contract that a missing paywallPromo field does NOT
+  // blank out promo too.
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ promo: PROMO_FIXTURE }),  // no paywallPromo field
+    });
+    const result = await fetchPromoText();
+    check(
+      'old worker (promo only, no paywallPromo) → promo passes through, paywallPromo empty',
+      result,
+      { promo: PROMO_FIXTURE, paywallPromo: '' }
+    );
   } finally {
     globalThis.fetch = realFetch;
   }

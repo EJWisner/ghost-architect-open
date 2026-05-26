@@ -40,7 +40,7 @@ function getClient() {
 }
 
 function getModel() {
-  return getConfig().get('defaultModel') || 'claude-sonnet-4-5';
+  return getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 }
 
 /**

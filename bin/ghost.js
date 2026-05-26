@@ -56,7 +56,6 @@ import {
   hasLicense,
   getLicenseRecord,
 } from '../src/license/store.js';
-import { startTrial, checkEligibility, TRIAL_DURATION_DAYS, clearTrialMarker } from '../src/license/trial.js';
 import { setActiveLicense, getActiveTier } from '../src/license/session.js';
 import { requireTier } from '../src/license/tier-gates.js';
 import { getScanCount, renderAuditPaywall, renderQuotaPaywall } from '../src/freemium.js';
@@ -102,8 +101,6 @@ function parseArgs(argv) {
     activate: null,
     licenseStatus: false,
     licenseClear: false,
-    startTrial: false,
-    resetTrial: false,
     help: false,
     version: false,
   };
@@ -156,11 +153,6 @@ function parseArgs(argv) {
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
-    if (a === '--start-trial')      { out.startTrial = true; continue; }
-    // Debug flag, gated by GHOST_DEBUG=1 at handler time. Not advertised in
-    // --help. Used for verification of trial-tier behavior on machines that
-    // have already burned their trial. Customers must never reach this.
-    if (a === '--reset-trial')      { out.resetTrial = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -212,9 +204,6 @@ Licensing:
                            remaining, fingerprint match). Then exit.
   --license-clear          Remove the installed license from local storage.
                            Then exit. Useful for migrating to a new license.
-  --start-trial            Start a ${TRIAL_DURATION_DAYS}-day evaluation trial on this machine. One
-                           trial per fingerprint. Trial output is watermarked
-                           and audit mode is blocked. Then exit.
 
 Misc:
   --version, -v            Print version and exit.
@@ -262,8 +251,14 @@ function printBanner() {
 // they're tools that operate on saved data or app state, not analysis
 // targets, so they belong out of the Code/Prompt analysis groups.
 
-async function selectInputMethod(activeProfileLabel) {
-  const profileSuffix = activeProfileLabel
+async function selectInputMethod(activeProfileLabel, tier = 'open') {
+  // Profiles are a Pro+ feature. profilesAllowed gates two surfaces:
+  // (1) the [profile: <name>] suffix on Local/ZIP/GitHub entries, and
+  // (2) whether the Manage Ghost Partner Profiles entry is offered.
+  // Defaults to 'open' (fail-closed) so a future caller that forgets to
+  // pass tier never accidentally exposes the paid surface.
+  const profilesAllowed = requireTier('feature:profiles', { tier }).allowed;
+  const profileSuffix = (profilesAllowed && activeProfileLabel)
     ? chalk.gray('  [profile: ') + chalk.cyan(activeProfileLabel) + chalk.gray(' ●]')
     : '';
 
@@ -283,8 +278,11 @@ async function selectInputMethod(activeProfileLabel) {
     new inquirer.Separator(otherGroupLabel),
     { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
-    { name: (IS_WINDOWS ? '[GP]  Manage Ghost Partner Profiles  ' : '👤  Manage Ghost Partner Profiles  ') + (IS_WINDOWS ? '' : chalk.gray('— Create, edit, set default, delete')), value: 'profiles' },
   ];
+
+  if (profilesAllowed) {
+    choices.push({ name: (IS_WINDOWS ? '[GP]  Manage Ghost Partner Profiles  ' : '👤  Manage Ghost Partner Profiles  ') + (IS_WINDOWS ? '' : chalk.gray('— Create, edit, set default, delete')), value: 'profiles' });
+  }
 
   if (!usingEnvKey()) {
     choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect' : '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
@@ -372,6 +370,15 @@ async function selectMode(codebaseContext, tier = 'open') {
  * immediately rather than silently scanning without their profile.
  */
 async function resolveStartupProfile(cliOpts) {
+  // Profiles are a Pro+ feature. On Open, bail early so no disk lookup
+  // happens and no profile leaks into mode dispatch via options.profile.
+  // Defense in depth: the CLI flag handler above already rejects explicit
+  // --profile requests, but a configstore default-profile-slug could still
+  // route through here (e.g. user downgraded from Pro back to Open and a
+  // stale default-slug remains). This guard handles that path cleanly.
+  if (!requireTier('feature:profiles', { tier: TIER }).allowed) {
+    return { profile: null, label: null };
+  }
   if (cliOpts.noProfile) return { profile: null, label: null };
 
   if (cliOpts.profile) {
@@ -681,21 +688,26 @@ async function confirmExit() {
  * Dispatch a paywall payload from requireTier() to the appropriate existing
  * renderer in src/freemium.js. Per design decision 2a (2026-05-23): tier-gates
  * emits an enum-like { kind: 'audit' | 'quota' | 'unknown' } and this helper
- * routes to renderAuditPaywall() or renderQuotaPaywall() so the EARLY20-tuned
- * paywall copy in freemium.js stays untouched.
+ * routes to renderAuditPaywall() or renderQuotaPaywall(). This preserves the
+ * dispatch boundary between tier-gates (policy) and freemium (paywall
+ * rendering).
+ *
+ * paywallPromo is the server-driven promo text from fetchPromoText. Threaded
+ * through to the renderers so the worker is the source of truth for promo
+ * copy. Empty string means no promo block renders.
  *
  * 'unknown' kind = a feature-gate paywall was requested but feature gates
  * don't have rendered paywalls in Phase 1 (they're soft-gate callouts via
  * src/cli/session-state.js, wired in Phase 2/3). Logging the gate id makes
  * accidental misuse visible during testing rather than silently failing.
  */
-function renderPaywall(paywall) {
+function renderPaywall(paywall, paywallPromo = '') {
   if (!paywall || !paywall.kind) {
     console.log(chalk.gray('  (Access denied. No paywall renderer available.)\n'));
     return;
   }
-  if (paywall.kind === 'audit')  { renderAuditPaywall(); return; }
-  if (paywall.kind === 'quota')  { renderQuotaPaywall(); return; }
+  if (paywall.kind === 'audit')  { renderAuditPaywall(paywallPromo); return; }
+  if (paywall.kind === 'quota')  { renderQuotaPaywall(paywallPromo); return; }
   console.log(chalk.gray(`  (No paywall renderer for gate: ${paywall.gateId})\n`));
 }
 
@@ -954,70 +966,22 @@ async function runLicenseClearFlow() {
 }
 
 /**
- * Handle `ghost --start-trial` — start a 14-day evaluation on this machine.
- * Refuses if a license is already installed or a trial was previously used.
- * On success, installs the trial token and prints the trial details.
+ * Server-driven promo text fetcher. Reads `promo` and `paywallPromo` fields
+ * from /pulse-stats on the signup worker. Worker is the source of truth;
+ * change the constants in the worker, redeploy, every Open install on next
+ * run sees new text. Decoupled from CLI release cycle by design.
  *
- * Also used internally when the user picks "Start trial" from the missing-
- * license interactive prompt. Returns true on success, false on refusal.
- */
-async function runStartTrialFlow() {
-  const elig = checkEligibility();
-  if (!elig.eligible) {
-    if (elig.reason === 'license_already_installed') {
-      console.log(chalk.gray(`\nA license is already installed. Run \`ghost --license\` to see current status.\n`));
-    } else {
-      console.log('\n' + boxen(
-        chalk.yellow.bold('Trial already used on this machine') + '\n\n' +
-        chalk.white(`Trial was started on ${elig.usedAt.slice(0, 10)}.`) + '\n' +
-        chalk.white('Each machine is eligible for one trial.') + '\n\n' +
-        chalk.gray('Purchase a Pro license at:') + '\n' +
-        chalk.cyan('  https://ghostarchitect.dev/pricing'),
-        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
-      ));
-      console.log('');
-    }
-    return false;
-  }
-
-  let result;
-  try {
-    result = startTrial();
-  } catch (err) {
-    console.error(chalk.red(`\n${SYM.cross} Could not start trial: ${err.message}\n`));
-    return false;
-  }
-
-  console.log('\n' + boxen(
-    chalk.green.bold(`${SYM.check} Trial started`) + '\n\n' +
-    chalk.white('Tier:     ') + chalk.cyan('trial') + '\n' +
-    chalk.white('Duration: ') + chalk.cyan(`${TRIAL_DURATION_DAYS} days`) + '\n' +
-    chalk.white('Expires:  ') + chalk.cyan(result.payload.expires.slice(0, 10)) + '\n\n' +
-    chalk.gray('Trial mode notes:') + '\n' +
-    chalk.gray('  • Inheritance Audit mode is disabled (paid tiers only)') + '\n' +
-    chalk.gray('  • PDF output is watermarked "TRIAL — NOT FOR DISTRIBUTION"') + '\n' +
-    chalk.gray('  • All other modes (POI, Blast, Conflict, Recon, Question) work fully') + '\n\n' +
-    chalk.gray('Upgrade at any time: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
-    { padding: 1, borderColor: 'green', borderStyle: 'round' }
-  ));
-  console.log('');
-  return true;
-}
-
-/**
- * Server-driven promo text fetcher. Reads `promo` field from /pulse-stats
- * on the signup worker. Worker is the source of truth — change the constant
- * in the worker, redeploy, every Open install on next run sees new text.
- * Decoupled from CLI release cycle by design.
+ * Returns { promo, paywallPromo } where both fields are trimmed strings.
+ * Each field defaults to empty string independently: if the worker response
+ * has `promo` but not yet `paywallPromo` (worker not yet redeployed with
+ * Fix 4 changes), the result is { promo: 'whatever worker says',
+ * paywallPromo: '' }. This makes the CLI backward compatible against either
+ * an old or new worker deployment.
  *
- * Failure modes: all silent. Returns empty string on any error so the
- * banner just renders without a promo line. Never throws.
- *   • Worker down / network error     → ''
- *   • Timeout (2s)                    → ''
- *   • Non-2xx HTTP response           → ''
- *   • Malformed JSON                  → ''
- *   • Missing `promo` field           → ''
- *   • `promo` is null or non-string   → ''
+ * Failure modes are all silent. Returns { promo: '', paywallPromo: '' } on
+ * any error (network drop, timeout, non-2xx HTTP, malformed JSON, missing
+ * or non-string fields). Never throws. Callers render conditionally on
+ * non-empty strings; empty fields render nothing.
  */
 async function fetchPromoText() {
   const PROMO_TIMEOUT_MS = 2000;
@@ -1032,12 +996,14 @@ async function fetchPromoText() {
     } finally {
       clearTimeout(timer);
     }
-    if (!resp.ok) return '';
+    if (!resp.ok) return { promo: '', paywallPromo: '' };
     const data = await resp.json();
-    if (!data || typeof data.promo !== 'string') return '';
-    return data.promo.trim();
+    return {
+      promo:        typeof data?.promo        === 'string' ? data.promo.trim()        : '',
+      paywallPromo: typeof data?.paywallPromo === 'string' ? data.paywallPromo.trim() : '',
+    };
   } catch (_) {
-    return '';
+    return { promo: '', paywallPromo: '' };
   }
 }
 
@@ -1050,45 +1016,34 @@ async function fetchPromoText() {
  * Returns false if the run can continue (state was valid or just a warning).
  */
 function renderLicenseStateAndMaybeBlock(result, promoText = '') {
-  // missing — show the offer (trial vs activate vs purchase) banner and
+  // State: missing license. Render the Ghost Open welcome banner and
   // FALL THROUGH to Open tier behavior. Per D2 (locked 2026-05-23): no
-  // license = Open tier; user can still run Question, Recon, and up to
-  // SCAN_QUOTA counted scans. Quota wall and audit paywall handle the
-  // actual gating at mode dispatch via tier-gates.js requireTier().
+  // license = Open tier; the user can run Question, Recon, and four free
+  // deep scans before the quota wall fires. tier-gates.js requireTier()
+  // handles enforcement at mode dispatch. This function just shows the
+  // welcome surface.
   //
-  // The interactive trial-offer picker that ran before this function
-  // already handled the "trial-eligible TTY user" case (start trial,
-  // activate, or exit). By the time we get here in 'missing' state,
-  // the user is either:
-  //   - non-eligible for trial (trial already burned, like EJ post-2026-05-18)
-  //   - non-TTY (scripted invocation)
-  //   - eligible but somehow reached this code path (shouldn't happen,
-  //     but if it does, falling through to Open tier is the safe default)
-  // All three paths benefit from running as Open rather than exiting.
+  // The promo line is worker-driven (see fetchPromoText callsite). When
+  // promoText is a non-empty string, it renders between "After that, scans
+  // require a license." and the "Pricing:" line. When empty, the banner
+  // flows directly from one to the other, preserving EJ's launch-day
+  // ability to change promo text via wrangler deploy without a CLI republish.
   if (result.state === 'missing') {
-    const trialElig = checkEligibility();
-    const trialAvailable = trialElig.eligible;
     const lines = [
-      chalk.yellow.bold('No license installed') + '\n',
-      chalk.white('Running as Ghost Open: free quota for POI, Blast, Conflict,') + '\n',
-      chalk.white('and Prompt Triage. Question and Recon are always free.') + '\n',
+      chalk.cyan.bold('Ghost Open') + '\n',
+      chalk.white('Ask questions about your codebase and get an engagement plan,'),
+      chalk.white('free, as often as you like.') + '\n',
+      chalk.white('Run a deep scan to find risks, map impact, or detect conflicts.'),
+      chalk.white('Your first four are free.') + '\n',
+      chalk.white('After that, scans require a license.') + '\n',
     ];
-    if (trialAvailable) {
-      lines.push(chalk.white('You\'re eligible for a free ' + TRIAL_DURATION_DAYS + '-day evaluation trial of Pro.'));
-      lines.push(chalk.cyan('  ghost --start-trial') + chalk.gray('    (one trial per machine)'));
-      lines.push('');
-    } else if (trialElig.reason === 'trial_already_used') {
-      lines.push(chalk.gray(`Trial was previously used on this machine (${trialElig.usedAt.slice(0, 10)}).`));
-      lines.push('');
-    }
-    lines.push(chalk.white('Already have a license? Install it:'));
-    lines.push(chalk.cyan('  ghost --activate <GA-YYYY-TIER-XXXX-XXXX-XXXX>'));
-    lines.push('');
     if (promoText) {
-      lines.push(chalk.cyan.bold(promoText));
+      lines.push(chalk.cyan.bold(promoText) + '\n');
     }
-    lines.push(chalk.white('Purchase at: ') + chalk.cyan('https://ghostarchitect.dev/pricing'));
-    lines.push(chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'));
+    lines.push(chalk.white('Pricing: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n');
+    lines.push(chalk.white('Have a license? Activate it:'));
+    lines.push(chalk.cyan('  ghost --activate <your key here>') + '\n');
+    lines.push(chalk.white('Questions: ') + chalk.cyan('support@ghostarchitect.dev'));
     console.log('\n' + boxen(lines.join('\n'),
       { padding: 1, borderColor: 'yellow', borderStyle: 'round' }));
     console.log('');
@@ -1127,14 +1082,6 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
     ));
     console.log('');
     return false;
-  }
-  // valid — silent unless trial, in which case show one-line banner
-  if (result.payload && result.payload.tier === 'trial') {
-    const days = result.daysUntilExpires;
-    const daysLabel = days <= 0 ? 'expires today'
-      : days === 1 ? 'expires tomorrow'
-      : `${days} days remaining`;
-    console.log(chalk.yellow(`\n⚠  Trial mode active — ${daysLabel}. PDF output is watermarked. Audit mode is disabled.\n`));
   }
   return false;
 }
@@ -1178,25 +1125,28 @@ async function main() {
     await runLicenseClearFlow();
     process.exit(0);
   }
-  if (cliOpts.startTrial) {
-    const ok = await runStartTrialFlow();
-    process.exit(ok ? 0 : 2);
-  }
 
-  // --reset-trial: debug flag for verifying trial-tier behavior on a
-  // machine that has already burned its trial. Gated by GHOST_DEBUG=1
-  // so a customer who stumbles on the flag still can't bypass the trial
-  // limit — they'd need to set the env var themselves, at which point
-  // they're knowingly accepting that this is debug-only behavior.
-  if (cliOpts.resetTrial) {
-    if (process.env.GHOST_DEBUG !== '1') {
-      console.error(chalk.red(`\n${SYM.cross} --reset-trial is a debug flag. Set GHOST_DEBUG=1 to use it.\n`));
-      console.error(chalk.gray("   Customers must never need this. If you're reaching for it, you're testing.\n"));
-      process.exit(2);
-    }
-    clearTrialMarker();
-    console.log(chalk.yellow(`\n${SYM.check} Trial marker cleared. Next \`ghost\` invocation will see a fresh trial-eligible state.\n`));
-    console.log(chalk.gray('   Note: if a license is still installed, --license-clear first, then start a trial.\n'));
+  // Ghost Partner profile flags are Pro+. On Open, exit early with a
+  // friendly message before any flag-specific logic runs. --no-profile
+  // is intentionally excluded (declarative "do not use a profile" is
+  // already the default behavior on Open; rejecting it would be punitive).
+  const profileFlagRequested =
+    cliOpts.profile !== null ||
+    cliOpts.createProfile ||
+    cliOpts.listProfiles ||
+    cliOpts.setDefaultProfile !== null ||
+    cliOpts.clearDefaultProfile;
+  if (profileFlagRequested && !requireTier('feature:profiles', { tier: TIER }).allowed) {
+    console.log('\n' + boxen(
+      chalk.cyan.bold('Ghost Partner profiles are a Pro feature') + '\n\n' +
+      chalk.white('Profiles let consultants and agencies run scans with their own') + '\n' +
+      chalk.white('branding, methodology, and billing rates baked into reports.') + '\n\n' +
+      chalk.white('Activate a Pro license to use profiles:') + '\n' +
+      chalk.cyan('  ghost --activate <your key here>') + '\n\n' +
+      chalk.white('Pricing: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+    ));
+    console.log('');
     process.exit(0);
   }
 
@@ -1275,86 +1225,15 @@ async function main() {
   // Status states (missing / invalid / hard_stop / tampered) block.
   // Warning states (valid_warn / grace / expired) display a banner and let
   // the run continue.
+
+  // Worker-driven promo strings. Declared at function scope so the mode
+  // loop below (which fires after license enforcement) has access to
+  // paywallPromo when renderPaywall is invoked on a quota or audit gate.
+  // Populated only when state is missing (no license = Open tier); other
+  // license states never reach the paywall renderers.
+  let promos = { promo: '', paywallPromo: '' };
   try {
     let licenseResult = await validateLicense();
-
-    // Interactive trial offer: in 'missing' state, if the user is eligible
-    // for a trial AND we're running in a TTY (not piped/scripted), offer to
-    // start one inline rather than forcing them to re-invoke with --start-trial.
-    if (licenseResult.state === 'missing' && process.stdin.isTTY && checkEligibility().eligible) {
-      console.log('\n' + boxen(
-        chalk.yellow.bold('No license installed') + '\n\n' +
-        chalk.white('Ghost Architect Pro requires an active license.'),
-        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
-      ));
-      const { choice } = await inquirer.prompt([{
-        type: 'list',
-        name: 'choice',
-        message: chalk.cyan(`How would you like to proceed?`),
-        theme: inquirerTheme,
-        choices: [
-          { name: `🚀  Start ${TRIAL_DURATION_DAYS}-day evaluation trial (one per machine)`, value: 'trial' },
-          { name: '🔑  I have a license — show me how to activate it', value: 'activate-instructions' },
-          new inquirer.Separator(),
-          // Universal escape: collapses with Exit — no higher level to back
-          // out to from missing-license state. confirmExit() runs below.
-          backChoice('🚪  Exit Ghost'),
-        ],
-      }]);
-      if (choice === 'trial') {
-        const ok = await runStartTrialFlow();
-        if (ok) {
-          // Re-validate so the rest of the run sees the freshly-activated trial.
-          licenseResult = await validateLicense();
-        }
-      } else if (choice === 'activate-instructions') {
-        console.log('\n' + boxen(
-          chalk.cyan.bold('Activate your license') + '\n\n' +
-          chalk.white('Paste the license key from your purchase email below.') + '\n' +
-          chalk.gray('Format: ') + chalk.cyan('GA-YYYY-TIER-XXXX-XXXX-XXXX') + '\n\n' +
-          chalk.gray("(type 'back' to return to the previous menu)"),
-          { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
-        ));
-        console.log('');
-        const { keyInput } = await inquirer.prompt([{
-          type: 'input',
-          name: 'keyInput',
-          message: chalk.cyan('License key:'),
-          theme: inquirerTheme,
-          validate: (input) => {
-            if (!input || !input.trim()) return 'License key is required.';
-            return true;
-          },
-        }]);
-        // Universal-escape: 'back' keyword cancels the activate flow.
-        // From the missing-license interactive prompt there's no useful
-        // higher level to return to (we're pre-mode-loop, no codebase
-        // loaded, no in-flight scan). Cancel = exit, same as picking Exit
-        // from the prior list-prompt would have done. Exit code 1 mirrors
-        // the existing exit-from-missing-license path below.
-        if (isBackKeyword(keyInput)) {
-          console.log(chalk.gray('\nCancelled. Run `ghost --start-trial` or `ghost --activate <license-key>` when ready.\n'));
-          console.log(chalk.gray(`${COPYRIGHT}\n`));
-          process.exit(1);
-        }
-        try {
-          await runActivateFlow(keyInput.trim());
-          // runActivateFlow handles its own exit on failure; if we get here
-          // it succeeded. Re-validate so the rest of the run sees the
-          // freshly-installed license.
-          licenseResult = await validateLicense();
-        } catch (err) {
-          console.error(chalk.red(`\n${SYM.cross} Activation failed: ${err.message}\n`));
-          console.error(chalk.gray('   Power-user tip: you can also run `ghost --activate <key>` from a shell.\n'));
-          console.log(chalk.gray(`${COPYRIGHT}\n`));
-          process.exit(1);
-        }
-      } else {
-        console.log(chalk.gray('\nExiting. Run `ghost --start-trial` or `ghost --activate <license-key>` when ready.\n'));
-        console.log(chalk.gray(`${COPYRIGHT}\n`));
-        process.exit(1);
-      }
-    }
 
     // Set active license for the session so downstream code (PDF generator
     // watermark, audit-mode block) can consult it without re-parsing the token.
@@ -1389,11 +1268,14 @@ async function main() {
     });
 
     // Fire promo fetch only when we'll actually render the no-license banner.
-    // For any other state, skip the network call — it adds nothing.
-    const promoText = licenseResult.state === 'missing'
-      ? await fetchPromoText()
-      : '';
-    const blocked = renderLicenseStateAndMaybeBlock(licenseResult, promoText);
+    // For any other state, skip the network call; it adds nothing. The full
+    // result (welcome banner promo + paywall promo) is stashed in the
+    // function-scoped `promos` so the mode loop below can use paywallPromo
+    // when a gate fires.
+    if (licenseResult.state === 'missing') {
+      promos = await fetchPromoText();
+    }
+    const blocked = renderLicenseStateAndMaybeBlock(licenseResult, promos.promo);
     if (blocked) {
       console.log(chalk.gray(`${COPYRIGHT}\n`));
       process.exit(1);
@@ -1410,7 +1292,7 @@ async function main() {
 
   while (true) {
     if (!codebaseContext) {
-      const method = await selectInputMethod(activeProfileLabel);
+      const method = await selectInputMethod(activeProfileLabel, TIER);
 
       // Universal escape: top-level Back/Exit — confirm before leaving.
       if (isBack(method)) {
@@ -1533,7 +1415,7 @@ async function main() {
           // shares the 4-scan quota with the other counted modes.
           const ptVerdict = requireTier('mode:prompt-triage', { scansUsed: getScanCount() });
           if (!ptVerdict.allowed) {
-            renderPaywall(ptVerdict.paywall);
+            renderPaywall(ptVerdict.paywall, promos.paywallPromo);
             continue;
           }
 
@@ -1593,7 +1475,7 @@ async function main() {
     if (['chat', 'poi', 'blast', 'conflict', 'audit'].includes(mode)) {
       const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
       if (!verdict.allowed) {
-        renderPaywall(verdict.paywall);
+        renderPaywall(verdict.paywall, promos.paywallPromo);
         continue;
       }
     }

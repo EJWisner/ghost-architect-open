@@ -16,7 +16,7 @@ import { runMiniLoop }              from './loop.js';
 import { requireTier }              from '../../license/tier-gates.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
-function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-5'; }
+function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
 // Debug telemetry directory — written when verification falls through to
 // INSUFFICIENT for diagnosability. Files here are NEVER shown to the user;
