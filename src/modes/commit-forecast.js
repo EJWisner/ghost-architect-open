@@ -43,6 +43,7 @@ import {
   discoverWorkingTreeChanges,
   isGitRepo,
 } from '../core/forecast-overlay.js';
+import { runMultipassBlast, getBlastPassInfo } from '../core/blast-multipass.js';
 import {
   getForecastCount,
   incrementForecastCount,
@@ -386,39 +387,28 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
   // Show cost estimate now that we know what was selected.
   const estBlastTokens = Math.ceil(patchedContext.context.length / 4);
-  const blastOverLimit = (analysisMode === 'blast' || analysisMode === 'both') && estBlastTokens > 180000;
+  const fileMap = patchedContext.fileMap || {};
+  const blastInfo = (analysisMode === 'blast' || analysisMode === 'both')
+    ? getBlastPassInfo(fileMap, tier)
+    : null;
+  const blastMultipass = blastInfo && !blastInfo.singlePass;
 
-  if (blastOverLimit) {
-    const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
-    const upgradeNote = tier === 'enterprise'
-      ? ''
-      : `  A higher context tier loads more files and may cover this codebase:\n` +
-        (tier === 'team'     ? `    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n` :
-         tier === 'pro'      ? `    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n` :
-                               `    • Pro        — 100,000 tokens  ($99/mo)\n    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`);
-    console.log(chalk.yellow(
-      `\n  ⚠  This codebase (~${Math.round(Math.ceil(patchedContext.context.length / 4) / 1000)}K tokens) is too large for single-pass Blast Radius analysis.\n` +
-      `  Your current context cap is ${tierCap} tokens — consider scanning a subfolder instead.\n` +
-      (upgradeNote ? upgradeNote : '')
-    ));
-    if (analysisMode === 'both') {
-      const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
-      console.log(chalk.gray(
-        `  Continuing with Conflict Detection: ~${conflictInfo.passes.length} passes` +
-        `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min\n`
+  if (blastInfo) {
+    if (blastMultipass) {
+      console.log(chalk.cyan(
+        `  Blast Radius: ~${blastInfo.passCount} passes` +
+        `  ·  Est. cost: ~$${blastInfo.estCost}  ·  Est. time: ~${blastInfo.estMinutes} min`
       ));
-    }
-  } else {
-    if (analysisMode === 'blast' || analysisMode === 'both') {
+    } else {
       showCostEstimate(patchedContext, 'blast', model);
     }
-    if (analysisMode === 'conflict' || analysisMode === 'both') {
-      const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
-      console.log(chalk.gray(
-        `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
-        `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min`
-      ));
-    }
+  }
+  if (analysisMode === 'conflict' || analysisMode === 'both') {
+    const conflictInfo = getConflictPassInfo(fileMap, tier);
+    console.log(chalk.gray(
+      `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
+      `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min`
+    ));
   }
   console.log('');
 
@@ -434,58 +424,81 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       ? forecastTarget[0]
       : `${forecastTarget.length} proposed files`;
 
-    // Context window pre-flight — auto-skip if over limit (warning already shown above).
-    if (estBlastTokens > 180000) {
-      // Warning already shown above — just skip silently.
+    const { proceed } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'proceed',
+      message: chalk.cyan(`Run Blast Radius forecast?${blastMultipass ? chalk.gray(` (${blastInfo.passCount} passes)`) : ''}`),
+      default: true,
+    }]);
+
+    if (!proceed) {
+      console.log(chalk.gray('\n  Blast Radius skipped.\n'));
+    } else if (blastMultipass) {
+      // ── Multi-pass Blast ────────────────────────────────────────────────
+      let blastSpinner = ora({ text: chalk.gray('Starting Blast Radius forecast...'), color: 'cyan' }).start();
+      try {
+        blastBuffer = await runMultipassBlast(patchedContext, forecastTarget, {
+          tier,
+          profile,
+          forecastMode: true,
+          onPassStart: (passNum, total) => {
+            if (blastSpinner) blastSpinner.stop();
+            blastSpinner = ora({ text: chalk.gray(`  Pass ${passNum} of ${total}...`), color: 'cyan' }).start();
+          },
+          onPassComplete: (passNum, total) => {
+            if (blastSpinner) { blastSpinner.stop(); blastSpinner = null; }
+            console.log(chalk.green(`  ${SYM.check} Pass ${passNum} complete`));
+          },
+          onSynthesisStart: () => {
+            blastSpinner = ora({ text: chalk.gray('  Synthesizing blast radius results...'), color: 'cyan' }).start();
+          },
+        });
+        if (blastSpinner) { blastSpinner.stop(); blastSpinner = null; }
+        console.log(chalk.green(`\n  ${SYM.check} Blast Radius forecast ready\n`));
+      } catch (err) {
+        if (blastSpinner) blastSpinner.stop();
+        console.log(chalk.red('  Blast Radius forecast failed'));
+        showFriendlyError(err);
+      }
     } else {
-      const { proceed } = await inquirer.prompt([{
-        type: 'confirm',
-        name: 'proceed',
-        message: chalk.cyan('Run Blast Radius forecast?'),
-        default: true,
-      }]);
-      if (!proceed) {
-        console.log(chalk.gray('\n  Blast Radius skipped.\n'));
-      } else {
-        const blastSpinner = ora({
-          text: chalk.gray(`Mapping blast radius for ${targetLabel}...`),
-          color: 'cyan',
-        }).start();
+      // ── Single-pass Blast ───────────────────────────────────────────────
+      const blastSpinner = ora({
+        text: chalk.gray(`Mapping blast radius for ${targetLabel}...`),
+        color: 'cyan',
+      }).start();
 
-        try {
-          await runBlastRadius(
-            patchedContext,
-            forecastTarget,
-            (chunk) => { blastBuffer += chunk; },
-            {
-              onNarratorStart: () => {
-                blastSpinner.text = chalk.gray('Ghost is writing the blast radius forecast...');
-              },
-              profile,
-              forecastMode: true,
-            }
-          );
-          blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
-          console.log('');
+      try {
+        await runBlastRadius(
+          patchedContext,
+          forecastTarget,
+          (chunk) => { blastBuffer += chunk; },
+          {
+            onNarratorStart: () => {
+              blastSpinner.text = chalk.gray('Ghost is writing the blast radius forecast...');
+            },
+            profile,
+            forecastMode: true,
+          }
+        );
+        blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
+        console.log('');
 
-          const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 300;
-          const outputTokens = Math.ceil(blastBuffer.length / 4);
-          showActualCost(inputTokens, outputTokens, model);
-          console.log('');
-        } catch (err) {
-          blastSpinner.fail(chalk.red('Blast Radius forecast failed'));
-          showFriendlyError(err);
-        }
-      } // end else proceed
-    } // end else blast within limit
-  }
+        const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 300;
+        const outputTokens = Math.ceil(blastBuffer.length / 4);
+        showActualCost(inputTokens, outputTokens, model);
+        console.log('');
+      } catch (err) {
+        blastSpinner.fail(chalk.red('Blast Radius forecast failed'));
+        showFriendlyError(err);
+      }
+    }
+  } // end blast section
 
   // ── Conflict Detection ──────────────────────────────────────────────────
   let conflictBuffer = '';
 
   if (analysisMode === 'conflict' || analysisMode === 'both') {
-    const fileMap  = patchedContext.fileMap || {};
-    const info     = getConflictPassInfo(fileMap, tier);
+    const info = getConflictPassInfo(fileMap, tier);
 
     console.log(chalk.magenta.bold('  ⚡ Running Conflict forecast on proposed changes...\n'));
 
