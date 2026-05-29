@@ -36,6 +36,7 @@ import { getConfig }           from '../config.js';
 import { saveReport }          from '../reports.js';
 import { requireTier }         from '../license/tier-gates.js';
 import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
+import { promptProjectLabel }  from '../projects.js';
 import { extractFindings }     from '../utils/finding-parser.js';
 import {
   buildForecastOverlay,
@@ -256,6 +257,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   // ── Tier gate ───────────────────────────────────────────────────────────
   if (!checkForecastGate(tier, paywallPromo)) return;
 
+  // ── Project tracking gate (D4) ──────────────────────────────────────────
+  // Pro+: label prompt fires, portal publish / team-sync side effects active.
+  // Open: label stays null, four labeled-save side effects short-circuit.
+  const projectIntelGate    = requireTier('feature:project-tracking', { tier });
+  const projectIntelEnabled = projectIntelGate.allowed;
+
   console.log('\n' + boxen(
     chalk.cyan.bold('🔮 COMMIT FORECAST') + '\n' +
     chalk.gray(
@@ -355,15 +362,39 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     renderForecastDiff(changedFiles, codebaseContext.fileMap || {}, patchedContext.fileMap || {});
   }
 
+  // ── Project label (Pro+ only, D4) ───────────────────────────────────────
+  // Mirrors blast.js / conflict.js pattern exactly. On Open, label stays
+  // null so all four labeled-save side effects in saveReport short-circuit.
+  let label = null;
+  if (projectIntelEnabled) {
+    label = await promptProjectLabel();
+    console.log('');
+  } else if (!hasShownCallout('feature:project-tracking')) {
+    console.log(chalk.cyan('💡 Project tracking available on Pro. Forecasts run as one-shots on Open.'));
+    console.log('');
+    markCalloutShown('feature:project-tracking');
+  }
+
   // ── Cost estimate ───────────────────────────────────────────────────────
-  // Show before analysis mode selection so the user knows what they're
-  // committing to before they pick Blast, Conflict, or both.
+  // Show AFTER mode selection so label matches what was picked, and so we
+  // can show the conflict pass count when relevant.
   const model = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
-  showCostEstimate(patchedContext, 'blast', model);
-  console.log('');
 
   // ── Analysis mode ───────────────────────────────────────────────────────
   const analysisMode = await selectAnalysisMode();
+  console.log('');
+
+  // Show cost estimate now that we know what was selected.
+  if (analysisMode === 'blast' || analysisMode === 'both') {
+    showCostEstimate(patchedContext, 'blast', model);
+  }
+  if (analysisMode === 'conflict' || analysisMode === 'both') {
+    const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
+    console.log(chalk.gray(
+      `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
+      `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min`
+    ));
+  }
   console.log('');
 
   // ── Blast Radius ────────────────────────────────────────────────────────
@@ -626,10 +657,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       totalHours,
     };
 
-    // Commit Forecast does not use project-label tracking (no portal/team-sync
-    // side effects). Pass null label so saveReport's four labeled-save blocks
-    // short-circuit cleanly, same as Open tier behavior on POI/Blast/Conflict.
-    const saved = await saveReport(forecastReport, 'ghost-forecast', null, meta);
+    // label is null for Open (no portal side effects) or when user skipped
+    // the label prompt. Non-null label (Pro+) activates portal publish,
+    // team-sync, and mobile-publish via saveReport's Strategy 2 conditional.
+    const saved = await saveReport(forecastReport, 'ghost-forecast', label, meta);
     console.log(chalk.green(`\n${SYM.check} Forecast saved to ~/Ghost Architect Reports/`));
     console.log(chalk.gray(`  📄 ${saved.txtFile}`));
     console.log(chalk.gray(`  📋 ${saved.mdFile}`));
