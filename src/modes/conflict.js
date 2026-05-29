@@ -374,12 +374,66 @@ export async function runConflictMode(codebaseContext, options = {}) {
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.magenta(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
+
+      // Phase 4: offer fix forecast follow-up.
+      // Silent-skip when no eligible findings (fix_direction === null on all).
+      // selectedFinding is null on decline or no eligible findings.
+      // Phase 5 will consume selectedFinding to generate artifacts.
+      // eslint-disable-next-line no-unused-vars
+      const selectedFinding = await promptFixForecast(parsedFindings);
     }
 
   } catch (err) {
     if (spinner) spinner.stop();
     showFriendlyError(err);
   }
+}
+
+// ── Phase 4: Follow-up fix forecast offer ────────────────────────────────────
+// Offered after a Conflict scan saves successfully.
+// Filters parsedFindings to those with populated fix_direction (fix_direction !== null).
+// Silent-skips when zero eligible findings exist — no output, no prompt.
+// Returns the selected finding object (full normalized finding including fix_direction)
+// or null on decline / no eligible findings.
+async function promptFixForecast(parsedFindings) {
+  const eligible = parsedFindings.filter(f => f.fix_direction !== null);
+  if (eligible.length === 0) return null;
+
+  // Gate prompt — capital N (decline is safer default)
+  const noun = eligible.length === 1 ? 'finding' : 'findings';
+  const { wantsForecast } = await inquirer.prompt([{
+    type:    'confirm',
+    name:    'wantsForecast',
+    message: chalk.cyan(
+      `Ghost found ${eligible.length} ${noun} with a suggested fix. ` +
+      `Forecast the impact of applying one?`
+    ),
+    default: false,
+  }]);
+  if (!wantsForecast) return null;
+
+  // Severity label renderer — matches colorizeOutput palette.
+  function severityLabel(sev) {
+    const s = (sev || 'UNKNOWN').toUpperCase();
+    if (s === 'CRITICAL') return chalk.bgRed.white.bold(' CRITICAL ');
+    if (s === 'HIGH')     return chalk.red.bold('HIGH    ');
+    if (s === 'MEDIUM')   return chalk.yellow.bold('MEDIUM  ');
+    if (s === 'LOW')      return chalk.green.bold('LOW     ');
+    return chalk.gray(s.padEnd(8));
+  }
+
+  // Selection list — arrow-key via inquirer list type.
+  const { chosen } = await inquirer.prompt([{
+    type:    'list',
+    name:    'chosen',
+    message: chalk.cyan('Select a finding:'),
+    choices: eligible.map((f, i) => ({
+      name:  `  [${i + 1}]  ${severityLabel(f.severity)}  ${f.title}`,
+      value: f,
+    })),
+  }]);
+
+  return chosen;
 }
 
 function colorizeOutput(text) {
