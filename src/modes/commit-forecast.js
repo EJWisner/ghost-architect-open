@@ -435,7 +435,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
     // Context window pre-flight — auto-skip if over limit (warning already shown above).
     if (estBlastTokens > 180000) {
-      console.log(chalk.gray('  Blast Radius skipped — context too large for current tier.\n'));
+      // Warning already shown above — just skip silently.
     } else {
       const { proceed } = await inquirer.prompt([{
         type: 'confirm',
