@@ -654,9 +654,9 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const hasConflict = conflictBuffer.length > 0;
 
   if (!hasBlast && !hasConflict) {
+    // User skipped or cancelled all analysis — nothing ran, nothing to count.
+    // Don't burn the quota on a no-op.
     console.log(chalk.gray('  No forecast output to save.\n'));
-    // Still counts as a used Forecast for Open tier (analysis did run).
-    if (tier === 'open') incrementForecastCount();
     return;
   }
 
