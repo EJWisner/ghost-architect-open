@@ -37,6 +37,7 @@ const inquirerTheme = process.platform === 'win32' ? {
 import { runCompareMode } from '../src/modes/compare.js';
 import { runConflictMode } from '../src/modes/conflict.js';
 import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
+import { runCommitForecastMode } from '../src/modes/commit-forecast.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
@@ -329,6 +330,7 @@ async function selectMode(codebaseContext, tier = 'open') {
     { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
     { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
     { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
+    { name: IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ' + chalk.gray('— Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
     { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
     { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
@@ -1472,6 +1474,7 @@ async function main() {
     // adds chat to this list (mode:chat went from open:true to open:false
     // when Question mode launched as the Open-tier Q&A surface). Question,
     // recon, compare, dashboard — free across all tiers.
+    // commit-forecast is handled separately below (uses its own forecast-quota gate).
     if (['chat', 'poi', 'blast', 'conflict', 'audit'].includes(mode)) {
       const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
       if (!verdict.allowed) {
@@ -1481,15 +1484,21 @@ async function main() {
     }
 
     switch (mode) {
-      case 'question':  await runQuestionMode(codebaseContext, { tier: TIER });         break;
-      case 'chat':      await runChatMode(codebaseContext, { tier: TIER });             break;
-      case 'poi':       await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
-      case 'blast':     await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
-      case 'conflict':  await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
-      case 'recon':     await runReconMode(codebaseContext, { profile });  break;
-      case 'audit':     await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
-      case 'compare':   await runCompareMode();                         break;
-      case 'dashboard': await showProjectDashboard();                   break;
+      case 'question':        await runQuestionMode(codebaseContext, { tier: TIER });         break;
+      case 'chat':            await runChatMode(codebaseContext, { tier: TIER });             break;
+      case 'poi':             await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
+      case 'blast':           await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
+      case 'conflict':        await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
+      // Commit Forecast: gate is handled inside runCommitForecastMode via
+      // checkForecastGate(), which reads getForecastCount() and calls
+      // renderForecastPaywall() directly. This keeps the paywall-dispatch
+      // logic co-located with the Forecast counter (freemium.js) rather than
+      // duplicated here. paywallPromo passes through for server-driven copy.
+      case 'commit-forecast': await runCommitForecastMode(codebaseContext, { profile, tier: TIER, paywallPromo: promos.paywallPromo }); break;
+      case 'recon':           await runReconMode(codebaseContext, { profile });  break;
+      case 'audit':           await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
+      case 'compare':         await runCompareMode();                         break;
+      case 'dashboard':       await showProjectDashboard();                   break;
     }
   }
 }

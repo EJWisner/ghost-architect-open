@@ -51,14 +51,20 @@ import { getActiveTier } from './session.js';
 // behaviors; everything else mirrors Pro.
 const TIER_POLICY = {
   // Modes
-  'mode:question':      { open: true,    trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:chat':          { open: false,   trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:recon':         { open: true,    trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:poi':           { open: 'quota', trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:blast':         { open: 'quota', trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:conflict':      { open: 'quota', trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:prompt-triage': { open: 'quota', trial: true,  pro: true,  team: true,  enterprise: true  },
-  'mode:audit':         { open: false,   trial: false, pro: true,  team: true,  enterprise: true  },
+  'mode:question':         { open: true,              trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:chat':             { open: false,              trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:recon':            { open: true,               trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:poi':              { open: 'quota',            trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:blast':            { open: 'quota',            trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:conflict':         { open: 'quota',            trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:prompt-triage':    { open: 'quota',            trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:audit':            { open: false,              trial: false, pro: true,  team: true,  enterprise: true  },
+  // Commit Forecast: Open gets 'forecast-quota' — a separate 1-run quota managed
+  // by src/freemium.js's getForecastCount/incrementForecastCount (isolated from
+  // ghostOpenScanCount so daily pro-tier usage patterns don't burn the shared
+  // 4-scan quota in minutes). bin/ghost.js checks tier first, then dispatches to
+  // renderForecastPaywall when the quota is exhausted. Pro+ are unlimited.
+  'mode:commit-forecast':  { open: 'forecast-quota',  trial: true,  pro: true,  team: true,  enterprise: true  },
 
   // Features — consulted as soft-gate callout sites (D3 once-per-session
   // suppression). Not yet wired at every site; this is the registry for
@@ -84,6 +90,13 @@ const TIER_POLICY = {
 // src/freemium.js's FREE_QUOTA is bumped in parallel for backward compatibility
 // with the existing renderQuotaPaywall copy that references it.
 export const SCAN_QUOTA = 4;
+
+// Commit Forecast quota for Open tier. One free Forecast per install.
+// Isolated from SCAN_QUOTA because Forecast runs many times per day; shared
+// quota would drain in minutes. freemium.js imports this constant (not the
+// other way around) to avoid circular dependencies — tier-gates never imports
+// freemium.
+export const FORECAST_QUOTA = 1;
 
 /**
  * Ask whether a feature/mode is allowed for the active (or specified) tier.
@@ -128,6 +141,22 @@ export function requireTier(gateId, opts = {}) {
     return {
       allowed: false,
       reason: `quota_exceeded:${tier}:${used}/${SCAN_QUOTA}`,
+      paywall: paywallFor(gateId, tier),
+    };
+  }
+  // 'forecast-quota' is Commit Forecast's isolated quota. The caller is
+  // responsible for passing opts.forecastsUsed (from freemium.getForecastCount())
+  // and the limit is FORECAST_QUOTA (1 for Open). Verdict semantics mirror
+  // 'quota' but use a different counter and a different paywall kind.
+  if (verdict === 'forecast-quota') {
+    const used  = opts.forecastsUsed ?? 0;
+    const limit = FORECAST_QUOTA;
+    if (used < limit) {
+      return { allowed: true, quotaRemaining: limit - used };
+    }
+    return {
+      allowed: false,
+      reason: `forecast_quota_exceeded:${tier}:${used}/${limit}`,
       paywall: paywallFor(gateId, tier),
     };
   }
