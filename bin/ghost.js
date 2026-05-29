@@ -166,7 +166,6 @@ function parseArgs(argv) {
     if (a === '--label')                 { out.cfLabel = argv[++i] || ''; continue; }
     if (a.startsWith('--label='))        { out.cfLabel = a.slice('--label='.length); continue; }
     if (a === '--no-verify')             { out.cfNoVerify = true; continue; }
-    if (a === '--no-followup')           { out.cfNoFollowup = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -232,7 +231,6 @@ Commit Forecast (non-interactive / CI mode):
                            Matches interactive behavior of pressing Enter to skip
                            the label prompt.
   --no-verify              Skip conflict candidate verification step.
-  --no-followup            Exit after saving the report (no 'run again?' prompt).
 
   When ALL of --baseline, --proposed, and --modes are present, Commit Forecast
   runs fully non-interactive. Any missing required flag drops back to the
@@ -1374,9 +1372,8 @@ async function main() {
       cfBaseline,
       cfProposed,
       cfModes,
-      cfLabel:      cliOpts.cfLabel      || null,
-      cfNoVerify:   cliOpts.cfNoVerify   || false,
-      cfNoFollowup: cliOpts.cfNoFollowup || false,
+      cfLabel:      cliOpts.cfLabel    || null,
+      cfNoVerify:   cliOpts.cfNoVerify || false,
     });
     process.exit(0);
   }
@@ -1597,12 +1594,11 @@ async function main() {
         profile,
         tier:         TIER,
         paywallPromo: promos.paywallPromo,
-        cfBaseline:   cliOpts.cfBaseline   || null,
-        cfProposed:   cliOpts.cfProposed   || null,
-        cfModes:      cliOpts.cfModes      || null,
-        cfLabel:      cliOpts.cfLabel      || null,
-        cfNoVerify:   cliOpts.cfNoVerify   || false,
-        cfNoFollowup: cliOpts.cfNoFollowup || false,
+        cfBaseline:   cliOpts.cfBaseline || null,
+        cfProposed:   cliOpts.cfProposed || null,
+        cfModes:      cliOpts.cfModes    || null,
+        cfLabel:      cliOpts.cfLabel    || null,
+        cfNoVerify:   cliOpts.cfNoVerify || false,
       }); break;
       case 'recon':           await runReconMode(codebaseContext, { profile });  break;
       case 'audit':           await runAuditMode(codebaseContext, { profile, tier: TIER });  break;

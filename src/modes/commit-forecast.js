@@ -255,7 +255,7 @@ async function selectAnalysisMode() {
 // present. No prompts. Runs analysis, saves report, exits.
 
 async function runCommitForecastNonInteractive(codebaseContext, opts) {
-  const { profile, tier, baseline, proposed, analysisMode, label, noVerify, noFollowup } = opts;
+  const { profile, tier, baseline, proposed, analysisMode, label, noVerify } = opts;
 
   console.log('\n' + chalk.cyan.bold('🔮 COMMIT FORECAST') + chalk.gray(' — non-interactive mode\n'));
   console.log(chalk.gray(`  Baseline : ${baseline}`));
@@ -418,8 +418,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       proposed:    options.cfProposed,
       analysisMode,
       label:       options.cfLabel   || null,
-      noVerify:    options.cfNoVerify  || false,
-      noFollowup:  options.cfNoFollowup || false,
+      noVerify:    options.cfNoVerify || false,
     });
   }
 
