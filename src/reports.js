@@ -167,6 +167,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
                        ? Math.round(f.confidence * 100)
                        : (typeof f.confidence === 'number' ? f.confidence : 85),
         detail:      typeof f.detail === 'string' ? f.detail : '',
+        fix_direction: f.fix_direction || null,
       }));
       const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
       for (const f of findings) {

@@ -20,6 +20,7 @@ import { narrateConflictReport } from './agent/narrator.js';
 import { loadSession, saveSession, deleteSession } from './multipass.js';
 import { mergeRates } from '../profile/index.js';
 import { getTierCap } from '../loader/tierCaps.js';
+import { generateFindingId } from '../utils/finding-parser.js';
 
 // Per-pass token budget for conflict detection. Scales with tier cap to leave
 // uniform 20% headroom across all tiers. Setting this equal to or near the
@@ -132,9 +133,133 @@ function stripBoldMarkdown(line) {
   return line.replace(/\*+/g, '');
 }
 
-// Exported for use by tests and diagnostic tooling. The verifier consumes
-// the candidate list internally; external consumers should call runConflictScan
-// rather than this function directly.
+// ── Fix-direction extractor ───────────────────────────────────────────────────
+// Extracts structured fix_direction from the raw lines of a finding's
+// Resolution/Fix section, accumulated during the extractCandidates pass.
+//
+// Returns null (not an error) when:
+//   - No code block is present in the fix lines
+//   - files array is empty or has multiple entries (no single target file)
+//   - Multiple code blocks found (ambiguous)
+//   - fixLines is empty or malformed
+//
+// NOTE: This function is intentionally kept narrow in scope so it can be
+// extracted to src/utils/fix-direction-extractor.js when Blast enrichment
+// is added in Phase 2b. Keep the signature (fixLines: string[], files: string[])
+// stable for that migration.
+function extractFixDirection(fixLines, files) {
+  try {
+    // Gate 1: must have exactly one target file
+    if (!Array.isArray(files) || files.length !== 1 || !files[0] || !files[0].trim()) {
+      return null;
+    }
+    const targetFile = files[0].trim();
+
+    if (!Array.isArray(fixLines) || fixLines.length === 0) return null;
+
+    // Gate 2: find code blocks in the fix lines
+    // Code blocks are delimited by ``` (with optional language tag)
+    const codeBlockRe = /^```/;
+    const blocks = [];
+    let inBlock = false;
+    let blockLines = [];
+    let reasoningLines = [];
+
+    for (const line of fixLines) {
+      if (codeBlockRe.test(line.trim())) {
+        if (inBlock) {
+          // closing fence
+          blocks.push(blockLines.join('\n'));
+          blockLines = [];
+          inBlock = false;
+        } else {
+          // opening fence — capture prose before this as reasoning
+          inBlock = true;
+        }
+      } else if (inBlock) {
+        blockLines.push(line);
+      } else {
+        // Outside a code block — accumulate as reasoning prose
+        const stripped = stripBoldMarkdown(line).trim();
+        if (stripped && !stripped.match(/^Remediation estimate/i)) {
+          reasoningLines.push(stripped);
+        }
+      }
+    }
+
+    // Gate 3: must have exactly one code block (multiple = ambiguous)
+    if (blocks.length !== 1) return null;
+
+    const patchInstruction = blocks[0].trim();
+    if (!patchInstruction) return null;
+
+    // Gate 4: patch instruction sanity — reject obviously non-code content
+    // (e.g. a block that only contains prose like "run: rector process")
+    // Heuristic: if it's > 30 lines it's probably a full-file replacement,
+    // not a surgical patch. Return null and let the human decide.
+    const patchLines = patchInstruction.split('\n').length;
+    if (patchLines > 30) return null;
+
+    // Confidence: single file + code block found
+    // high: ≤ 10 lines (surgical), medium: 11-30 lines (larger change)
+    const confidence = patchLines <= 10 ? 'high' : 'medium';
+
+    // Reasoning: join prose lines, collapse whitespace
+    const reasoning = reasoningLines
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/:\s*$/, '.');  // normalize trailing colon to period
+
+    return {
+      target_file:       targetFile,
+      patch_instruction: patchInstruction,
+      reasoning:         reasoning || null,
+      confidence,
+    };
+  } catch {
+    // Never crash the scan due to fix-direction parsing
+    return null;
+  }
+}
+
+// ── Candidate normalizer ──────────────────────────────────────────────────────
+// Converts an extractCandidates candidate to the findings-sidecar shape.
+// Bypasses extractFindings for Conflict mode so fix_direction survives the
+// parse→narrate→reparse round-trip. Parity contract:
+//   - id:          generateFindingId({severity, files, title}) — byte-identical
+//   - title:       candidate.title — unchanged
+//   - severity:    candidate.severity — unchanged
+//   - files:       candidate.files — unchanged
+//   - effortHours: 0 — matches current production output (EFFORT_RE doesn't
+//                  match "Remediation estimate:" format; all Conflict findings
+//                  ship with effortHours:0 today). TODO: fix EFFORT_RE.
+//   - confidence:  85 — matches current production output (extractFindings
+//                  hardcodes 85; candidate confidence:60 is internal only).
+//                  TODO: replace with meaningful per-finding signal.
+//   - detail:      candidate.description — pre-narration verifier text.
+//                  More faithful to analysis; less polished than narrated prose.
+//                  Documented deliberate change per May 2026 Phase 2 decision.
+//   - fix_direction: candidate.fix_direction — new field, null when not extractable
+export function normalizeCandidateToFinding(candidate) {
+  // Filter files FIRST — generateFindingId reads files[0] for the id,
+  // so the clean path must be in place before id generation.
+  const files = (Array.isArray(candidate.files) ? candidate.files : [])
+    .map(f => typeof f === 'string' ? f.replace(/\s*\([^)]*\)\s*$/, '').trim() : '')
+    .filter(f => f && (f.includes('/') || f.includes('\\') || !/\s/.test(f)))
+    .filter(f => !/^(none|n\/a|not\s+(specified|applicable))/i.test(f));
+
+  return {
+    id:           generateFindingId({ ...candidate, files }),
+    title:        candidate.title        || '',
+    severity:     candidate.severity     || 'MEDIUM',
+    files,
+    effortHours:  0,
+    confidence:   85,
+    detail:       candidate.description  || '',
+    fix_direction: candidate.fix_direction || null,
+  };
+}
 export function extractCandidates(rawResults) {
   const candidates = [];
   const combined   = Array.isArray(rawResults) ? rawResults.join('\n') : rawResults;
@@ -148,6 +273,7 @@ export function extractCandidates(rawResults) {
 
   let current        = null;
   let inFixSection   = false;  // Inside a Resolution/Fix-steps sub-section?
+  let currentFixLines = [];    // Raw lines of the current finding's fix section
 
   for (const line of lines) {
     const tRaw = line.trim();
@@ -160,13 +286,15 @@ export function extractCandidates(rawResults) {
     if (FIX_SECTION_RE.test(t)) {
       inFixSection = true;
     } else if (/^#{1,3}\s+/.test(tRaw)) {
-      // Markdown header always ends a fix section — the model is starting
-      // a new top-level section.
       inFixSection = false;
     } else if (tRaw.startsWith('---')) {
-      // Horizontal rule ends a fix section. Blank lines do NOT — they're
-      // common inside fix sub-sections.
       inFixSection = false;
+    }
+
+    // Accumulate fix-section lines for the current candidate.
+    // These are passed to extractFixDirection when the candidate is finalized.
+    if (inFixSection && current && !FIX_SECTION_RE.test(t)) {
+      currentFixLines.push(line);
     }
 
     // Try to match a finding header. Skip this match if we're inside a fix
@@ -196,7 +324,11 @@ export function extractCandidates(rawResults) {
         continue;
       }
 
-      if (current) candidates.push(current);
+      if (current) {
+        current.fix_direction = extractFixDirection(currentFixLines, current.files);
+        candidates.push(current);
+      }
+      currentFixLines = [];
       // Long titles indicate the model wrote title + description on a single
       // line without a newline separator. Split on the first sentence-end
       // character (period, semicolon, em-dash followed by capital) so the
@@ -245,7 +377,10 @@ export function extractCandidates(rawResults) {
       }
     }
   }
-  if (current) candidates.push(current);
+  if (current) {
+    current.fix_direction = extractFixDirection(currentFixLines, current.files);
+    candidates.push(current);
+  }
 
   // Dedupe by title prefix (catches near-duplicates from multi-pass merge)
   const seen = new Set();
@@ -434,7 +569,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
     onProgress({ type: 'merging', count: passResults.length });
     const finalReport = await mergeConflictResults(passResults, onChunk, profile);
     onProgress({ type: 'done', passCount: info.passes.length });
-    return { finalReport, passCount: info.passes.length, totalFiles, verified: false };
+    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, candidates: [] };
   }
 
   // ── Phase 3: Verify each candidate ────────────────────────────────────────
@@ -468,7 +603,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
     };
     const finalReport = await narrateConflictReport(skippedResult, { rates, profile, projectLabel: options.projectLabel }, onChunk);
     onProgress({ type: 'done', passCount: info.passes.length });
-    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, stats: skippedResult.stats };
+    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, stats: skippedResult.stats, candidates };
   }
 
   onProgress({ type: 'verification_start', count: candidates.length });
@@ -505,5 +640,6 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
     totalFiles,
     verified:   true,
     stats:      verificationResult.stats,
+    candidates,
   };
 }

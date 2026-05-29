@@ -9,6 +9,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { showFriendlyError } from '../utils/errors.js';
 import { runConflictScan, getConflictPassInfo } from '../core/conflict.js';
+import { normalizeCandidateToFinding } from '../core/conflict.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
@@ -328,7 +329,10 @@ export async function runConflictMode(codebaseContext, options = {}) {
       // estimates instead of the all-MEDIUM placeholder buildFindingsSidecar
       // produces when called on raw report text. Same architectural pattern
       // as audit-mode (c2aeaad + dc352b0) and Blast-mode (52e2782).
-      const parsedFindings = extractFindings(buffer);
+      // Use normalized candidates as structured findings — bypasses extractFindings
+      // round-trip so fix_direction survives. All parity fields match sidecar output.
+      // detail = candidate.description (pre-narration; more faithful, less polished).
+      const parsedFindings = (result.candidates || []).map(normalizeCandidateToFinding);
       const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
       const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
       const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
