@@ -131,7 +131,21 @@ export function renderForecastDiff(changedFiles, baselineFileMap, patchedFileMap
     const proposed = patchedFileMap[filePath]  || '';
 
     if (baseline === proposed) {
-      // Identical content despite being in the proposed folder — skip.
+      // Identical content — this happens with untracked files where the
+      // baseline and working-tree file are the same. Show as a new addition
+      // with a content preview rather than skipping silently.
+      if (baseline === '') continue; // truly empty, nothing to show
+      const lineCount = proposed.split('\n').length;
+      console.log(chalk.green(`  + ${path.basename(filePath)}`) + chalk.dim(`  (${path.dirname(filePath)})  [new file, ${lineCount} lines]`));
+      if (detailCount < DETAIL_FILE_CAP) {
+        const previewLines = proposed.split('\n').slice(0, 8);
+        for (const line of previewLines) {
+          console.log(chalk.green(`    + ${line}`));
+        }
+        if (lineCount > 8) console.log(chalk.gray(`    ... ${lineCount - 8} more lines`));
+        console.log('');
+      }
+      detailCount++;
       continue;
     }
 
