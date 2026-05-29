@@ -390,18 +390,16 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
   if (blastOverLimit) {
     const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
-    // Build tier-aware upgrade line — don't suggest tiers the user is already on or below.
-    const upgradeLine = tier === 'enterprise'
-      ? `  This codebase exceeds even the Enterprise context cap. Consider scanning a subfolder.\n`
-      : tier === 'team'
-      ? `  Upgrade for full Blast Radius coverage:\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`
-      : tier === 'pro'
-      ? `  Upgrade for full Blast Radius coverage:\n    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`
-      : `  Upgrade for full Blast Radius coverage:\n    • Pro        — 100,000 tokens  ($99/mo)\n    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`;
+    const upgradeNote = tier === 'enterprise'
+      ? ''
+      : `  A higher context tier loads more files and may cover this codebase:\n` +
+        (tier === 'team'     ? `    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n` :
+         tier === 'pro'      ? `    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n` :
+                               `    • Pro        — 100,000 tokens  ($99/mo)\n    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`);
     console.log(chalk.yellow(
-      `\n  ⚠  This codebase requires more context than your current ${tierCap}-token cap.\n` +
-      `  Blast Radius Forecast is not available for this codebase on your current tier.\n` +
-      upgradeLine
+      `\n  ⚠  This codebase (~${Math.round(Math.ceil(patchedContext.context.length / 4) / 1000)}K tokens) is too large for single-pass Blast Radius analysis.\n` +
+      `  Your current context cap is ${tierCap} tokens — consider scanning a subfolder instead.\n` +
+      (upgradeNote ? upgradeNote : '')
     ));
     if (analysisMode === 'both') {
       const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
