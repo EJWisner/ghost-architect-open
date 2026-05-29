@@ -373,6 +373,9 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     findingCount:  parsedFindings.length,
   };
 
+  // null label is intentional parity with interactive's "Enter to skip" path —
+  // omitting --label produces project: null in the findings JSON, same as the
+  // user pressing Enter at the label prompt. Do not add a fallback default here.
   const saved = await saveReport(forecastReport, 'ghost-forecast', label, meta);
   console.log(chalk.green(`\n${SYM.check} Forecast saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}`));

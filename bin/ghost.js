@@ -227,8 +227,10 @@ Commit Forecast (non-interactive / CI mode):
                            Valid values: blast, conflict, both
                            Example: --modes=blast,conflict  or  --modes=conflict
                            Unknown mode values exit with an error.
-  --label <name>           Project label for tracking (Pro+ only). Omit for
-                           one-time scan with no history.
+  --label <name>           Project label for tracking in the portal. Omit to run
+                           as a one-time scan (no project history recorded).
+                           Matches interactive behavior of pressing Enter to skip
+                           the label prompt.
   --no-verify              Skip conflict candidate verification step.
   --no-followup            Exit after saving the report (no 'run again?' prompt).
 
