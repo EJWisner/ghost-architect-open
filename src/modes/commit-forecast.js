@@ -562,22 +562,11 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           },
 
           async onVerifyPrompt({ count, quickCost, fullCost }) {
+            // On Open tier, skip verification silently — context cap means
+            // results would all be UNCLEAR. No message shown.
+            if (tier === 'open') return 'skip';
+
             console.log(chalk.cyan(`\n  🔍 ${count} conflict candidates found\n`));
-
-            // On Open tier, verification is unreliable — the 50K context cap
-            // means most candidate files aren't loaded, so the verifier returns
-            // UNCLEAR for everything. Skip verification automatically and tell
-            // the user what Pro would give them instead of charging $1-15 for
-            // a result that says "0 confirmed, 0 possible, 0 eliminated."
-            if (tier === 'open') {
-              console.log(chalk.yellow(
-                `  ℹ  Verification skipped on Open tier.\n` +
-                `     The ${count} candidates are surfaced as manual review items.\n` +
-                `     Upgrade to Pro for AI-verified results (confirmed / possible / eliminated).\n`
-              ));
-              return 'skip';
-            }
-
             const { choice } = await inquirer.prompt([{
               type: 'list', name: 'choice',
               message: chalk.cyan('Choose verification depth:'),
