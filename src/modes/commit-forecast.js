@@ -250,10 +250,175 @@ async function selectAnalysisMode() {
 }
 // ── Main export ───────────────────────────────────────────────────────────────
 
+// ── Non-interactive runner ────────────────────────────────────────────────────
+// Called when all three required flags (--baseline, --proposed, --modes) are
+// present. No prompts. Runs analysis, saves report, exits.
+
+async function runCommitForecastNonInteractive(codebaseContext, opts) {
+  const { profile, tier, baseline, proposed, analysisMode, label, noVerify, noFollowup } = opts;
+
+  console.log('\n' + chalk.cyan.bold('🔮 COMMIT FORECAST') + chalk.gray(' — non-interactive mode\n'));
+  console.log(chalk.gray(`  Baseline : ${baseline}`));
+  console.log(chalk.gray(`  Proposed : ${proposed}`));
+  console.log(chalk.gray(`  Modes    : ${analysisMode}`));
+  if (label) console.log(chalk.gray(`  Label    : ${label}`));
+  console.log('');
+
+  // Build overlay from baseline + proposed folder.
+  let patchedContext, changedFiles;
+  try {
+    ({ patchedContext, changedFiles } = await buildForecastOverlay(
+      codebaseContext,
+      proposed,
+      { baseRoot: baseline }
+    ));
+  } catch (err) {
+    console.error(chalk.red(`  ✗ Failed to build forecast overlay: ${err.message}`));
+    process.exit(1);
+  }
+
+  const hasChanges = Object.keys(changedFiles.modified).length + changedFiles.added.length > 0;
+  if (!hasChanges) {
+    console.log(chalk.yellow('  No changed files detected between baseline and proposed. Nothing to forecast.\n'));
+    process.exit(0);
+  }
+
+  const allChanged = [...changedFiles.modified, ...changedFiles.added];
+  console.log(chalk.cyan(`  Found ${allChanged.length} changed file(s): ${allChanged.map(f => path.basename(f)).join(', ')}\n`));
+
+  const model    = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
+  const fileMap  = patchedContext.fileMap || {};
+  const blastInfo = (analysisMode === 'blast' || analysisMode === 'both')
+    ? getBlastPassInfo(fileMap, tier) : null;
+
+  let blastBuffer    = '';
+  let conflictBuffer = '';
+
+  // ── Blast ─────────────────────────────────────────────────────────────
+  if (analysisMode === 'blast' || analysisMode === 'both') {
+    if (blastInfo && !blastInfo.singlePass) {
+      console.log(chalk.cyan(`  Running Blast Radius (${blastInfo.passCount} passes)...`));
+      try {
+        blastBuffer = await runMultipassBlast(patchedContext, allChanged, {
+          tier, profile, forecastMode: true,
+          onPassComplete: (n, t) => console.log(chalk.green(`  ${SYM.check} Blast pass ${n} of ${t} complete`)),
+          onSynthesisStart: () => console.log(chalk.gray('  Synthesizing blast results...')),
+        });
+        console.log(chalk.green(`  ${SYM.check} Blast Radius forecast ready\n`));
+      } catch (err) {
+        console.error(chalk.red(`  ✗ Blast failed: ${err.message}`));
+      }
+    } else {
+      const blastSpinner = ora({ text: chalk.gray('  Running Blast Radius...'), color: 'cyan' }).start();
+      try {
+        await runBlastRadius(patchedContext, allChanged, (c) => { blastBuffer += c; }, { profile, forecastMode: true });
+        blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
+      } catch (err) {
+        blastSpinner.fail(chalk.red('Blast failed'));
+        showFriendlyError(err);
+      }
+    }
+  }
+
+  // ── Conflict ──────────────────────────────────────────────────────────
+  if (analysisMode === 'conflict' || analysisMode === 'both') {
+    const info = getConflictPassInfo(fileMap, tier);
+    console.log(chalk.magenta(`  Running Conflict Detection (${info.passes.length} passes)...`));
+    const callbacks = {
+      async onVerifyPrompt({ count }) {
+        if (noVerify || tier === 'open') return 'skip';
+        console.log(chalk.cyan(`  ${count} candidates found — running quick verification...`));
+        return 'quick';
+      },
+      async onSessionPrompt() { return 'report'; },
+      onEvent(evt, data) {
+        if (evt === 'passComplete') console.log(chalk.green(`  ${SYM.check} Conflict pass ${data.passNum} complete`));
+      },
+    };
+    const result = await runConflictScan(fileMap, callbacks, {
+      tier,
+      profile,
+      forecastContext:
+        `Changed files: ${allChanged.map(f => path.basename(f)).join(', ')}\n` +
+        `Frame every conflict as "if you push now, X conflicts with Y."`,
+    });
+    if (result?.finalReport) {
+      conflictBuffer = result.finalReport;
+      console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
+    }
+  }
+
+  // ── Save ──────────────────────────────────────────────────────────────
+  const hasBlast    = blastBuffer.length > 0;
+  const hasConflict = conflictBuffer.length > 0;
+
+  if (!hasBlast && !hasConflict) {
+    console.log(chalk.yellow('  No forecast output produced.\n'));
+    process.exit(1);
+  }
+
+  const forecastReport = [
+    hasBlast    ? `# BLAST RADIUS FORECAST\n\n${blastBuffer}` : '',
+    hasConflict ? `# CONFLICT FORECAST\n\n${conflictBuffer}`  : '',
+  ].filter(Boolean).join('\n\n---\n\n');
+
+  const parsedFindings = extractFindings(forecastReport);
+  const meta = {
+    filesAnalyzed: `${patchedContext.loadedFiles} of ${patchedContext.totalFiles}`,
+    totalFiles:    patchedContext.totalFiles,
+    mode:          'commit-forecast',
+    forecastSurface: 'non-interactive',
+    profile,
+    findings:      parsedFindings,
+    findingCount:  parsedFindings.length,
+  };
+
+  const saved = await saveReport(forecastReport, 'ghost-forecast', label, meta);
+  console.log(chalk.green(`\n${SYM.check} Forecast saved to ~/Ghost Architect Reports/`));
+  console.log(chalk.gray(`  📄 ${saved.txtFile}`));
+  console.log(chalk.gray(`  📋 ${saved.mdFile}`));
+  if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}`));
+  console.log('');
+
+  if (tier === 'open') incrementForecastCount();
+}
+
 export async function runCommitForecastMode(codebaseContext, options = {}) {
   const profile      = options.profile || null;
   const tier         = options.tier    || 'open';
   const paywallPromo = options.paywallPromo || '';
+
+  // ── Non-interactive flag path ───────────────────────────────────────────
+  // ALL THREE of cfBaseline, cfProposed, cfModes must be present to trigger
+  // non-interactive mode. Any missing → fall through to interactive flow.
+  const VALID_MODES = ['blast', 'conflict', 'both'];
+  const hasAllFlags = options.cfBaseline && options.cfProposed && options.cfModes;
+  if (hasAllFlags) {
+    const rawModes = options.cfModes.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    // Validate modes — loud failure per spec.
+    const invalid = rawModes.filter(m => !VALID_MODES.includes(m));
+    if (invalid.length > 0) {
+      console.error(chalk.red(
+        `\n  ✗ Unknown --modes value(s): ${invalid.join(', ')}\n` +
+        `  Valid values: ${VALID_MODES.join(', ')}\n`
+      ));
+      process.exit(1);
+    }
+    // Normalize: if both blast and conflict present, treat as 'both'
+    const wantsBlast    = rawModes.includes('blast')    || rawModes.includes('both');
+    const wantsConflict = rawModes.includes('conflict') || rawModes.includes('both');
+    const analysisMode  = wantsBlast && wantsConflict ? 'both' : wantsBlast ? 'blast' : 'conflict';
+
+    return await runCommitForecastNonInteractive(codebaseContext, {
+      profile, tier, paywallPromo,
+      baseline:    options.cfBaseline,
+      proposed:    options.cfProposed,
+      analysisMode,
+      label:       options.cfLabel   || null,
+      noVerify:    options.cfNoVerify  || false,
+      noFollowup:  options.cfNoFollowup || false,
+    });
+  }
 
   // NOTE: Forecast quota gate is checked at dispatch in bin/ghost.js before
   // this function is called. No need to re-check here.
