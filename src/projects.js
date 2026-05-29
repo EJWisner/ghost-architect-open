@@ -56,6 +56,14 @@ export async function promptProjectLabel() {
   }
 
   if (projects.length > 0) {
+    // Exact match first — if the label already exists, use it silently.
+    const exactMatch = projects.find(p => slugify(p.label) === slugify(input));
+    if (exactMatch) {
+      console.log(chalk.green(`  ✓ Continuing project "${exactMatch.label}" — scan will compare against baseline\n`));
+      return exactMatch.label;
+    }
+
+    // No exact match — try fuzzy match to catch typos.
     const match = fuzzyMatch(input, projects);
     if (match && slugify(match.label) !== slugify(input)) {
       console.log('');
@@ -70,10 +78,6 @@ export async function promptProjectLabel() {
       }
       console.log(chalk.green(`  ✓ Creating new project "${input}"\n`));
       return input;
-    }
-    if (match && slugify(match.label) === slugify(input)) {
-      console.log(chalk.green(`  ✓ Continuing project "${match.label}" — scan will compare against baseline\n`));
-      return match.label;
     }
   }
 
