@@ -154,6 +154,7 @@ function parseArgs(argv) {
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
+    if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -205,6 +206,7 @@ Licensing:
                            remaining, fingerprint match). Then exit.
   --license-clear          Remove the installed license from local storage.
                            Then exit. Useful for migrating to a new license.
+  --deactivate             Alias for --license-clear.
 
 Misc:
   --version, -v            Print version and exit.
