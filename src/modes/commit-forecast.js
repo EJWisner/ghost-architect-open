@@ -415,12 +415,15 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     // 180K to give a comfortable margin.
     const estInputTokens = Math.ceil(patchedContext.context.length / 4);
     if (estInputTokens > 180000) {
+      const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
       console.log(chalk.yellow(
-        `\n  ⚠  Estimated context is ~${Math.round(estInputTokens / 1000)}K tokens — ` +
-        `likely to exceed the model's context window.\n` +
-        `  Blast Radius may fail. Consider:\n` +
-        `    • Running Conflict only (handles large codebases via multi-pass)\n` +
-        `    • Reloading with --exclude-presets to reduce context size\n`
+        `\n  ⚠  This codebase requires more context than your current ${tierCap}-token cap.\n` +
+        `  Blast Radius Forecast works best with a higher context tier:\n` +
+        `    • Pro        — 100,000 tokens  ($99/mo)\n` +
+        `    • Team       — 150,000 tokens  ($399/mo)\n` +
+        `    • Enterprise — 200,000 tokens  ($1,200/mo)\n` +
+        `  ghostarchitect.dev/pricing\n` +
+        `\n  You can still try — or run Conflict only which handles large codebases via multi-pass.\n`
       ));
     }
 
