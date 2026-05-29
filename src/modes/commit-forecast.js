@@ -409,11 +409,26 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       ? forecastTarget[0]
       : `${forecastTarget.length} proposed files`;
 
+    // Context window pre-flight check. Sonnet's window is ~200K tokens;
+    // blast uses max_tokens:8096, leaving ~192K for the prompt. Warn the
+    // user before they spend money on a call that will fail. Threshold is
+    // 180K to give a comfortable margin.
+    const estInputTokens = Math.ceil(patchedContext.context.length / 4);
+    if (estInputTokens > 180000) {
+      console.log(chalk.yellow(
+        `\n  ⚠  Estimated context is ~${Math.round(estInputTokens / 1000)}K tokens — ` +
+        `likely to exceed the model's context window.\n` +
+        `  Blast Radius may fail. Consider:\n` +
+        `    • Running Conflict only (handles large codebases via multi-pass)\n` +
+        `    • Reloading with --exclude-presets to reduce context size\n`
+      ));
+    }
+
     const { proceed } = await inquirer.prompt([{
       type: 'confirm',
       name: 'proceed',
       message: chalk.cyan('Run Blast Radius forecast?'),
-      default: true,
+      default: estInputTokens <= 180000, // default No when likely to fail
     }]);
     if (!proceed) {
       console.log(chalk.gray('\n  Blast Radius skipped.\n'));
