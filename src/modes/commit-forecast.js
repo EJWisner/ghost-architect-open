@@ -102,8 +102,22 @@ function resolveBaselineRoot(fileMap) {
 
 async function selectForecastSurface(codebaseContext) {
   const fileMap     = codebaseContext.fileMap || {};
-  const baseRoot    = resolveBaselineRoot(fileMap);
-  const hasGit      = baseRoot ? isGitRepo(baseRoot) : false;
+  // Derive the baseline root from the fileMap key prefix. When context is
+  // truncated (token cap hit), only a subset of files loaded — the common
+  // prefix may resolve to a subdirectory (e.g. src/) rather than the repo
+  // root. Fall back through: fileMap prefix → process.cwd() → null.
+  let baseRoot = resolveBaselineRoot(fileMap);
+  let hasGit   = baseRoot ? isGitRepo(baseRoot) : false;
+
+  if (!hasGit) {
+    // fileMap root didn't have git — try cwd directly (handles worktrees
+    // and truncated loads where prefix resolves to a subdir).
+    const cwd = process.cwd();
+    if (isGitRepo(cwd)) {
+      baseRoot = cwd;
+      hasGit   = true;
+    }
+  }
 
   const choices = [];
 
