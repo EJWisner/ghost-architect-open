@@ -90,6 +90,67 @@ export async function loadCodebase(method, options) {
   }
 }
 
+// ── loadFromPath — non-interactive, takes a known directory path ──────────────
+// Used by the Commit Forecast non-interactive flag path (--baseline).
+// Throws with a clear message if path doesn't exist or isn't a directory.
+// Returns the same shape as loadFromFiles.
+export async function loadFromPath(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    throw new Error(`Path does not exist: ${dirPath}`);
+  }
+  if (!fs.statSync(dirPath).isDirectory()) {
+    throw new Error(`Path is not a directory: ${dirPath}`);
+  }
+  return await _loadFromDirPath(dirPath);
+}
+
+// ── _loadFromDirPath — shared implementation used by both interactive and non-interactive paths ──
+async function _loadFromDirPath(dirPath) {
+  const spinner = ora('Scanning files...').start();
+
+  // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
+  const allFiles = await glob(`${dirPath}/**/*`, { nodir: true });
+  const allCodeFiles = allFiles.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+
+  // Step 2: apply default IGNORED_DIRS + IGNORED_FILES exclusions.
+  const beforeDefaults = allCodeFiles.length;
+  let codeFiles = allCodeFiles.filter(f => {
+    const rel = path.relative(dirPath, f);
+    const segments = rel.split(path.sep);
+    for (const d of IGNORED_DIRS) {
+      if (d.includes('/')) {
+        const parts = d.split('/');
+        for (let i = 0; i + parts.length <= segments.length; i++) {
+          if (parts.every((p, k) => segments[i + k] === p)) return false;
+        }
+      } else if (segments.includes(d)) {
+        return false;
+      }
+    }
+    if (IGNORED_FILES.includes(path.basename(f))) return false;
+    return true;
+  });
+  const defaultExcluded = beforeDefaults - codeFiles.length;
+  if (defaultExcluded > 0) {
+    console.log(chalk.gray(`  ℹ  Default excludes: skipped ${defaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+  }
+
+  const patterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
+  if (patterns.length > 0) {
+    const { kept, excluded } = filterPaths(codeFiles, dirPath, patterns);
+    codeFiles = kept;
+    if (excluded > 0) {
+      console.log(chalk.gray(`  ℹ  Exclusions: skipped ${excluded} file(s) matching ${patterns.length} pattern(s)`));
+    }
+  }
+
+  spinner.succeed(`Found ${codeFiles.length} code files`);
+
+  const result = await readFiles(codeFiles, dirPath);
+  if (result) result.basePath = dirPath;
+  return result;
+}
+
 async function loadFromFiles() {
   // Retry loop — re-prompt on bad path instead of exiting to main menu
   let dirPath;
@@ -122,54 +183,7 @@ async function loadFromFiles() {
     break;
   }
 
-  const spinner = ora('Scanning files...').start();
-
-  // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
-  const allFiles = await glob(`${dirPath}/**/*`, { nodir: true });
-  const allCodeFiles = allFiles.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
-
-  // Step 2: apply default IGNORED_DIRS + IGNORED_FILES exclusions.
-  const beforeDefaults = allCodeFiles.length;
-  let codeFiles = allCodeFiles.filter(f => {
-    const rel = path.relative(dirPath, f);
-    const segments = rel.split(path.sep);
-    // Match any IGNORED_DIRS entry as either a path segment OR a slash-joined sub-path.
-    for (const d of IGNORED_DIRS) {
-      if (d.includes('/')) {
-        // Multi-segment match like 'pub/static' — require the segments to appear in order.
-        const parts = d.split('/');
-        for (let i = 0; i + parts.length <= segments.length; i++) {
-          if (parts.every((p, k) => segments[i + k] === p)) return false;
-        }
-      } else if (segments.includes(d)) {
-        return false;
-      }
-    }
-    if (IGNORED_FILES.includes(path.basename(f))) return false;
-    return true;
-  });
-  const defaultExcluded = beforeDefaults - codeFiles.length;
-  if (defaultExcluded > 0) {
-    console.log(chalk.gray(`  ℹ  Default excludes: skipped ${defaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
-  }
-
-  // Apply --exclude / --exclude-presets if any were set on SCAN_OPTIONS.
-  const patterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
-  if (patterns.length > 0) {
-    const { kept, excluded } = filterPaths(codeFiles, dirPath, patterns);
-    codeFiles = kept;
-    if (excluded > 0) {
-      console.log(chalk.gray(`  ℹ  Exclusions: skipped ${excluded} file(s) matching ${patterns.length} pattern(s)`));
-    }
-  }
-
-  spinner.succeed(`Found ${codeFiles.length} code files`);
-
-  const result = await readFiles(codeFiles, dirPath);
-  // Attach basePath so downstream analyzers (e.g. audit-mode's keyPersonRisk)
-  // can shell out to git or read non-code files relative to the codebase root.
-  if (result) result.basePath = dirPath;
-  return result;
+  return await _loadFromDirPath(dirPath);
 }
 
 async function loadFromZip() {
