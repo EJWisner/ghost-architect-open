@@ -389,16 +389,19 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const blastOverLimit = (analysisMode === 'blast' || analysisMode === 'both') && estBlastTokens > 180000;
 
   if (blastOverLimit) {
-    // Show warning + conflict estimate together, then skip blast automatically.
     const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
+    // Build tier-aware upgrade line — don't suggest tiers the user is already on or below.
+    const upgradeLine = tier === 'enterprise'
+      ? `  This codebase exceeds even the Enterprise context cap. Consider scanning a subfolder.\n`
+      : tier === 'team'
+      ? `  Upgrade for full Blast Radius coverage:\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`
+      : tier === 'pro'
+      ? `  Upgrade for full Blast Radius coverage:\n    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`
+      : `  Upgrade for full Blast Radius coverage:\n    • Pro        — 100,000 tokens  ($99/mo)\n    • Team       — 150,000 tokens  ($399/mo)\n    • Enterprise — 200,000 tokens  ($1,200/mo)\n  ghostarchitect.dev/pricing\n`;
     console.log(chalk.yellow(
       `\n  ⚠  This codebase requires more context than your current ${tierCap}-token cap.\n` +
       `  Blast Radius Forecast is not available for this codebase on your current tier.\n` +
-      `  Upgrade for full Blast Radius coverage:\n` +
-      `    • Pro        — 100,000 tokens  ($99/mo)\n` +
-      `    • Team       — 150,000 tokens  ($399/mo)\n` +
-      `    • Enterprise — 200,000 tokens  ($1,200/mo)\n` +
-      `  ghostarchitect.dev/pricing\n`
+      upgradeLine
     ));
     if (analysisMode === 'both') {
       const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
