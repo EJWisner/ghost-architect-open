@@ -95,13 +95,21 @@ Use this aggregation rule to pick the overall level:
 }
 
 
-export function buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext }) {
+export function buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext, forecastContext }) {
   const isMultiPass = totalPasses > 1;
   const passHeader  = isMultiPass
     ? `This is pass ${passNum} of ${totalPasses} in a multi-pass conflict scan of a ${totalFiles}-file codebase.\n\n`
     : `Performing a full conflict detection scan of this ${totalFiles}-file codebase.\n\n`;
 
+  // forecastContext: when set, this is a Commit Forecast run. Prepend framing so
+  // the model knows the proposed file versions are already in the codebase context
+  // and should report conflicts in terms of "if you push now."
+  const forecastBlock = forecastContext
+    ? `COMMIT FORECAST CONTEXT:\n${forecastContext}\n\n`
+    : '';
+
   return (
+    forecastBlock +
     passHeader +
     (priorContext || '') +
     `Scan ONLY the files in this pass for conflicts. ` +

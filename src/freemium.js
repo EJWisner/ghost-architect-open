@@ -41,9 +41,22 @@
 import Configstore from 'configstore';
 import chalk from 'chalk';
 import boxen from 'boxen';
+// FORECAST_QUOTA is owned by tier-gates.js (the policy source of truth).
+// Imported here so renderForecastPaywall copy stays in sync without duplicating
+// the constant. tier-gates never imports freemium — no circular dependency.
+import { FORECAST_QUOTA } from './license/tier-gates.js';
 
 const CONFIGSTORE_NAME = 'ghost-architect';
 const COUNT_KEY = 'ghostOpenScanCount';
+// Separate counter for Commit Forecast. Isolated from ghostOpenScanCount
+// because Forecast is the only mode designed to run many times per
+// developer per day — a shared counter would drain the 4-scan quota in
+// minutes. Open gets FORECAST_QUOTA free Forecasts total (per-install,
+// same honor-system contract as the main quota). Pro+ see no gate at all;
+// tier-gates.js handles that distinction. Counter is bumped in
+// src/modes/commit-forecast.js after a successful run.
+const FORECAST_COUNT_KEY = 'ghostOpenForecastCount';
+// FORECAST_QUOTA imported from tier-gates.js above — do not re-declare here.
 
 // Modes whose successful saved-report runs count toward the free quota.
 // Question (single-shot Q&A — separate Open-tier free mode), Recon (no
@@ -55,6 +68,12 @@ const COUNTED_PREFIXES = new Set([
   'ghost-blast',
   'ghost-conflict',
   'ghost-prompt-triage',
+  // Commit Forecast has its own separate counter (FORECAST_COUNT_KEY) because
+  // it is designed to run many times per day and would drain the shared quota
+  // in minutes. Open gets 1 free Forecast; Pro+ are unlimited. The counter is
+  // bumped in src/modes/commit-forecast.js after a successful forecast run,
+  // not in saveReport, because Forecast output is not a "saved report" in the
+  // traditional sense — it's an ephemeral analysis artifact.
 ]);
 
 // Mode-id-to-prefix mapping for the gate check (called from bin/ghost.js
@@ -92,6 +111,60 @@ export function incrementScanCount(prefix) {
 // editing the configstore file at ~/.config/configstore/ghost-architect.json
 export function resetScanCount() {
   getStore().delete(COUNT_KEY);
+}
+
+// ── Commit Forecast quota helpers ─────────────────────────────────────────────
+// Isolated from the main scan counter. See FORECAST_COUNT_KEY comment above.
+
+export function getForecastCount() {
+  return getStore().get(FORECAST_COUNT_KEY) || 0;
+}
+
+export function incrementForecastCount() {
+  const store = getStore();
+  const current = store.get(FORECAST_COUNT_KEY) || 0;
+  store.set(FORECAST_COUNT_KEY, current + 1);
+}
+
+// Test helper.
+export function resetForecastCount() {
+  getStore().delete(FORECAST_COUNT_KEY);
+}
+
+// Render the Commit Forecast quota-exhausted paywall for Open tier.
+// paywallPromo is worker-driven; empty string = no promo block.
+export function renderForecastPaywall(paywallPromo = '') {
+  const lines = [
+    chalk.yellow.bold(`You've used your free Commit Forecast.`),
+    '',
+    chalk.white('Commit Forecast is designed to run continuously — before every'),
+    chalk.white('push, every review cycle, every offshore file drop.'),
+    chalk.white('Upgrade to Pro for unlimited Commit Forecasts.'),
+  ];
+  if (paywallPromo) {
+    lines.push('');
+    lines.push(chalk.cyan.bold(paywallPromo));
+  }
+  lines.push('');
+  lines.push(chalk.white('What Pro unlocks:'));
+  lines.push(chalk.gray('  • Unlimited Commit Forecasts'));
+  lines.push(chalk.gray('  • Unlimited POI, Blast, Conflict, Prompt Triage reports'));
+  lines.push(chalk.gray('  • Project tracking and history'));
+  lines.push(chalk.gray('  • Inheritance Audit'));
+  lines.push('');
+  lines.push(chalk.white('Upgrade at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'));
+  lines.push(chalk.gray('  Pro        $99/mo'));
+  lines.push(chalk.gray('  Team       $399/mo'));
+  lines.push(chalk.gray('  Enterprise $1,200/mo'));
+  lines.push('');
+  lines.push(chalk.white('Have a license? Activate it:'));
+  lines.push(chalk.cyan('  ghost --activate <your key here>'));
+  console.log('\n' + boxen(lines.join('\n'), {
+    padding: 1,
+    borderColor: 'yellow',
+    borderStyle: 'round',
+  }));
+  console.log('');
 }
 
 // Called from bin/ghost.js right before dispatching to a mode. Returns:

@@ -1,0 +1,202 @@
+// src/utils/diff-renderer.js — Ghost Architect™ Commit Forecast diff display
+//
+// Renders a human-readable inline diff of proposed vs baseline file content
+// for the Commit Forecast mode. Shown BEFORE analysis runs so the developer
+// can sanity-check the overlay before burning API budget.
+//
+// Design constraints:
+//   - No external diff library. Uses a simple line-level unified diff algorithm
+//     (longest common subsequence via Myers-ish patience approach). Fast enough
+//     for typical file sizes (< 5000 lines); not intended for binary or minified
+//     files.
+//   - Output is terminal-only (chalk). Not included in saved reports.
+//   - Hard cap: if a single file diff exceeds MAX_DIFF_LINES, show a summary
+//     line count instead of the full diff. Prevents wall-of-text for large files.
+//   - Cap on number of files shown in detail: DETAIL_FILE_CAP. Beyond that, list
+//     filenames only.
+
+import chalk from 'chalk';
+import path  from 'path';
+
+const MAX_DIFF_LINES   = 60;  // max changed lines shown per file before truncating
+const DETAIL_FILE_CAP  = 8;   // max files shown with inline diff detail
+const CONTEXT_LINES    = 2;   // unchanged lines shown above/below each change block
+
+// ── LCS-based line diff ───────────────────────────────────────────────────────
+
+/**
+ * Compute a unified line diff between two strings.
+ * Returns an array of { type: 'context'|'add'|'remove', line: string } objects.
+ * 
+ * Uses a simple patience-diff algorithm (LCS on unique lines). Fast and readable
+ * output for code files. Not optimal for pathological inputs but those won't
+ * appear in normal codebases.
+ */
+function computeLineDiff(baselineText, proposedText) {
+  const baseLines     = (baselineText || '').split('\n');
+  const proposedLines = (proposedText  || '').split('\n');
+
+  // Build LCS table
+  const m = baseLines.length;
+  const n = proposedLines.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (baseLines[i - 1] === proposedLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to build diff
+  const ops = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && baseLines[i - 1] === proposedLines[j - 1]) {
+      ops.push({ type: 'context', line: baseLines[i - 1] });
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ type: 'add', line: proposedLines[j - 1] });
+      j--;
+    } else {
+      ops.push({ type: 'remove', line: baseLines[i - 1] });
+      i--;
+    }
+  }
+  ops.reverse();
+  return ops;
+}
+
+/**
+ * Collapse a full op list to only the changed lines plus CONTEXT_LINES
+ * of surrounding context. Returns a compressed array of op objects, with
+ * `{ type: 'separator', skipped: N }` markers between non-contiguous hunks.
+ */
+function collapseToHunks(ops) {
+  const changedIndices = new Set();
+  ops.forEach((op, idx) => {
+    if (op.type !== 'context') changedIndices.add(idx);
+  });
+
+  if (changedIndices.size === 0) return [];
+
+  // Expand each changed index by ±CONTEXT_LINES
+  const shown = new Set();
+  for (const idx of changedIndices) {
+    for (let k = Math.max(0, idx - CONTEXT_LINES); k <= Math.min(ops.length - 1, idx + CONTEXT_LINES); k++) {
+      shown.add(k);
+    }
+  }
+
+  const result = [];
+  let lastShown = -1;
+  for (let i = 0; i < ops.length; i++) {
+    if (shown.has(i)) {
+      if (lastShown >= 0 && i > lastShown + 1) {
+        result.push({ type: 'separator', skipped: i - lastShown - 1 });
+      }
+      result.push(ops[i]);
+      lastShown = i;
+    }
+  }
+  return result;
+}
+
+// ── Public renderer ───────────────────────────────────────────────────────────
+
+/**
+ * Render a diff summary for the Commit Forecast mode.
+ *
+ * @param {object} changedFiles     — { modified: string[], added: string[] }
+ * @param {object} baselineFileMap  — the original { filePath: content } map
+ * @param {object} patchedFileMap   — the overlay { filePath: content } map
+ */
+export function renderForecastDiff(changedFiles, baselineFileMap, patchedFileMap) {
+  const { modified = [], added = [] } = changedFiles;
+  const total = modified.length + added.length;
+
+  if (total === 0) return;
+
+  console.log('\n' + chalk.cyan.bold('─── Proposed Changes Detail ─────────────────────────────────────'));
+  console.log('');
+
+  let detailCount = 0;
+
+  // ── Modified files ──────────────────────────────────────────────────────
+  for (const filePath of modified) {
+    const baseline = baselineFileMap[filePath] || '';
+    const proposed = patchedFileMap[filePath]  || '';
+
+    if (baseline === proposed) {
+      // Identical content despite being in the proposed folder — skip.
+      continue;
+    }
+
+    const relPath = Object.keys(baselineFileMap).includes(filePath)
+      ? path.basename(filePath)
+      : filePath;
+
+    console.log(chalk.yellow(`  ~ ${relPath}`) + chalk.dim(`  (${path.dirname(filePath)})`));
+
+    if (detailCount >= DETAIL_FILE_CAP) {
+      console.log(chalk.gray('    (diff detail omitted — file limit reached)\n'));
+      continue;
+    }
+
+    const ops      = computeLineDiff(baseline, proposed);
+    const adds     = ops.filter(o => o.type === 'add').length;
+    const removes  = ops.filter(o => o.type === 'remove').length;
+    const totalChanged = adds + removes;
+
+    console.log(chalk.gray(`    ${chalk.green('+' + adds)} ${chalk.red('-' + removes)}`));
+
+    if (totalChanged > MAX_DIFF_LINES) {
+      console.log(chalk.gray(`    (${totalChanged} changed lines — showing summary only)\n`));
+      detailCount++;
+      continue;
+    }
+
+    const hunks = collapseToHunks(ops);
+    for (const op of hunks) {
+      if (op.type === 'separator') {
+        console.log(chalk.gray(`    @@ ... ${op.skipped} unchanged lines ... @@`));
+      } else if (op.type === 'add') {
+        console.log(chalk.green(`    + ${op.line}`));
+      } else if (op.type === 'remove') {
+        console.log(chalk.red(`    - ${op.line}`));
+      } else {
+        console.log(chalk.gray(`      ${op.line}`));
+      }
+    }
+    console.log('');
+    detailCount++;
+  }
+
+  // ── Added files ─────────────────────────────────────────────────────────
+  for (const filePath of added) {
+    const proposed  = patchedFileMap[filePath] || '';
+    const lineCount = proposed.split('\n').length;
+    console.log(chalk.green(`  + ${path.basename(filePath)}`) + chalk.dim(`  (${path.dirname(filePath)})  [new file, ${lineCount} lines]`));
+
+    if (detailCount >= DETAIL_FILE_CAP) {
+      console.log(chalk.gray('    (diff detail omitted — file limit reached)\n'));
+      continue;
+    }
+
+    const previewLines = proposed.split('\n').slice(0, 12);
+    for (const line of previewLines) {
+      console.log(chalk.green(`    + ${line}`));
+    }
+    if (lineCount > 12) {
+      console.log(chalk.gray(`    ... ${lineCount - 12} more lines`));
+    }
+    console.log('');
+    detailCount++;
+  }
+
+  console.log(chalk.cyan.bold('─────────────────────────────────────────────────────────────────'));
+  console.log('');
+}
