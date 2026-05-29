@@ -385,18 +385,33 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   console.log('');
 
   // Show cost estimate now that we know what was selected.
-  // For Blast, only show cost if context is within limits — otherwise
-  // the warning below explains why they shouldn't run it.
   const estBlastTokens = Math.ceil(patchedContext.context.length / 4);
   const blastOverLimit = (analysisMode === 'blast' || analysisMode === 'both') && estBlastTokens > 180000;
 
-  if ((analysisMode === 'blast' || analysisMode === 'both') && !blastOverLimit) {
-    showCostEstimate(patchedContext, 'blast', model);
-  }
-  if (analysisMode === 'conflict' || analysisMode === 'both') {
-    // Only show conflict estimate upfront if blast isn't going to show a warning.
-    // When blast is over limit, both estimates show after the warning.
-    if (!blastOverLimit) {
+  if (blastOverLimit) {
+    // Show warning + conflict estimate together, then skip blast automatically.
+    const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
+    console.log(chalk.yellow(
+      `\n  ⚠  This codebase requires more context than your current ${tierCap}-token cap.\n` +
+      `  Blast Radius Forecast is not available for this codebase on your current tier.\n` +
+      `  Upgrade for full Blast Radius coverage:\n` +
+      `    • Pro        — 100,000 tokens  ($99/mo)\n` +
+      `    • Team       — 150,000 tokens  ($399/mo)\n` +
+      `    • Enterprise — 200,000 tokens  ($1,200/mo)\n` +
+      `  ghostarchitect.dev/pricing\n`
+    ));
+    if (analysisMode === 'both') {
+      const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
+      console.log(chalk.gray(
+        `  Continuing with Conflict Detection: ~${conflictInfo.passes.length} passes` +
+        `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min\n`
+      ));
+    }
+  } else {
+    if (analysisMode === 'blast' || analysisMode === 'both') {
+      showCostEstimate(patchedContext, 'blast', model);
+    }
+    if (analysisMode === 'conflict' || analysisMode === 'both') {
       const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
       console.log(chalk.gray(
         `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
@@ -418,69 +433,50 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       ? forecastTarget[0]
       : `${forecastTarget.length} proposed files`;
 
-    // Context window pre-flight — show warning before confirm prompt.
-    // Sonnet window ~200K; blast uses 8K output headroom leaving ~192K.
-    // Threshold 180K gives a safety margin.
+    // Context window pre-flight — auto-skip if over limit (warning already shown above).
     if (estBlastTokens > 180000) {
-      const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
-      console.log(chalk.yellow(
-        `\n  ⚠  This codebase requires more context than your current ${tierCap}-token cap.\n` +
-        `  Blast Radius Forecast works best with a higher context tier:\n` +
-        `    • Pro        — 100,000 tokens  ($99/mo)\n` +
-        `    • Team       — 150,000 tokens  ($399/mo)\n` +
-        `    • Enterprise — 200,000 tokens  ($1,200/mo)\n` +
-        `  ghostarchitect.dev/pricing\n` +
-        `\n  You can still try — or run Conflict only which handles large codebases via multi-pass.\n`
-      ));
-      // Show conflict estimate here so user knows what will run if they skip blast.
-      if (analysisMode === 'both') {
-        const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
-        console.log(chalk.gray(
-          `  Conflict will still run: ~${conflictInfo.passes.length} passes` +
-          `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min\n`
-        ));
-      }
-    }
-
-    const { proceed } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'proceed',
-      message: chalk.cyan('Run Blast Radius forecast?'),
-      default: estBlastTokens <= 180000,
-    }]);
-    if (!proceed) {
-      console.log(chalk.gray('\n  Blast Radius skipped.\n'));
+      console.log(chalk.gray('  Blast Radius skipped — context too large for current tier.\n'));
     } else {
-      const blastSpinner = ora({
-        text: chalk.gray(`Mapping blast radius for ${targetLabel}...`),
-        color: 'cyan',
-      }).start();
+      const { proceed } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'proceed',
+        message: chalk.cyan('Run Blast Radius forecast?'),
+        default: true,
+      }]);
+      if (!proceed) {
+        console.log(chalk.gray('\n  Blast Radius skipped.\n'));
+      } else {
+        const blastSpinner = ora({
+          text: chalk.gray(`Mapping blast radius for ${targetLabel}...`),
+          color: 'cyan',
+        }).start();
 
-      try {
-        await runBlastRadius(
-          patchedContext,
-          forecastTarget,
-          (chunk) => { blastBuffer += chunk; },
-          {
-            onNarratorStart: () => {
-              blastSpinner.text = chalk.gray('Ghost is writing the blast radius forecast...');
-            },
-            profile,
-            forecastMode: true, // signals analyst to frame output as "if you push now"
-          }
-        );
-        blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
-        console.log('');
+        try {
+          await runBlastRadius(
+            patchedContext,
+            forecastTarget,
+            (chunk) => { blastBuffer += chunk; },
+            {
+              onNarratorStart: () => {
+                blastSpinner.text = chalk.gray('Ghost is writing the blast radius forecast...');
+              },
+              profile,
+              forecastMode: true,
+            }
+          );
+          blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
+          console.log('');
 
-        const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 300;
-        const outputTokens = Math.ceil(blastBuffer.length / 4);
-        showActualCost(inputTokens, outputTokens, model);
-        console.log('');
-      } catch (err) {
-        blastSpinner.fail(chalk.red('Blast Radius forecast failed'));
-        showFriendlyError(err);
-      }
-    }
+          const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 300;
+          const outputTokens = Math.ceil(blastBuffer.length / 4);
+          showActualCost(inputTokens, outputTokens, model);
+          console.log('');
+        } catch (err) {
+          blastSpinner.fail(chalk.red('Blast Radius forecast failed'));
+          showFriendlyError(err);
+        }
+      } // end else proceed
+    } // end else blast within limit
   }
 
   // ── Conflict Detection ──────────────────────────────────────────────────
