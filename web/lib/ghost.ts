@@ -16,7 +16,7 @@ export interface ReportFile {
   filePath:    string;
   date:        string;
   size:        number;
-  type:        'poi' | 'blast' | 'conflict' | 'compare' | 'unknown';
+  type:        'poi' | 'blast' | 'conflict' | 'compare' | 'forecast' | 'unknown';
   ext:         'md' | 'txt';
 }
 
@@ -34,6 +34,7 @@ export function listReports(): ReportFile[] {
       if (lower.includes('blast'))    type = 'blast';
       if (lower.includes('conflict')) type = 'conflict';
       if (lower.includes('compare'))  type = 'compare';
+      if (lower.includes('forecast')) type = 'forecast';
 
       const stem    = f.replace(/\.(md|txt)$/, '');
       const parts   = stem.split('-');
@@ -114,10 +115,11 @@ export function timeAgo(dateStr: string): string {
 
 export function modeLabel(type: ReportFile['type']): string {
   switch (type) {
-    case 'poi': return '🗺  Points of Interest';
-    case 'blast': return '💥 Blast Radius';
+    case 'poi':      return '🗺  Points of Interest';
+    case 'blast':    return '💥 Blast Radius';
     case 'conflict': return '⚡ Conflict Detection';
-    case 'compare': return '🔍 Compare';
-    default: return '📄 Report';
+    case 'compare':  return '🔍 Compare';
+    case 'forecast': return '🔮 Commit Forecast';
+    default:         return '📄 Report';
   }
 }

@@ -19,6 +19,7 @@ function modeColor(type: string): string {
     case 'blast':    return '#ff4455';
     case 'conflict': return '#b44fff';
     case 'compare':  return '#ffd700';
+    case 'forecast': return '#00ffcc';
     default:         return '#8888aa';
   }
 }
@@ -29,6 +30,7 @@ function modeIcon(type: string): string {
     case 'blast':    return '💥';
     case 'conflict': return '⚡';
     case 'compare':  return '🔍';
+    case 'forecast': return '🔮';
     default:         return '📄';
   }
 }
@@ -88,7 +90,7 @@ function ReportsContent() {
 
           {/* Filter tabs */}
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {['all','poi','blast','conflict','compare'].map(f => (
+            {['all','poi','blast','conflict','compare','forecast'].map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
