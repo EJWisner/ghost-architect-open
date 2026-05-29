@@ -44,7 +44,7 @@ If it's code, Ghost reads it.
 
 ---
 
-## Six modes
+## Nine modes
 
 **💬 Question**
 Ask anything about the codebase in plain English. Ghost answers like a senior architect who has read every file.
@@ -78,7 +78,17 @@ Scan a codebase for places where two or more parts make conflicting assumptions 
 
 Useful before deployments, integration work, or migrations.
 
-**🩹 Prompt Triage**
+**🔮 Commit Forecast**
+Analyze your proposed changes against the production codebase and forecast the Blast Radius and Conflict impact before you commit or push. Ghost does not apply changes, does not commit, does not push — it shows you what *would* happen if you did.
+
+Two entry surfaces:
+
+- **Pre-commit:** Ghost auto-discovers your working-tree changes via `git diff --name-only HEAD`. Run it before every push. No arguments needed.
+- **Offline / received files:** Point Ghost at a folder of proposed files that mirrors the repo structure. Covers the offshore-review use case: an architect receives files from an offshore team and wants to assess impact before accepting them.
+
+> Cut your container-to-stage cycles from five to one. Ghost analyzes your proposed changes against the production codebase directly — before you push — so you find out in seconds, not after a failed deploy.
+
+**🧪 Prompt Triage**
 Audit prompts and prompt-driven workflows in your codebase for structural issues: missing context, ambiguous instructions, brittle assumptions, token bloat. Designed for teams building LLM-integrated applications who need to catch prompt drift before it reaches production.
 
 **🔍 Recon (sizing only)**
@@ -89,6 +99,12 @@ A pre-engagement sizing report. Single planner call (~$0.05), no full scan. Prod
 - Quick scoping during discovery calls
 
 When a Ghost Partner™ profile is loaded, recon reads in the consultant's voice and emphasizes their methodology's priorities.
+
+**🔍 Compare Reports**
+Diff two saved Ghost reports (before and after a refactor, upgrade, or fix cycle) to see exactly what moved: which findings were resolved, which are new, and where severity shifted. Quantifies remediation progress.
+
+**📊 Project Dashboard**
+Track remediation velocity across all your scanned projects. Shows critical/high/medium/low finding counts, resolved vs. remaining, and progress over time. Pro+ feature.
 
 ---
 
@@ -238,6 +254,7 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Points of Interest scan | ✅ | ✅ | ✅ | ✅ |
 | Blast Radius + Rollback | ✅ | ✅ | ✅ | ✅ |
 | Conflict Detection | ✅ | ✅ | ✅ | ✅ |
+| Commit Forecast | 1 free / install | ✅ unlimited | ✅ unlimited | ✅ unlimited |
 | Prompt Triage | ✅ | ✅ | ✅ | ✅ |
 | Recon sizing | ✅ | ✅ | ✅ | ✅ |
 | Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ |
@@ -314,12 +331,13 @@ Ghost shows a cost estimate **before** every scan and the actual cost **after**.
 | Operation | Codebase size | Est. cost (Sonnet 4.6) |
 |---|---|---|
 | Recon (sizing only) | Any | ~$0.05 |
+| Question exchange | Any | ~$0.02 to $0.08 |
+| Commit Forecast | Any | ~$0.15 to $0.60 |
 | Points of Interest scan | Small (~50 files) | ~$0.15 |
 | Points of Interest scan | Medium (~150 files) | ~$1.50 |
 | Points of Interest scan | Large (~500 files) | ~$4.00 |
 | Blast Radius Analysis | Any | ~$0.10 to $0.30 |
 | Conflict Detection | Medium | ~$0.50 to $1.50 |
-| Question exchange | Any | ~$0.02 to $0.08 |
 
 **The real comparison:** a senior architect doing the same analysis manually bills $3,000 to $5,000. Ghost delivers comparable depth in minutes for under a few dollars.
 
@@ -450,6 +468,21 @@ Run Conflict Detection before any major release, integration, or migration.
 ```
 
 **Result:** catches contract drift, config-key mismatches, and schema disagreements before they become production incidents.
+
+---
+
+### Pre-Push Commit Forecast
+Before every push, know what your changes will break.
+
+```
+1. Make your changes in your working directory (as normal)
+2. Run Ghost → Commit Forecast → Pre-commit
+3. Ghost auto-detects your changed files via git diff
+4. Read the blast radius and conflict forecast
+5. Fix anything critical before you push
+```
+
+**Result:** container-to-stage cycles drop from five to one. You find out what breaks before the push, not after a failed deploy. The offshore version of the same workflow — point Ghost at a folder of received files instead of your working tree, and assess impact before accepting the changes.
 
 ---
 
