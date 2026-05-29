@@ -465,7 +465,7 @@ async function updateManifest(octokit, owner, repo, newEntry) {
 export async function publishToPortal({
   baseName, mode, label,
   txtPath, mdPath, pdfPath, findingsJsonPath,
-  reportText, scanIso,
+  reportText, scanIso = new Date().toISOString(),
 }) {
   if (!isPortalConfigured()) return { ok: false, reason: 'not_configured' };
 
