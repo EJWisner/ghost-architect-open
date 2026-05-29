@@ -26,6 +26,7 @@ import ora   from 'ora';
 import inquirer from 'inquirer';
 import fs   from 'fs';
 import path from 'path';
+import os   from 'os';
 
 import { showFriendlyError }   from '../utils/errors.js';
 import { runBlastRadius }      from '../analyst/index.js';
@@ -273,8 +274,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   let proposedDir;
 
   if (surface === 'precommit') {
-    // Pre-commit: working directory IS the proposed folder.
-    proposedDir = baseRoot;
     console.log(chalk.gray(`\n  Discovering working-tree changes in ${baseRoot}...\n`));
 
     const changedPaths = discoverWorkingTreeChanges(baseRoot);
@@ -286,6 +285,27 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       return;
     }
     console.log(chalk.gray(`  Found ${changedPaths.length} changed/new file(s) in working tree.\n`));
+
+    // Build a temp directory mirroring only the changed files so buildForecastOverlay
+    // sees just the proposed set, not the entire working tree. Without this,
+    // passing baseRoot as proposedDir causes collectFiles() to walk all 185 files
+    // and treat every one as a proposed change.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-precommit-'));
+    try {
+      for (const absPath of changedPaths) {
+        const rel    = path.relative(baseRoot, absPath);
+        const dest   = path.join(tmpDir, rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        if (fs.existsSync(absPath)) {
+          fs.copyFileSync(absPath, dest);
+        }
+      }
+      proposedDir = tmpDir;
+    } catch (err) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      console.log(chalk.red(`\n  Failed to stage working-tree files: ${err.message}\n`));
+      return;
+    }
   } else {
     // Offline/folder surface: user points Ghost at an explicit folder.
     proposedDir = await promptProposedFolder();
@@ -293,6 +313,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   }
 
   // ── Build overlay ───────────────────────────────────────────────────────
+  // Track whether proposedDir is a temp dir we created (pre-commit surface)
+  // so we can clean it up after the overlay is built.
+  const isTempDir = surface === 'precommit';
+
   const overlaySpinner = ora({
     text: chalk.gray('Building forecast overlay...'),
     color: 'cyan',
@@ -308,9 +332,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     overlaySpinner.stop();
   } catch (err) {
     overlaySpinner.stop();
+    if (isTempDir) fs.rmSync(proposedDir, { recursive: true, force: true });
     console.log(chalk.red(`\n  Forecast overlay failed: ${err.message}\n`));
     return;
   }
+  // Clean up temp dir now that overlay is built — contents are in memory.
+  if (isTempDir) fs.rmSync(proposedDir, { recursive: true, force: true });
 
   // ── Diff display ────────────────────────────────────────────────────────
   const hasChanges = renderChangedFilesBox(changedFiles, surface);
@@ -328,11 +355,16 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     renderForecastDiff(changedFiles, codebaseContext.fileMap || {}, patchedContext.fileMap || {});
   }
 
+  // ── Cost estimate ───────────────────────────────────────────────────────
+  // Show before analysis mode selection so the user knows what they're
+  // committing to before they pick Blast, Conflict, or both.
+  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
+  showCostEstimate(patchedContext, 'blast', model);
+  console.log('');
+
   // ── Analysis mode ───────────────────────────────────────────────────────
   const analysisMode = await selectAnalysisMode();
   console.log('');
-
-  const model = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 
   // ── Blast Radius ────────────────────────────────────────────────────────
   let blastBuffer = '';
@@ -345,9 +377,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     const targetLabel = forecastTarget.length === 1
       ? forecastTarget[0]
       : `${forecastTarget.length} proposed files`;
-
-    showCostEstimate(patchedContext, 'blast', model);
-    console.log('');
 
     const { proceed } = await inquirer.prompt([{
       type: 'confirm',
