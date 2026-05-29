@@ -254,8 +254,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const tier         = options.tier    || 'open';
   const paywallPromo = options.paywallPromo || '';
 
-  // ── Tier gate ───────────────────────────────────────────────────────────
-  if (!checkForecastGate(tier, paywallPromo)) return;
+  // NOTE: Forecast quota gate is checked at dispatch in bin/ghost.js before
+  // this function is called. No need to re-check here.
 
   // ── Project tracking gate (D4) ──────────────────────────────────────────
   // Pro+: label prompt fires, portal publish / team-sync side effects active.

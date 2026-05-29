@@ -59,7 +59,7 @@ import {
 } from '../src/license/store.js';
 import { setActiveLicense, getActiveTier } from '../src/license/session.js';
 import { requireTier } from '../src/license/tier-gates.js';
-import { getScanCount, renderAuditPaywall, renderQuotaPaywall } from '../src/freemium.js';
+import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
 
 // Activation server endpoint. Hardcoded so customers can't be tricked into
 // activating against a malicious server (they'd already need to compromise
@@ -1481,6 +1481,16 @@ async function main() {
       const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
       if (!verdict.allowed) {
         renderPaywall(verdict.paywall, promos.paywallPromo);
+        continue;
+      }
+    }
+
+    // Commit Forecast quota gate — checked at dispatch so the paywall fires
+    // immediately when the user picks the mode, before any UI renders.
+    if (mode === 'commit-forecast') {
+      const verdict = requireTier('mode:commit-forecast', { forecastsUsed: getForecastCount() });
+      if (!verdict.allowed) {
+        renderForecastPaywall(promos.paywallPromo);
         continue;
       }
     }
