@@ -139,14 +139,14 @@ export function renderForecastPaywall(paywallPromo = '') {
     '',
     chalk.white('Commit Forecast is designed to run continuously — before every'),
     chalk.white('push, every review cycle, every offshore file drop.'),
-    chalk.white('Upgrade to Pro for unlimited Commit Forecasts.'),
+    chalk.white('Upgrade to Pro, Team, or Enterprise for unlimited Commit Forecasts.'),
   ];
   if (paywallPromo) {
     lines.push('');
     lines.push(chalk.cyan.bold(paywallPromo));
   }
   lines.push('');
-  lines.push(chalk.white('What Pro unlocks:'));
+  lines.push(chalk.white('What Pro, Team, and Enterprise unlock:'));
   lines.push(chalk.gray('  • Unlimited Commit Forecasts'));
   lines.push(chalk.gray('  • Unlimited POI, Blast, Conflict, Prompt Triage reports'));
   lines.push(chalk.gray('  • Project tracking and history'));
