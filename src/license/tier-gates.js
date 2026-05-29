@@ -64,7 +64,12 @@ const TIER_POLICY = {
   // ghostOpenScanCount so daily pro-tier usage patterns don't burn the shared
   // 4-scan quota in minutes). bin/ghost.js checks tier first, then dispatches to
   // renderForecastPaywall when the quota is exhausted. Pro+ are unlimited.
-  'mode:commit-forecast':  { open: 'forecast-quota',  trial: true,  pro: true,  team: true,  enterprise: true  },
+  'mode:commit-forecast':  { open: 'forecast-quota',     trial: true,  pro: true,  team: true,  enterprise: true  },
+  // Corrected-file forecast: Open gets 'fix-forecast-quota' — a separate 1-run
+  // quota managed by src/freemium.js's getFixForecastCount/incrementFixForecastCount.
+  // Isolated from both SCAN_QUOTA and FORECAST_QUOTA because this is a distinct
+  // surface (post-scan fix evaluation vs pre-commit impact analysis).
+  'mode:fix-forecast':     { open: 'fix-forecast-quota', trial: true,  pro: true,  team: true,  enterprise: true  },
 
   // Features — consulted as soft-gate callout sites (D3 once-per-session
   // suppression). Not yet wired at every site; this is the registry for
@@ -97,6 +102,12 @@ export const SCAN_QUOTA = 4;
 // other way around) to avoid circular dependencies — tier-gates never imports
 // freemium.
 export const FORECAST_QUOTA = 1;
+
+// Corrected-file forecast quota for Open tier. Separate from FORECAST_QUOTA
+// (pre-commit Commit Forecast) because these are distinct surfaces the user
+// encounters at different points in their workflow. Both default to 1 for
+// Open; Pro+ are unlimited for both.
+export const FIX_FORECAST_QUOTA = 1;
 
 /**
  * Ask whether a feature/mode is allowed for the active (or specified) tier.
@@ -157,6 +168,22 @@ export function requireTier(gateId, opts = {}) {
     return {
       allowed: false,
       reason: `forecast_quota_exceeded:${tier}:${used}/${limit}`,
+      paywall: paywallFor(gateId, tier),
+    };
+  }
+  // 'fix-forecast-quota' is the corrected-file forecast's isolated quota.
+  // Parallel to 'forecast-quota' but uses FIX_FORECAST_QUOTA and a different
+  // counter (freemium.getFixForecastCount / incrementFixForecastCount).
+  // Caller passes opts.fixForecastsUsed.
+  if (verdict === 'fix-forecast-quota') {
+    const used  = opts.fixForecastsUsed ?? 0;
+    const limit = FIX_FORECAST_QUOTA;
+    if (used < limit) {
+      return { allowed: true, quotaRemaining: limit - used };
+    }
+    return {
+      allowed: false,
+      reason: `fix_forecast_quota_exceeded:${tier}:${used}/${limit}`,
       paywall: paywallFor(gateId, tier),
     };
   }

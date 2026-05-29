@@ -45,6 +45,7 @@ import boxen from 'boxen';
 // Imported here so renderForecastPaywall copy stays in sync without duplicating
 // the constant. tier-gates never imports freemium — no circular dependency.
 import { FORECAST_QUOTA } from './license/tier-gates.js';
+import { FIX_FORECAST_QUOTA } from './license/tier-gates.js';
 
 const CONFIGSTORE_NAME = 'ghost-architect';
 const COUNT_KEY = 'ghostOpenScanCount';
@@ -131,6 +132,29 @@ export function resetForecastCount() {
   getStore().delete(FORECAST_COUNT_KEY);
 }
 
+// ── Corrected-file forecast quota helpers ─────────────────────────────────────
+// Isolated from both ghostOpenScanCount and ghostOpenForecastCount.
+// Corrected-file forecast is a distinct surface (post-scan fix evaluation)
+// from pre-commit Commit Forecast. Each gets its own 1-run Open quota.
+// Counter bumped in src/modes/fix-forecast-writer.js after full success.
+const FIX_FORECAST_COUNT_KEY = 'ghostOpenFixForecastCount';
+// FIX_FORECAST_QUOTA imported from tier-gates.js above — do not re-declare.
+
+export function getFixForecastCount() {
+  return getStore().get(FIX_FORECAST_COUNT_KEY) || 0;
+}
+
+export function incrementFixForecastCount() {
+  const store = getStore();
+  const current = store.get(FIX_FORECAST_COUNT_KEY) || 0;
+  store.set(FIX_FORECAST_COUNT_KEY, current + 1);
+}
+
+// Test helper.
+export function resetFixForecastCount() {
+  getStore().delete(FIX_FORECAST_COUNT_KEY);
+}
+
 // Render the Commit Forecast quota-exhausted paywall for Open tier.
 // paywallPromo is worker-driven; empty string = no promo block.
 export function renderForecastPaywall(paywallPromo = '') {
@@ -167,6 +191,47 @@ export function renderForecastPaywall(paywallPromo = '') {
   console.log('');
 }
 
+// Render the corrected-file forecast quota-exhausted paywall for Open tier.
+// Distinct from renderForecastPaywall (pre-commit Commit Forecast) so users
+// who hit both paywalls recognise them as separate surfaces.
+// paywallPromo is worker-driven; empty string = no promo block rendered.
+export function renderFixForecastPaywall(paywallPromo = '') {
+  const lines = [
+    chalk.yellow.bold(`You've used your free corrected-file forecast for this install.`),
+    '',
+    chalk.white(`Corrected-file forecast shows you what would happen if you applied`),
+    chalk.white(`Ghost's suggested fix — without touching your code. See the impact`),
+    chalk.white(`on your codebase before you ship the change.`),
+    '',
+    chalk.white('Upgrade to Pro, Team, or Enterprise for unlimited corrected-file'),
+    chalk.white('forecasts on every Ghost-suggested fix you want to evaluate.'),
+  ];
+  if (paywallPromo) {
+    lines.push('');
+    lines.push(chalk.cyan.bold(paywallPromo));
+  }
+  lines.push('');
+  lines.push(chalk.white('What Pro, Team, and Enterprise unlock:'));
+  lines.push(chalk.gray('  • Unlimited corrected-file forecasts'));
+  lines.push(chalk.gray('  • Unlimited Commit Forecasts'));
+  lines.push(chalk.gray('  • Unlimited POI, Blast, Conflict, Prompt Triage reports'));
+  lines.push(chalk.gray('  • Project tracking and history'));
+  lines.push(chalk.gray('  • Inheritance Audit'));
+  lines.push('');
+  lines.push(chalk.white('Upgrade at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'));
+  lines.push(chalk.gray('  Pro        $99/mo'));
+  lines.push(chalk.gray('  Team       $399/mo'));
+  lines.push(chalk.gray('  Enterprise $1,200/mo'));
+  lines.push('');
+  lines.push(chalk.white('Have a license? Activate it:'));
+  lines.push(chalk.cyan('  ghost --activate <your key here>'));
+  console.log('\n' + boxen(lines.join('\n'), {
+    padding: 1,
+    borderColor: 'yellow',
+    borderStyle: 'round',
+  }));
+  console.log('');
+}
 // Called from bin/ghost.js right before dispatching to a mode. Returns:
 //   { block: false }            — proceed with the scan
 //   { block: true, reason: 'audit' }  — Audit-specific paywall

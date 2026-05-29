@@ -29,6 +29,12 @@ import { computeUnifiedDiff }     from '../utils/diff-renderer.js';
 import { runConflictScan }        from '../core/conflict.js';
 import { buildForecastOverlay }   from '../core/forecast-overlay.js';
 import { saveReport }             from '../reports.js';
+import {
+  getFixForecastCount,
+  incrementFixForecastCount,
+  renderFixForecastPaywall,
+} from '../freemium.js';
+import { requireTier } from '../license/tier-gates.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -139,6 +145,24 @@ function buildFixArtifact(finding, generateResult, generatedAt) {
   return lines.join('\n');
 }
 
+// ── Tier gate ─────────────────────────────────────────────────────────────────
+// Pro+ always allowed. Open checked against FIX_FORECAST_QUOTA via tier-gates.
+// paywallPromo is worker-driven; pass '' when not available.
+// Returns true (allowed) or false (blocked, paywall already rendered).
+function checkFixForecastGate(tier, paywallPromo = '') {
+  if (tier !== 'open') return true;
+  const used   = getFixForecastCount();
+  const result = requireTier('mode:fix-forecast', {
+    tier,
+    fixForecastsUsed: used,
+  });
+  if (!result.allowed) {
+    renderFixForecastPaywall(paywallPromo);
+    return false;
+  }
+  return true;
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
@@ -151,6 +175,13 @@ function buildFixArtifact(finding, generateResult, generatedAt) {
  */
 export async function runFixForecast(selectedFinding, codebaseContext, opts = {}) {
   const { tier = 'open', profile = null } = opts;
+
+  // ── Tier gate — fail fast before any generation work ───────────────────────
+  // Pro+ bypass immediately. Open checked against FIX_FORECAST_QUOTA.
+  // paywallPromo not available at this call site (no worker fetch here);
+  // pass empty string — the static paywall copy is sufficient.
+  if (!checkFixForecastGate(tier, '')) return null;
+
   const { fix_direction, title, id } = selectedFinding;
   const targetFile = fix_direction.target_file;
   const slug = idToSlug(id);
@@ -320,6 +351,11 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       // Non-fatal — temp dir cleanup failure is cosmetic.
     }
   }
+
+  // Increment quota counter ONLY on full success (both artifacts written).
+  // Failed-confidence, overlay failure, and scan failure paths all return
+  // early above — they never reach this line and do not burn the quota.
+  if (tier === 'open') incrementFixForecastCount();
 
   return { fixArtifactPath: fixPath, forecastArtifactPaths };
 }

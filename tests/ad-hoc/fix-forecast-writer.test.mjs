@@ -256,6 +256,77 @@ console.log('\n=== Case 4: computeUnifiedDiff output is patch-p1 compatible ==='
   has('4g context line with space prefix',   diff, ' <?php');
 }
 
+// ── Case 5: Open tier, quota remaining → gate allows, counter increments ──────
+// Uses the real configstore but resets the counter first so the test is
+// self-contained. Exercises checkFixForecastGate via the exported helpers.
+console.log('\n=== Case 5: Open tier, quota remaining — gate allows ===');
+{
+  // Import the real helpers.
+  const {
+    getFixForecastCount,
+    incrementFixForecastCount,
+    resetFixForecastCount,
+  } = await import('../../src/freemium.js');
+  const { requireTier } = await import('../../src/license/tier-gates.js');
+
+  resetFixForecastCount();
+
+  // Simulate checkFixForecastGate for Open with 0 used.
+  const used = getFixForecastCount();
+  const result = requireTier('mode:fix-forecast', { tier: 'open', fixForecastsUsed: used });
+
+  check('5a gate allows when 0 used',        result.allowed, true);
+  check('5b quotaRemaining is 1',            result.quotaRemaining, 1);
+
+  // Simulate increment after success.
+  incrementFixForecastCount();
+  const after = getFixForecastCount();
+  check('5c counter is 1 after increment',   after, 1);
+
+  // Gate check again — should now block.
+  const result2 = requireTier('mode:fix-forecast', { tier: 'open', fixForecastsUsed: after });
+  check('5d gate blocks when quota exhausted', result2.allowed, false);
+  check('5e reason contains fix_forecast',   (result2.reason || '').includes('fix_forecast'), true);
+
+  // Cleanup.
+  resetFixForecastCount();
+  check('5f counter reset to 0',             getFixForecastCount(), 0);
+}
+
+// ── Case 6: Open tier, quota exhausted → gate blocks, no increment ────────────
+console.log('\n=== Case 6: Open tier, quota exhausted — gate blocks ===');
+{
+  const {
+    getFixForecastCount,
+    incrementFixForecastCount,
+    resetFixForecastCount,
+  } = await import('../../src/freemium.js');
+  const { requireTier } = await import('../../src/license/tier-gates.js');
+
+  resetFixForecastCount();
+  incrementFixForecastCount(); // exhaust quota (set to 1 = FIX_FORECAST_QUOTA)
+
+  const used = getFixForecastCount();
+  check('6a counter is 1 (quota exhausted)', used, 1);
+
+  const result = requireTier('mode:fix-forecast', { tier: 'open', fixForecastsUsed: used });
+  check('6b gate blocks',                    result.allowed, false);
+  check('6c reason present',                 typeof result.reason === 'string', true);
+  check('6d paywall present',                result.paywall !== undefined, true);
+
+  // Confirm Pro+ tier bypasses the gate entirely (tier !== 'open' shortcut).
+  const proResult = requireTier('mode:fix-forecast', { tier: 'pro', fixForecastsUsed: 999 });
+  check('6e pro bypasses quota entirely',    proResult.allowed, true);
+  const teamResult = requireTier('mode:fix-forecast', { tier: 'team', fixForecastsUsed: 999 });
+  check('6f team bypasses quota entirely',   teamResult.allowed, true);
+
+  // Confirm counter did NOT increment in this case (gate blocked before any write).
+  const afterBlocked = getFixForecastCount();
+  check('6g counter unchanged after blocked gate', afterBlocked, 1);
+
+  resetFixForecastCount();
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log(`\n${passed + failed} checks — ${failed} failure(s)\n`);
 if (failed > 0) process.exit(1);
