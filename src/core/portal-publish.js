@@ -313,6 +313,7 @@ const MODE_LABELS = {
   poi:           { label: 'Points of Interest', order: 1 },
   blast:         { label: 'Blast Radius',       order: 2 },
   conflict:      { label: 'Conflict',           order: 3 },
+  forecast:      { label: 'Commit Forecast',    order: 3.5 },
   recon:         { label: 'Recon',              order: 4 },
   audit:         { label: 'Inheritance Audit',  order: 5 },
   inheritance:   { label: 'Inheritance Audit',  order: 5 },
