@@ -5,6 +5,69 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [7.1.0] - 2026-05-29
+
+### Added
+
+- **Commit Forecast mode.**
+  New ninth mode in Ghost Architect™. Analyzes a set of proposed file
+  changes against the production baseline and forecasts the Blast Radius
+  and Conflict impact of accepting those changes — before the developer
+  commits or pushes. Ghost does not apply changes, does not commit, does
+  not push. It shows what *would* happen if the developer did.
+
+  Two entry surfaces, one code path:
+
+  - **Pre-commit forecast** — Ghost auto-discovers working-tree changes
+    via `git diff --name-only HEAD` plus staged and untracked files.
+    No arguments required. The developer's working directory *is* the
+    proposed folder.
+
+  - **Offline / received-files forecast** — Developer points Ghost at
+    an explicit folder of proposed files that mirrors the repo's relative
+    directory structure. Covers the offshore-review use case (architect
+    receives files from an offshore team and wants to assess impact before
+    accepting them).
+
+  Core design:
+
+  - **Synthesis primitive** (`src/core/forecast-overlay.js`): builds an
+    in-memory overlay where proposed files overwrite their baseline
+    counterparts and Ghost falls back to the baseline for everything else.
+    Proposed files go through the same redaction pipeline as baseline files.
+    Path resolution uses mirror-structure matching with bidirectional
+    fuzzy fallback for teams that send loose files without full directory
+    structure. Changed files are front-loaded in the context string so
+    they're always included under the token cap.
+
+  - **Analyst framing**: Blast Radius and Conflict Detection prompts are
+    reframed when called from Commit Forecast. The model is told these
+    files are not committed yet and to frame every finding as "if you push
+    now, X breaks" — not generic architectural observations.
+
+  - **Inline diff renderer** (`src/utils/diff-renderer.js`): optional
+    per-file diff shown before analysis runs. LCS-based line diff with
+    context hunks, hunk separators, and hard caps (60 changed lines per
+    file, 8 files in detail) to prevent wall-of-text on large change sets.
+
+  - **Tier gating**: Open gets one free Commit Forecast per install,
+    tracked under a separate `ghostOpenForecastCount` key (isolated from
+    the 4-scan POI/Blast/Conflict quota — Forecast is designed to run
+    many times per day and would drain the shared quota in minutes).
+    Pro/Team/Enterprise are unlimited.
+
+  - **Menu**: `🔮 Commit Forecast` appears between Conflict Detection and
+    Recon in the mode menu.
+
+  - **Marketing angle**: "Cut your container-to-stage cycles from five to
+    one." Commit Forecast closes the container-vs-production gap by
+    analyzing the developer's proposed changes against the actual
+    production codebase before they push.
+
+  - **Smoke test suite**: 36 checks covering tier gate logic, forecast
+    counter, synthesis primitive path mapping, error handling, conflict
+    prompt framing, git repo detection, and diff renderer edge cases.
+
 ## [7.0.0] - 2026-05-26
 
 First public release of `ghost-architect-open` on npm. Install with
