@@ -214,3 +214,92 @@ export function renderForecastDiff(changedFiles, baselineFileMap, patchedFileMap
   console.log(chalk.cyan.bold('─────────────────────────────────────────────────────────────────'));
   console.log('');
 }
+
+// ── computeUnifiedDiff ────────────────────────────────────────────────────────
+/**
+ * Generate a standard unified diff string from two file content strings.
+ * Output is applyable with `patch -p1` from the codebase root.
+ *
+ * Reuses computeLineDiff (LCS) and collapseToHunks (3-line context) from the
+ * chalk-display function above. String output only — no console output, no
+ * chalk coloring.
+ *
+ * @param {string} a       Baseline file content
+ * @param {string} b       Corrected file content
+ * @param {string} pathA   Relative path for --- header (e.g. "src/loader/index.js")
+ * @param {string} pathB   Relative path for +++ header (usually same as pathA)
+ * @returns {string}       Standard unified diff text, empty string when no changes
+ */
+export function computeUnifiedDiff(a, b, pathA, pathB) {
+  const ops = computeLineDiff(a, b);
+  const hunks = collapseToHunks(ops);
+  if (hunks.length === 0) return '';
+
+  const aLines = (a || '').split('\n');
+  const bLines = (b || '').split('\n');
+
+  // Walk hunks once to build @@ line-number metadata and output lines.
+  const diffLines = [
+    `--- a/${pathA}`,
+    `+++ b/${pathB || pathA}`,
+  ];
+
+  // Reconstruct hunk groups (runs between separators) with @@ headers.
+  // Track original-file (aLine) and new-file (bLine) positions.
+  let aLine = 1;
+  let bLine = 1;
+  let hunkOps = [];
+
+  function flushHunk() {
+    if (hunkOps.length === 0) return;
+    // Count lines in the hunk for the @@ header.
+    const aCount = hunkOps.filter(o => o.type === 'context' || o.type === 'remove').length;
+    const bCount = hunkOps.filter(o => o.type === 'context' || o.type === 'add').length;
+    // aLine at start of this hunk: aLine has already advanced past context before the hunk
+    const hunkAStart = aLine - hunkOps.filter(o => o.type === 'context' || o.type === 'remove').length;
+    const hunkBStart = bLine - hunkOps.filter(o => o.type === 'context' || o.type === 'add').length;
+    diffLines.push(`@@ -${hunkAStart},${aCount} +${hunkBStart},${bCount} @@`);
+    for (const op of hunkOps) {
+      if (op.type === 'context') diffLines.push(` ${op.line}`);
+      else if (op.type === 'add')    diffLines.push(`+${op.line}`);
+      else if (op.type === 'remove') diffLines.push(`-${op.line}`);
+    }
+    hunkOps = [];
+  }
+
+  // Replay the full ops (not collapsed) to get accurate line numbers.
+  // collapseToHunks only gives us context-windowed view; we need raw ops
+  // for @@ numbering, then apply the separator positions to split hunks.
+  //
+  // Strategy: identify separator positions from collapseToHunks, then
+  // replay the full ops list splitting at those gaps.
+  const separatorPositions = new Set();
+  let opIdx = 0;
+  for (const h of hunks) {
+    if (h.type === 'separator') separatorPositions.add(opIdx);
+    else opIdx++;
+  }
+
+  // Replay full ops, splitting into hunks at separator boundaries.
+  // We use the collapseToHunks result directly: iterate hunks linearly.
+  // Each non-separator entry maps to a diff op.
+  aLine = 1; bLine = 1; hunkOps = [];
+  let inHunk = false;
+
+  for (const h of hunks) {
+    if (h.type === 'separator') {
+      flushHunk();
+      aLine += h.skipped;
+      bLine += h.skipped;
+      inHunk = false;
+    } else {
+      inHunk = true;
+      hunkOps.push(h);
+      if (h.type === 'context' || h.type === 'remove') aLine++;
+      if (h.type === 'context' || h.type === 'add')    bLine++;
+    }
+  }
+  flushHunk();
+
+  return diffLines.join('\n') + '\n';
+}

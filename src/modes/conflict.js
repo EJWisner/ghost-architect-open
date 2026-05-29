@@ -22,7 +22,7 @@ import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 // pattern audit-mode used for its newly-introduced findingsFromAuditResults.
 // Idiomatic top-level; matches the Blast-sidecar wiring decision in commit
 // 52e2782.
-import { extractFindings } from '../utils/finding-parser.js';
+import { runFixForecast } from './fix-forecast-writer.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -375,12 +375,13 @@ export async function runConflictMode(codebaseContext, options = {}) {
       if (saved.pdfFile) console.log(chalk.magenta(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
 
-      // Phase 4: offer fix forecast follow-up.
-      // Silent-skip when no eligible findings (fix_direction === null on all).
-      // selectedFinding is null on decline or no eligible findings.
-      // Phase 5 will consume selectedFinding to generate artifacts.
-      // eslint-disable-next-line no-unused-vars
+      // Phase 4 → Phase 5: offer fix forecast follow-up.
+      // promptFixForecast returns null (silent-skip or decline) or the
+      // selected finding object. runFixForecast generates paired artifacts.
       const selectedFinding = await promptFixForecast(parsedFindings);
+      if (selectedFinding) {
+        await runFixForecast(selectedFinding, codebaseContext, { tier, profile, label });
+      }
     }
 
   } catch (err) {
