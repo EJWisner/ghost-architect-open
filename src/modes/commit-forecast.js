@@ -385,8 +385,13 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   console.log('');
 
   // Show cost estimate now that we know what was selected.
+  // For Blast, only show cost if context is within limits — otherwise
+  // the warning below explains why they shouldn't run it.
+  const estBlastTokens = Math.ceil(patchedContext.context.length / 4);
   if (analysisMode === 'blast' || analysisMode === 'both') {
-    showCostEstimate(patchedContext, 'blast', model);
+    if (estBlastTokens <= 180000) {
+      showCostEstimate(patchedContext, 'blast', model);
+    }
   }
   if (analysisMode === 'conflict' || analysisMode === 'both') {
     const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
@@ -409,12 +414,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       ? forecastTarget[0]
       : `${forecastTarget.length} proposed files`;
 
-    // Context window pre-flight check. Sonnet's window is ~200K tokens;
-    // blast uses max_tokens:8096, leaving ~192K for the prompt. Warn the
-    // user before they spend money on a call that will fail. Threshold is
-    // 180K to give a comfortable margin.
-    const estInputTokens = Math.ceil(patchedContext.context.length / 4);
-    if (estInputTokens > 180000) {
+    // Context window pre-flight — show warning before confirm prompt.
+    // Sonnet window ~200K; blast uses 8K output headroom leaving ~192K.
+    // Threshold 180K gives a safety margin.
+    if (estBlastTokens > 180000) {
       const tierCap = tier === 'open' ? '50,000' : tier === 'pro' ? '100,000' : tier === 'team' ? '150,000' : '200,000';
       console.log(chalk.yellow(
         `\n  ⚠  This codebase requires more context than your current ${tierCap}-token cap.\n` +
@@ -431,7 +434,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       type: 'confirm',
       name: 'proceed',
       message: chalk.cyan('Run Blast Radius forecast?'),
-      default: estInputTokens <= 180000, // default No when likely to fail
+      default: estBlastTokens <= 180000,
     }]);
     if (!proceed) {
       console.log(chalk.gray('\n  Blast Radius skipped.\n'));
