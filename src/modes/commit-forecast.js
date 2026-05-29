@@ -46,6 +46,7 @@ import {
   incrementForecastCount,
   renderForecastPaywall,
 } from '../freemium.js';
+import { renderForecastDiff } from '../utils/diff-renderer.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
@@ -301,6 +302,18 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const hasChanges = renderChangedFilesBox(changedFiles, surface);
   if (!hasChanges) return;
 
+  // Offer inline diff detail before analysis. Optional — skip if the user
+  // already knows what they changed and just wants the forecast.
+  const { showDiff } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'showDiff',
+    message: chalk.cyan('Show inline diff of proposed changes before analysis?'),
+    default: false,
+  }]);
+  if (showDiff) {
+    renderForecastDiff(changedFiles, codebaseContext.fileMap || {}, patchedContext.fileMap || {});
+  }
+
   // ── Analysis mode ───────────────────────────────────────────────────────
   const analysisMode = await selectAnalysisMode();
   console.log('');
@@ -481,6 +494,16 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           projectLabel,
           profile,
           tier,
+          // Thread the forecast framing into every conflict pass prompt.
+          forecastContext:
+            `The following files have NOT yet been committed — they are proposed changes ` +
+            `overlaid on the production baseline. The codebase context already contains ` +
+            `their proposed versions.\n` +
+            `Changed files: ${[...changedFiles.modified, ...changedFiles.added].map(f => path.basename(f)).join(', ')}\n` +
+            `Frame every conflict as "if you push now, X conflicts with Y." ` +
+            `Report only conflicts that will be triggered by these proposed changes being ` +
+            `present in production. Skip conflicts that exist purely in unchanged files ` +
+            `unless they interact with the proposed changes.`,
         });
 
         if (result?.finalReport) {

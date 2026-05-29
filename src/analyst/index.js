@@ -219,12 +219,34 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
   // language so existing callers see no behavior change. Multi-target
   // form explicitly tells the model to treat the set as a coordinated
   // change and to produce one unified report.
+  //
+  // forecastMode (Commit Forecast): prepend a context block that reframes
+  // the analysis as "what would happen if these proposed changes were pushed
+  // to production right now" rather than a generic blast radius audit. The
+  // codebaseContext is the forecast overlay (proposed files already patched in);
+  // the model sees the proposed versions as the current state of those files.
+  const forecastPreamble = options.forecastMode
+    ? `COMMIT FORECAST CONTEXT:\n` +
+      `The files listed below as targets have NOT yet been committed. They represent ` +
+      `proposed changes in the developer's working tree (or a folder of received files). ` +
+      `The codebase context you receive already contains these proposed file versions — ` +
+      `they have been overlaid on top of the production baseline.\n\n` +
+      `Your job is to forecast: IF the developer commits and pushes these proposed changes ` +
+      `right now, what is the blast radius? Frame every finding in terms of "if you push now" ` +
+      `— not "if someone changes this someday." The developer is about to hit the push button. ` +
+      `Tell them what breaks, what ripples, and what they must verify BEFORE they push.\n\n` +
+      `Do NOT say "consider changing" or "you might want to" — say "if you push now, X breaks" ` +
+      `or "pushing now will cause Y." The rollback plan is not theoretical; it is the literal ` +
+      `steps the developer would need to execute immediately after a bad push.\n\n`
+    : '';
+
   let userMessage;
   if (targets.length === 1) {
-    userMessage = `${profileReminder}Perform a blast radius analysis for: "${targets[0]}"\n\nCodebase:\n\n${codebaseContext.context}`;
+    userMessage = `${forecastPreamble}${profileReminder}Perform a blast radius analysis for: "${targets[0]}"\n\nCodebase:\n\n${codebaseContext.context}`;
   } else {
     const targetList = targets.map((t, i) => `  ${i + 1}. ${t}`).join('\n');
     userMessage =
+      forecastPreamble +
       profileReminder +
       `Perform a blast radius analysis for the following coordinated change set ` +
       `(${targets.length} files that will be modified together as part of one engagement):\n\n` +

@@ -89,7 +89,7 @@ export function getConflictPassInfo(fileMap, tier = 'open') {
 
 // ── Single-pass conflict scan ──────────────────────────────────────────────────
 
-async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFindings, onChunk, profile) {
+async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFindings, onChunk, profile, forecastContext) {
   let context = '';
   for (const [fp, content] of Object.entries(files)) {
     context += `\n\n=== FILE: ${fp} ===\n${content}`;
@@ -99,7 +99,7 @@ async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFin
     ? `\n\nCONFLICTS FOUND IN PRIOR PASSES (use to find cross-pass conflicts):\n${priorFindings.join('\n---\n')}\n\n`
     : '';
 
-  const prompt = buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext });
+  const prompt = buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext, forecastContext });
   return callClaude(prompt, buildSystemConflict(profile), 8096, passNum === totalPasses ? onChunk : null);
 }
 
@@ -384,9 +384,14 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   // ── Phase 1: Scan passes → collect raw findings ────────────────────────────
 
+  // forecastContext: when set (by Commit Forecast mode), prepends framing to every
+  // conflict pass prompt so the model frames findings as "if you push now" rather
+  // than generic conflict detection. Undefined/null = standard conflict scan.
+  const forecastContext = options.forecastContext || null;
+
   if (info.singlePass) {
     onProgress({ type: 'scanning', fileCount: totalFiles, tokens: info.totalTokens });
-    const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null, profile);
+    const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null, profile, forecastContext);
     passResults.push(result);
   } else {
     const sessionKey = conflictSessionKey(options.projectLabel || 'default');
@@ -398,7 +403,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
       onProgress({ type: 'passStart', passNum, totalPasses: info.passes.length, fileCount, tokens: pass.tokens });
 
-      const result   = await runConflictPass(pass.files, passNum, info.passes.length, totalFiles, skeletons, null, profile);
+      const result   = await runConflictPass(pass.files, passNum, info.passes.length, totalFiles, skeletons, null, profile, forecastContext);
       const skeleton = extractConflictSkeleton(result);
       skeletons.push(skeleton);
       passResults.push(result);
