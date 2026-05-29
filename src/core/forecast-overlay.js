@@ -294,14 +294,25 @@ export async function buildForecastOverlay(baselineContext, proposedDir, opts = 
                    || baselineByRel[proposedRel];
 
     if (!baselineKey) {
-      // Fuzzy fallback: proposed file might be nested differently.
-      // Walk baseline keys and find one whose relative path ends with the proposed rel.
-      // e.g. proposed "models/User.php" matches baseline "src/models/User.php"
-      // We take the shortest match to avoid false positives in deeply nested trees.
+      // Fuzzy fallback: the common-prefix root resolution may strip more leading
+      // segments than expected (e.g. all baseline files are under /repo/src/ so
+      // root resolves to /repo/src/, making baseline rels like "models/User.php"
+      // while proposed path is "src/models/User.php"). We try BOTH directions:
+      //   A) proposed ends with baseline rel: proposed "src/models/User.php" ← rel "models/User.php"
+      //   B) baseline rel ends with proposed: rel "src/models/User.php" ← proposed "models/User.php"
+      // We prefer the shortest baseline rel match to avoid false positives in
+      // deeply nested trees where a short proposed name could match multiple rels.
       let best = null;
       let bestLen = Infinity;
       for (const [rel, bKey] of Object.entries(baselineByRel)) {
-        if (rel.endsWith(normalizedRel) || rel.endsWith(proposedRel)) {
+        // Direction A: proposed is more specific — it contains extra leading segments
+        const proposedEndsWithRel = normalizedRel.endsWith('/' + rel) || normalizedRel === rel
+                                  || proposedRel.endsWith('/' + rel)  || proposedRel === rel;
+        // Direction B: baseline rel is more specific — proposed is a suffix of rel
+        const relEndsWithProposed = rel.endsWith('/' + normalizedRel) || rel === normalizedRel
+                                  || rel.endsWith('/' + proposedRel)  || rel === proposedRel;
+
+        if (proposedEndsWithRel || relEndsWithProposed) {
           if (rel.length < bestLen) {
             best = bKey;
             bestLen = rel.length;
