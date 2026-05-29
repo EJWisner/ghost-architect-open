@@ -511,12 +511,20 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
                 break;
               case 'candidates_found':
                 if (conflictSpinner) conflictSpinner.stop();
-                console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found — verifying...\n`));
+                if (tier !== 'open') {
+                  console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found — verifying...\n`));
+                }
                 break;
               case 'verifying':
-                process.stdout.write(chalk.gray(`  ⟳  Verifying: ${data.title.slice(0, 60)}...\r`));
+                if (tier !== 'open') {
+                  process.stdout.write(chalk.gray(`  ⟳  Verifying: ${data.title.slice(0, 60)}...\r`));
+                }
                 break;
               case 'verified': {
+                // On Open tier, suppress per-candidate output entirely —
+                // context cap means all results are UNCLEAR which is
+                // confusing and not useful. Pro+ sees confirmed/possible/eliminated.
+                if (tier === 'open') break;
                 const icon =
                   data.verdict === 'CONFIRMED'     ? chalk.red('  ' + SYM.cross + '  CONFIRMED') :
                   data.verdict === 'POSSIBLE'       ? chalk.yellow('  ?  POSSIBLE ') :
@@ -527,12 +535,17 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
               }
               case 'verification_done':
                 console.log('');
-                console.log(
-                  chalk.bold('  Verification complete: ') +
-                  chalk.red(`${data.stats.confirmed} confirmed  `) +
-                  chalk.yellow(`${data.stats.possible} possible  `) +
-                  chalk.green(`${data.stats.falsePositives} eliminated`)
-                );
+                if (tier === 'open') {
+                  // On Open tier we auto-skipped verification — no stats to show.
+                  // The onVerifyPrompt handler already printed the explanation.
+                } else {
+                  console.log(
+                    chalk.bold('  Verification complete: ') +
+                    chalk.red(`${data.stats.confirmed} confirmed  `) +
+                    chalk.yellow(`${data.stats.possible} possible  `) +
+                    chalk.green(`${data.stats.falsePositives} eliminated`)
+                  );
+                }
                 console.log('');
                 if (conflictSpinner) { conflictSpinner.stop(); conflictSpinner = null; }
                 conflictSpinner = ora({ text: chalk.gray('  Preparing conflict forecast...'), color: 'magenta' }).start();
@@ -615,7 +628,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           if (conflictSpinner) { conflictSpinner.stop(); conflictSpinner = null; }
           console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
 
-          if (result.verified && result.stats) {
+          // Only show verification stats on Pro+ where verification actually ran.
+          // On Open tier, verification was skipped — "0 confirmed, 0 possible,
+          // 0 eliminated" is confusing when all results were UNCLEAR anyway.
+          if (result.verified && result.stats && tier !== 'open') {
             const s = result.stats;
             console.log(chalk.magenta(
               `  👻 Verified ${s.total} candidates — ` +
