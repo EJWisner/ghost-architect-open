@@ -388,17 +388,21 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   // For Blast, only show cost if context is within limits — otherwise
   // the warning below explains why they shouldn't run it.
   const estBlastTokens = Math.ceil(patchedContext.context.length / 4);
-  if (analysisMode === 'blast' || analysisMode === 'both') {
-    if (estBlastTokens <= 180000) {
-      showCostEstimate(patchedContext, 'blast', model);
-    }
+  const blastOverLimit = (analysisMode === 'blast' || analysisMode === 'both') && estBlastTokens > 180000;
+
+  if ((analysisMode === 'blast' || analysisMode === 'both') && !blastOverLimit) {
+    showCostEstimate(patchedContext, 'blast', model);
   }
   if (analysisMode === 'conflict' || analysisMode === 'both') {
-    const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
-    console.log(chalk.gray(
-      `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
-      `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min`
-    ));
+    // Only show conflict estimate upfront if blast isn't going to show a warning.
+    // When blast is over limit, both estimates show after the warning.
+    if (!blastOverLimit) {
+      const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
+      console.log(chalk.gray(
+        `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
+        `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min`
+      ));
+    }
   }
   console.log('');
 
@@ -428,6 +432,14 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         `  ghostarchitect.dev/pricing\n` +
         `\n  You can still try — or run Conflict only which handles large codebases via multi-pass.\n`
       ));
+      // Show conflict estimate here so user knows what will run if they skip blast.
+      if (analysisMode === 'both') {
+        const conflictInfo = getConflictPassInfo(patchedContext.fileMap || {}, tier);
+        console.log(chalk.gray(
+          `  Conflict will still run: ~${conflictInfo.passes.length} passes` +
+          `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min\n`
+        ));
+      }
     }
 
     const { proceed } = await inquirer.prompt([{
