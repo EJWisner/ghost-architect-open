@@ -6,7 +6,7 @@ import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
 import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug } from '../src/config.js';
-import { loadCodebase, setScanOptions } from '../src/loader/index.js';
+import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runQuestionMode } from '../src/modes/question.js';
 import { runPOIMode } from '../src/modes/poi.js';
@@ -155,6 +155,18 @@ function parseArgs(argv) {
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
+
+    // Commit Forecast non-interactive flags
+    if (a === '--baseline')              { out.cfBaseline = argv[++i] || ''; continue; }
+    if (a.startsWith('--baseline='))     { out.cfBaseline = a.slice('--baseline='.length); continue; }
+    if (a === '--proposed')              { out.cfProposed = argv[++i] || ''; continue; }
+    if (a.startsWith('--proposed='))     { out.cfProposed = a.slice('--proposed='.length); continue; }
+    if (a === '--modes')                 { out.cfModes = argv[++i] || ''; continue; }
+    if (a.startsWith('--modes='))        { out.cfModes = a.slice('--modes='.length); continue; }
+    if (a === '--label')                 { out.cfLabel = argv[++i] || ''; continue; }
+    if (a.startsWith('--label='))        { out.cfLabel = a.slice('--label='.length); continue; }
+    if (a === '--no-verify')             { out.cfNoVerify = true; continue; }
+    if (a === '--no-followup')           { out.cfNoFollowup = true; continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -207,6 +219,22 @@ Licensing:
   --license-clear          Remove the installed license from local storage.
                            Then exit. Useful for migrating to a new license.
   --deactivate             Alias for --license-clear.
+
+Commit Forecast (non-interactive / CI mode):
+  --baseline <path>        Path to the baseline codebase directory.
+  --proposed <path>        Path to the folder of proposed (changed) files.
+  --modes <list>           Comma-separated analysis modes to run.
+                           Valid values: blast, conflict, both
+                           Example: --modes=blast,conflict  or  --modes=conflict
+                           Unknown mode values exit with an error.
+  --label <name>           Project label for tracking (Pro+ only). Omit for
+                           one-time scan with no history.
+  --no-verify              Skip conflict candidate verification step.
+  --no-followup            Exit after saving the report (no 'run again?' prompt).
+
+  When ALL of --baseline, --proposed, and --modes are present, Commit Forecast
+  runs fully non-interactive. Any missing required flag drops back to the
+  interactive prompt flow.
 
 Misc:
   --version, -v            Print version and exit.
@@ -1294,6 +1322,63 @@ async function main() {
   let codebaseContext = null;
   const session = new SessionCostTracker();
 
+  // ── Non-interactive Commit Forecast branch ────────────────────────────────
+  // Fires ONLY when ALL THREE of --baseline, --proposed, --modes are present.
+  // Any missing flag → fall through to the interactive while-loop below.
+  if (cliOpts.cfBaseline && cliOpts.cfProposed && cliOpts.cfModes) {
+    const { cfBaseline, cfProposed, cfModes } = cliOpts;
+
+    // a. Validate paths exist and are readable directories.
+    for (const [flag, p] of [['--baseline', cfBaseline], ['--proposed', cfProposed]]) {
+      if (!fs.existsSync(p)) {
+        console.error(chalk.red(`\n  ✗ ${flag} path does not exist: ${p}\n`));
+        process.exit(1);
+      }
+      if (!fs.statSync(p).isDirectory()) {
+        console.error(chalk.red(`\n  ✗ ${flag} path is not a directory: ${p}\n`));
+        process.exit(1);
+      }
+    }
+
+    // b. Validate --modes values.
+    const VALID_CF_MODES = ['blast', 'conflict', 'both'];
+    const rawModes = cfModes.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const invalidModes = rawModes.filter(m => !VALID_CF_MODES.includes(m));
+    if (invalidModes.length > 0) {
+      console.error(chalk.red(
+        `\n  ✗ Unknown --modes value(s): ${invalidModes.join(', ')}\n` +
+        `  Valid values: ${VALID_CF_MODES.join(', ')}\n`
+      ));
+      process.exit(1);
+    }
+
+    // c. Load baseline as codebase using the existing loader.
+    try {
+      codebaseContext = await loadFromPath(cfBaseline);
+    } catch (err) {
+      console.error(chalk.red(`\n  ✗ Failed to load baseline: ${err.message}\n`));
+      process.exit(1);
+    }
+    if (!codebaseContext) {
+      console.error(chalk.red(`\n  ✗ Baseline loaded no files from: ${cfBaseline}\n`));
+      process.exit(1);
+    }
+
+    // d. Dispatch directly to runCommitForecastMode with all flags.
+    await runCommitForecastMode(codebaseContext, {
+      profile,
+      tier:         TIER,
+      paywallPromo: promos.paywallPromo,
+      cfBaseline,
+      cfProposed,
+      cfModes,
+      cfLabel:      cliOpts.cfLabel      || null,
+      cfNoVerify:   cliOpts.cfNoVerify   || false,
+      cfNoFollowup: cliOpts.cfNoFollowup || false,
+    });
+    process.exit(0);
+  }
+
   while (true) {
     if (!codebaseContext) {
       const method = await selectInputMethod(activeProfileLabel, TIER);
@@ -1506,7 +1591,17 @@ async function main() {
       // renderForecastPaywall() directly. This keeps the paywall-dispatch
       // logic co-located with the Forecast counter (freemium.js) rather than
       // duplicated here. paywallPromo passes through for server-driven copy.
-      case 'commit-forecast': await runCommitForecastMode(codebaseContext, { profile, tier: TIER, paywallPromo: promos.paywallPromo }); break;
+      case 'commit-forecast': await runCommitForecastMode(codebaseContext, {
+        profile,
+        tier:         TIER,
+        paywallPromo: promos.paywallPromo,
+        cfBaseline:   cliOpts.cfBaseline   || null,
+        cfProposed:   cliOpts.cfProposed   || null,
+        cfModes:      cliOpts.cfModes      || null,
+        cfLabel:      cliOpts.cfLabel      || null,
+        cfNoVerify:   cliOpts.cfNoVerify   || false,
+        cfNoFollowup: cliOpts.cfNoFollowup || false,
+      }); break;
       case 'recon':           await runReconMode(codebaseContext, { profile });  break;
       case 'audit':           await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
       case 'compare':         await runCompareMode();                         break;
