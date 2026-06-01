@@ -299,7 +299,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
   // ── Blast ─────────────────────────────────────────────────────────────
   if (analysisMode === 'blast' || analysisMode === 'both') {
     const blastTracker = new SessionCostTracker();
-    const blastUsage   = (i, o, m) => blastTracker.record('scan', i, o, m);
+    const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m);
 
     if (blastInfo && !blastInfo.singlePass) {
       console.log(chalk.cyan(`  Running Blast Radius (${blastInfo.passCount} passes)...`));
@@ -591,7 +591,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   // ── Blast Radius ────────────────────────────────────────────────────────
   let blastBuffer = '';
   const blastTracker = new SessionCostTracker();
-  const blastUsage   = (i, o, m) => blastTracker.record('scan', i, o, m);
+  const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m);
 
   if (analysisMode === 'blast' || analysisMode === 'both') {
     // For Commit Forecast, the "target" is the changed file set — we pass

@@ -328,6 +328,18 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     onChunk
   );
 
+  // Narrator cost estimate — character-count approximation, not real API usage.
+  // narrateReport dispatches through 4-5 internal streaming functions with no
+  // aggregated usage output. Estimating from rawOutput (narrator input) and
+  // narratedReport (narrator output) at ~4 chars/token. Callers that pass
+  // onUsage as (i, o, m) will record this under the same stage as scan until
+  // commit-forecast.js is updated to accept a stage-aware (i, o, m, stage).
+  if (options.onUsage && narratedReport) {
+    const narratorInputEst  = Math.ceil(rawOutput.length / 4);
+    const narratorOutputEst = Math.ceil(narratedReport.length / 4);
+    options.onUsage(narratorInputEst, narratorOutputEst, getModel(), 'narrate');
+  }
+
   return narratedReport || rawOutput;
 }
 
