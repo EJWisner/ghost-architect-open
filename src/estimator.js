@@ -65,6 +65,45 @@ export function showActualCost(inputTokens, outputTokens, model) {
   );
 }
 
+/**
+ * Display a per-stage cost breakdown for Conflict-mode scans.
+ * Replaces the old showActualCost() character-count estimate with real
+ * API-measured totals from the SessionCostTracker.
+ *
+ * Format (approved):
+ *   📊 COST BREAKDOWN
+ *     scan         128,412 tokens   $0.2134
+ *     verify       891,034 tokens   $1.7821
+ *     narrate       24,508 tokens   $0.1226
+ *     plan           3,204 tokens   $0.0096
+ *     ─────────────────────────────────────
+ *     Actual cost:                  $2.1277
+ */
+export function showConflictCost(tracker) {
+  if (!tracker || tracker.runs.length === 0) return;
+
+  // Aggregate by stage — multiple scan passes each call .record('scan',...)
+  const byStage = {};
+  for (const r of tracker.runs) {
+    if (!byStage[r.mode]) byStage[r.mode] = { tokens: 0, cost: 0 };
+    byStage[r.mode].tokens += r.inputTokens + r.outputTokens;
+    byStage[r.mode].cost   += r.cost;
+  }
+
+  const totalCost = tracker.totalCost;
+  console.log('\n' + chalk.cyan.bold('📊 COST BREAKDOWN'));
+  for (const [stage, data] of Object.entries(byStage)) {
+    const stageLabel = stage === 'narrate' ? 'narrate (est)' : stage;
+    console.log(
+      chalk.gray('  ' + stageLabel.padEnd(13)) +
+      chalk.gray(data.tokens.toLocaleString().padStart(12) + ' tokens') +
+      chalk.white('  $' + data.cost.toFixed(4))
+    );
+  }
+  console.log(chalk.gray('  ' + '─'.repeat(36)));
+  console.log(chalk.gray('  Actual cost: ') + chalk.green.bold('$' + totalCost.toFixed(4) + '\n'));
+}
+
 export class SessionCostTracker extends CoreTracker {
   showSummary() {
     if (this.runs.length === 0) return;
