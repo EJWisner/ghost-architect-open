@@ -1586,7 +1586,7 @@ async function main() {
       case 'poi':             await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
       case 'blast':           await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
       case 'conflict':        await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
-      case 'fix-forecast':    await runSavedFixForecast({ tier: TIER, profile }); break;
+      case 'fix-forecast':    await runSavedFixForecast({ tier: TIER, profile, codebaseContext }); break;
       // Commit Forecast: gate is handled inside runCommitForecastMode via
       // checkForecastGate(), which reads getForecastCount() and calls
       // renderForecastPaywall() directly. This keeps the paywall-dispatch

@@ -520,7 +520,7 @@ export async function runPostScanFixForecast(parsedFindings, codebaseContext, op
 // ── Standalone Fix Forecast: load saved findings and run promptFixForecast ───
 // Exported so bin/ghost.js can call it as a top-level menu mode.
 // Does NOT require a live codebase context — reads from a saved findings JSON.
-export async function runSavedFixForecast({ tier, profile } = {}) {
+export async function runSavedFixForecast({ tier, profile, codebaseContext: providedContext } = {}) {
   // 1. Glob all _findings.json files from the reports directory.
   const reportsDir = REPORTS_DIR || path.join(os.homedir(), 'Ghost Architect Reports');
   let allFiles;
@@ -625,31 +625,34 @@ export async function runSavedFixForecast({ tier, profile } = {}) {
     return;
   }
 
-  // 8. Prompt for codebase directory and load real fileMap.
+  // 8. Resolve codebase context — use session context if provided, else prompt for path.
   // Must happen before the Fix Forecast flow since runPostScanFixForecast
   // needs a real codebaseContext to read baseline file contents.
-  console.log(chalk.gray('\nFix Forecast needs to read the codebase files to generate a corrected version.'));
-  const { codebasePath } = await inquirer.prompt([{
-    type:     'input',
-    name:     'codebasePath',
-    message:  chalk.cyan('Path to codebase directory:'),
-    validate: (v) => v.trim().length > 0 || 'Path is required',
-  }]);
+  let codebaseContext = providedContext || null;
 
-  let codebaseContext;
-  try {
-    codebaseContext = await loadFromPath(codebasePath.trim());
-  } catch (err) {
-    console.log(chalk.red(`\nFailed to load codebase: ${err.message}\n`));
-    return;
+  if (!codebaseContext) {
+    console.log(chalk.gray('\nFix Forecast needs to read the codebase files to generate a corrected version.'));
+    const { codebasePath } = await inquirer.prompt([{
+      type:     'input',
+      name:     'codebasePath',
+      message:  chalk.cyan('Path to codebase directory:'),
+      validate: (v) => v.trim().length > 0 || 'Path is required',
+    }]);
+
+    try {
+      codebaseContext = await loadFromPath(codebasePath.trim());
+    } catch (err) {
+      console.log(chalk.red(`\nFailed to load codebase: ${err.message}\n`));
+      return;
+    }
+
+    if (!codebaseContext || Object.keys(codebaseContext.fileMap || {}).length === 0) {
+      console.log(chalk.yellow('\nNo files found in the specified directory.\n'));
+      return;
+    }
+
+    console.log(chalk.green(`\n  ✓ Loaded ${codebaseContext.loadedFiles} files from ${codebasePath.trim()}\n`));
   }
-
-  if (!codebaseContext || Object.keys(codebaseContext.fileMap || {}).length === 0) {
-    console.log(chalk.yellow('\nNo files found in the specified directory.\n'));
-    return;
-  }
-
-  console.log(chalk.green(`\n  ✓ Loaded ${codebaseContext.loadedFiles} files from ${codebasePath.trim()}\n`));
 
   // 9. Run Fix Forecast — checkbox, cost-gate, H3 re-forecast protection, serial execution.
   await runPostScanFixForecast(findings, codebaseContext, { tier, profile });
