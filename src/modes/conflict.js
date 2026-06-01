@@ -523,9 +523,55 @@ export async function runPostScanFixForecast(parsedFindings, codebaseContext, op
   }
 
   if (selectedFindings.length > 0) {
+    const results = [];
     for (const finding of selectedFindings) {
-      await runFixForecast(finding, codebaseContext, { tier, profile, label: null });
+      const result = await runFixForecast(finding, codebaseContext, { tier, profile, label: null });
       forecasted.add(finding.id);
+      if (result) results.push(result);
+    }
+
+    // Combined report — only when N >= 2
+    if (selectedFindings.length === 1) {
+      console.log(chalk.gray('\n  No combined report generated — only one finding was forecasted.\n'));
+    } else if (results.length >= 2) {
+      const hasForecasts = results.some(r => r.conflictBuffer);
+      if (hasForecasts) {
+        const generatedAt = new Date().toLocaleString();
+        const sections = results.map((r, i) => {
+          const header = `## Finding ${i + 1}: ${r.findingTitle || 'Untitled'} (${r.findingSeverity || 'MEDIUM'})`;
+          const body = r.conflictBuffer || '_No impact forecast generated for this finding._';
+          return `${header}\n\n${body}`;
+        });
+
+        const combinedContent = [
+          `# Fix Forecast — Combined Report`,
+          `Generated: ${generatedAt}`,
+          `Findings forecasted: ${results.length}`,
+          ``,
+          `---`,
+          ``,
+          ...sections.flatMap(s => [s, `\n---\n`]),
+        ].join('\n');
+
+        const combinedMeta = {
+          mode:        'fix-forecast',
+          profile,
+          fixForecast: true,
+        };
+
+        try {
+          const saved = await saveReport(combinedContent, 'ghost-fix-forecast-combined', null, combinedMeta);
+          console.log(chalk.green(`\n  ✓ Combined report saved:`));
+          console.log(chalk.gray(`    📄 ${saved.txtFile}`));
+          console.log(chalk.gray(`    📋 ${saved.mdFile}`));
+          if (saved.pdfFile) console.log(chalk.gray(`    📑 ${saved.pdfFile}  ← client-ready PDF`));
+          console.log('');
+        } catch (err) {
+          console.log(chalk.yellow(`  ⚠  Failed to save combined report: ${err.message}`));
+        }
+      } else {
+        console.log(chalk.yellow('\n  No combined report generated — no impact forecasts completed successfully.\n'));
+      }
     }
   }
 }

@@ -17,6 +17,39 @@
  *   notes:      string | null   (non-null whenever confidence < "high")
  */
 
+// ── cleanPatchInstruction ─────────────────────────────────────────────────────
+// Strips prose lines from a patch_instruction before it's used for patching or
+// written to the fix artifact. LLMs sometimes emit explanatory prose alongside
+// code (e.g. "Add validation before setStatus() call around line ~151:").
+//
+// A line is treated as prose and removed when ALL of the following hold:
+//   1. It ends with `:` AND contains no PHP/JS syntax chars ($, {, }, (, ), ;)
+//      — catches "Add validation before setStatus() call:" style headers
+//   2. OR it starts with a common prose word (case-insensitive): this, adds,
+//      ensures, prevents, around, before, after, following, note, warning,
+//      here, which, it, the, to, in, — catches "This adds a safety check..." style
+//
+// Empty lines are preserved as-is (blank lines in code are meaningful).
+// Lines that contain code-syntax characters are always preserved regardless.
+//
+export function cleanPatchInstruction(raw) {
+  if (typeof raw !== 'string') return raw;
+  const proseStartRe = /^(?:this|adds|ensures|prevents|around|before|after|following|note|warning|here|which|it|the|to|in)\b/i;
+  const syntaxChars  = /[${}();]/;
+  return raw
+    .split('\n')
+    .filter(line => {
+      const t = line.trim();
+      if (!t) return true; // preserve blank lines
+      // Heuristic 1: ends with colon → prose header (unconditional)
+      if (t.endsWith(':')) return false;
+      // Heuristic 2: starts with a prose word → explanatory sentence
+      if (proseStartRe.test(t) && !syntaxChars.test(t)) return false;
+      return true;
+    })
+    .join('\n');
+}
+
 // ── Levenshtein distance + normalized ratio ───────────────────────────────────
 // DP table implementation. O(m×n) time, O(min(m,n)) space.
 // ratio = 1 - (editDistance / max(len(a), len(b)))
@@ -608,7 +641,7 @@ export function generateCorrectedFile(baselineContent, fixDirection) {
   }
 
   const baselineLines = baselineContent.split('\n');
-  const patchLines    = fixDirection.patch_instruction.split('\n');
+  const patchLines    = cleanPatchInstruction(fixDirection.patch_instruction).split('\n');
   const reasoning     = fixDirection.reasoning || null;
 
   // Mode cascade (first match wins):

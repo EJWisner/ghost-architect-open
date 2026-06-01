@@ -25,7 +25,7 @@ import path from 'path';
 import chalk from 'chalk';
 import ora   from 'ora';
 
-import { generateCorrectedFile }  from '../utils/corrected-file-generator.js';
+import { generateCorrectedFile, cleanPatchInstruction } from '../utils/corrected-file-generator.js';
 import { computeUnifiedDiff }     from '../utils/diff-renderer.js';
 import { runConflictScan }        from '../core/conflict.js';
 import { buildForecastOverlay }   from '../core/forecast-overlay.js';
@@ -105,7 +105,7 @@ function buildFixArtifact(finding, generateResult, generatedAt) {
       'Ghost could not locate a single insertion point in the baseline file.',
       'The fix direction is shown as-is. Apply it manually using this as a guide.',
       '',
-      fix_direction.patch_instruction
+      cleanPatchInstruction(fix_direction.patch_instruction)
         .split('\n')
         .map(l => `  ${l}`)
         .join('\n'),
@@ -186,11 +186,12 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
   // pass empty string — the static paywall copy is sufficient.
   if (!checkFixForecastGate(tier, '')) return null;
 
-  const { fix_direction, title, id } = selectedFinding;
+  const { fix_direction, title, id, severity } = selectedFinding;
   // target_files is an array; use first element as primary file for fileMap lookup.
   // Backwards-compat: also check legacy target_file field.
   const targetFile = fix_direction.target_files?.[0] ?? fix_direction.target_file;
   const slug = idToSlug(id);
+  let conflictBuffer = null; // hoisted — populated after forecast scan, returned on success
 
   console.log(chalk.cyan(`\n  Generating corrected file for: ${title}`));
 
@@ -254,7 +255,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       `  ⚠  Forecast skipped — Ghost could not generate a corrected file\n` +
       `     with sufficient confidence. See fix artifact for manual guidance.`
     ));
-    return { fixArtifactPath: fixPath, forecastArtifactPaths: null };
+    return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
   }
 
   // ── Steps 5-7: Write corrected file to temp dir, run forecast, clean up ────
@@ -286,7 +287,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       forecastSpinner.stop();
       console.log(chalk.yellow(`  ⚠  Forecast overlay failed: ${err.message}`));
       console.log(chalk.gray(`     Fix artifact was written: ~/Ghost Architect Reports/${fixFilename}`));
-      return { fixArtifactPath: fixPath, forecastArtifactPaths: null };
+      return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
 
     const hasChanges = Object.keys(changedFiles.modified).length + changedFiles.added.length > 0;
@@ -295,14 +296,14 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       console.log(chalk.yellow(
         `  ⚠  Forecast skipped — corrected file matches baseline (no effective change detected).`
       ));
-      return { fixArtifactPath: fixPath, forecastArtifactPaths: null };
+      return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
 
     // Run Conflict scan on the corrected-file overlay.
     // Conflict only — Blast on a single-line change produces noise.
     // TODO: expose Blast+Conflict as a configurable option after real usage data.
     const fileMapPatched = patchedContext.fileMap || {};
-    let conflictBuffer = '';
+    conflictBuffer = '';
     let scanTracker    = null;  // captures result.tracker from runConflictScan
 
     const callbacks = {
@@ -329,7 +330,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       forecastSpinner.stop();
       console.log(chalk.yellow(`  ⚠  Conflict scan failed: ${err.message}`));
       console.log(chalk.gray(`     Fix artifact was written: ~/Ghost Architect Reports/${fixFilename}`));
-      return { fixArtifactPath: fixPath, forecastArtifactPaths: null };
+      return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
 
     forecastSpinner.stop();
@@ -340,7 +341,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
 
     if (!conflictBuffer) {
       console.log(chalk.gray(`  No conflicts detected in corrected file.`));
-      return { fixArtifactPath: fixPath, forecastArtifactPaths: null };
+      return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
 
     // Save forecast artifacts using existing saveReport pipeline.
@@ -382,5 +383,5 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
   // early above — they never reach this line and do not burn the quota.
   if (tier === 'open') incrementFixForecastCount();
 
-  return { fixArtifactPath: fixPath, forecastArtifactPaths };
+  return { fixArtifactPath: fixPath, forecastArtifactPaths, conflictBuffer, findingTitle: title, findingSeverity: severity };
 }
