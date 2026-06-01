@@ -30,8 +30,9 @@ import os   from 'os';
 
 import { showFriendlyError }   from '../utils/errors.js';
 import { runBlastRadius }      from '../analyst/index.js';
-import { runConflictScan, getConflictPassInfo } from '../core/conflict.js';
-import { showCostEstimate, showActualCost } from '../estimator.js';
+import { runConflictScan, getConflictPassInfo, normalizeCandidateToFinding } from '../core/conflict.js';
+import { runPostScanFixForecast } from './conflict.js';
+import { showCostEstimate, showActualCost, showConflictCost } from '../estimator.js';
 import { getConfig }           from '../config.js';
 import { saveReport }          from '../reports.js';
 import { requireTier }         from '../license/tier-gates.js';
@@ -345,6 +346,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     if (result?.finalReport) {
       conflictBuffer = result.finalReport;
       console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
+      showConflictCost(result.tracker);
     }
   }
 
@@ -663,6 +665,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
   // ── Conflict Detection ──────────────────────────────────────────────────
   let conflictBuffer = '';
+  let conflictCandidates = []; // hoisted for Fix Forecast access after save
 
   if (analysisMode === 'conflict' || analysisMode === 'both') {
     const info = getConflictPassInfo(fileMap, tier);
@@ -808,7 +811,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         });
 
         if (result?.finalReport) {
-          conflictBuffer = result.finalReport;
+          conflictBuffer     = result.finalReport;
+          conflictCandidates = result.candidates || [];
           if (conflictSpinner) { conflictSpinner.stop(); conflictSpinner = null; }
           console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
 
@@ -825,7 +829,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
           const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 200;
           const outputTokens = Math.ceil(conflictBuffer.length / 4);
-          showActualCost(inputTokens, outputTokens, model);
+          showConflictCost(result.tracker);
           console.log('');
         } else {
           if (conflictSpinner) conflictSpinner.stop();
@@ -896,6 +900,16 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     console.log(chalk.gray(`  📋 ${saved.mdFile}`));
     if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← review-ready PDF`));
     console.log('');
+  }
+
+  // ── Fix Forecast follow-up (conflict path only) ──────────────────────────
+  // Only offered when the conflict scan produced candidates with fix_direction.
+  // Uses normalizeCandidateToFinding (same as Conflict Detection mode) so
+  // fix_direction survives — extractFindings on the narrated report never has it.
+  // patchedContext is the proposed-overlay codebase context (has the full fileMap).
+  if (conflictCandidates.length > 0) {
+    const fixFindings = conflictCandidates.map(normalizeCandidateToFinding);
+    await runPostScanFixForecast(fixFindings, codebaseContext, { tier, profile });
   }
 
   // ── Increment Open quota AFTER successful analysis ──────────────────────

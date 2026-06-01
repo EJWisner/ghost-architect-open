@@ -7,12 +7,16 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 import { showFriendlyError } from '../utils/errors.js';
 import { runConflictScan, getConflictPassInfo } from '../core/conflict.js';
 import { normalizeCandidateToFinding } from '../core/conflict.js';
-import { showCostEstimate, showActualCost } from '../estimator.js';
+import { showCostEstimate, showConflictCost, SessionCostTracker } from '../estimator.js';
 import { getConfig } from '../config.js';
-import { saveReport } from '../reports.js';
+import { saveReport, REPORTS_DIR } from '../reports.js';
+import { loadFromPath } from '../loader/index.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { promptProjectLabel } from '../projects.js';
 import { requireTier } from '../license/tier-gates.js';
@@ -80,10 +84,15 @@ export async function runConflictMode(codebaseContext, options = {}) {
     showCostEstimate(codebaseContext, 'conflict', model);
   }
 
+  // ── Cost tracker — created here so planner (plan stage) can record into it ──
+  const tracker = new SessionCostTracker();
+
   // ── Agent Planner ─────────────────────────────────────────────────────────
   try {
     const reconSpinner = ora({ text: chalk.gray('Ghost is sizing up your codebase...'), color: 'magenta' }).start();
-    const reconPlan    = await runRecon(fileMap, 'conflict', {});
+    const reconPlan    = await runRecon(fileMap, 'conflict', {
+      onUsage: (i, o, m) => tracker.record('plan', i, o, m),
+    });
     reconSpinner.stop();
     const display = formatPlanForDisplay(reconPlan);
 
@@ -298,7 +307,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       },
     };
 
-    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, profile, tier });
+    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, profile, tier, tracker });
 
     if (!result?.finalReport) return;
     buffer = result.finalReport;
@@ -312,10 +321,9 @@ export async function runConflictMode(codebaseContext, options = {}) {
       ));
     }
 
-    // Cost
-    const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 200;
-    const outputTokens = Math.ceil(buffer.length / 4);
-    showActualCost(inputTokens, outputTokens, model);
+    // Cost — show real per-stage breakdown from the tracker (replaces
+    // the old character-count estimate that was 17x under the actual charge)
+    showConflictCost(result.tracker || tracker);
 
     // Save prompt
     const { doSave } = await inquirer.prompt([{
@@ -346,7 +354,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       const meta = {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
-        cost: '\u0024' + (inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4),
+        cost: (result.tracker || tracker).totalCost.toFixed(4),
         version: '4.1.1',
         mode: 'conflict-detection',
         verified: result.verified || false,
@@ -376,12 +384,9 @@ export async function runConflictMode(codebaseContext, options = {}) {
       console.log('');
 
       // Phase 4 → Phase 5: offer fix forecast follow-up.
-      // promptFixForecast returns null (silent-skip or decline) or the
-      // selected finding object. runFixForecast generates paired artifacts.
-      const selectedFinding = await promptFixForecast(parsedFindings);
-      if (selectedFinding) {
-        await runFixForecast(selectedFinding, codebaseContext, { tier, profile, label });
-      }
+      // Delegated to runPostScanFixForecast — single source of truth for
+      // the checkbox + cost-gate + H3 re-forecast protection + serial loop.
+      await runPostScanFixForecast(parsedFindings, codebaseContext, { tier, profile });
     }
 
   } catch (err) {
@@ -390,51 +395,48 @@ export async function runConflictMode(codebaseContext, options = {}) {
   }
 }
 
+// ── Severity label renderer — matches colorizeOutput palette ─────────────────
+function severityLabel(sev) {
+  const s = (sev || 'UNKNOWN').toUpperCase();
+  if (s === 'CRITICAL') return chalk.bgRed.white.bold(' CRITICAL ');
+  if (s === 'HIGH')     return chalk.red.bold('HIGH    ');
+  if (s === 'MEDIUM')   return chalk.yellow.bold('MEDIUM  ');
+  if (s === 'LOW')      return chalk.green.bold('LOW     ');
+  return chalk.gray(s.padEnd(8));
+}
+
 // ── Phase 4: Follow-up fix forecast offer ────────────────────────────────────
 // Offered after a Conflict scan saves successfully.
-// Filters parsedFindings to those with populated fix_direction (fix_direction !== null).
+// Filters findings to those with a populated suggestedFix field.
 // Silent-skips when zero eligible findings exist — no output, no prompt.
-// Returns the selected finding object (full normalized finding including fix_direction)
-// or null on decline / no eligible findings.
-async function promptFixForecast(parsedFindings) {
-  const eligible = parsedFindings.filter(f => f.fix_direction !== null);
-  if (eligible.length === 0) return null;
+//
+// forecasted: Set of finding IDs already run this session. Findings in
+// forecasted are marked "[✓ forecasted]" in the checkbox list.
+//
+// Returns an array of selected finding objects (may be empty).
+async function promptFixForecast(findings, forecasted = new Set()) {
+  if (!findings || findings.length === 0) return [];
 
-  // Gate prompt — capital N (decline is safer default)
-  const noun = eligible.length === 1 ? 'finding' : 'findings';
-  const { wantsForecast } = await inquirer.prompt([{
-    type:    'confirm',
-    name:    'wantsForecast',
-    message: chalk.cyan(
-      `Ghost found ${eligible.length} ${noun} with a suggested fix. ` +
-      `Forecast the impact of applying one?`
-    ),
-    default: false,
-  }]);
-  if (!wantsForecast) return null;
-
-  // Severity label renderer — matches colorizeOutput palette.
-  function severityLabel(sev) {
-    const s = (sev || 'UNKNOWN').toUpperCase();
-    if (s === 'CRITICAL') return chalk.bgRed.white.bold(' CRITICAL ');
-    if (s === 'HIGH')     return chalk.red.bold('HIGH    ');
-    if (s === 'MEDIUM')   return chalk.yellow.bold('MEDIUM  ');
-    if (s === 'LOW')      return chalk.green.bold('LOW     ');
-    return chalk.gray(s.padEnd(8));
+  const eligible = findings.filter(f => f.fix_direction);
+  if (eligible.length === 0) {
+    console.log(chalk.yellow('No findings with suggested fixes available.'));
+    return [];
   }
 
-  // Selection list — arrow-key via inquirer list type.
   const { chosen } = await inquirer.prompt([{
-    type:    'list',
+    type:    'checkbox',
     name:    'chosen',
-    message: chalk.cyan('Select a finding:'),
-    choices: eligible.map((f, i) => ({
-      name:  `  [${i + 1}]  ${severityLabel(f.severity)}  ${f.title}`,
-      value: f,
-    })),
+    message: chalk.cyan('Select findings to forecast (space to toggle, enter to confirm):'),
+    choices: eligible.map((f, i) => {
+      const doneMark = forecasted.has(f.id) ? chalk.green(' [✓ forecasted]') : '';
+      return {
+        name:  `  [${i + 1}]  ${severityLabel(f.severity)}  ${f.title}${doneMark}`,
+        value: f,
+      };
+    }),
   }]);
 
-  return chosen;
+  return chosen; // array, may be empty
 }
 
 function colorizeOutput(text) {
@@ -455,4 +457,200 @@ function colorizeOutput(text) {
     .replace(/Resolution:/g, chalk.green.bold('Resolution:'))
     .replace(/Impact:/g,     chalk.yellow('Impact:'))
     .replace(/Severity:/g,   chalk.cyan('Severity:'));
+}
+
+// ── Shared Fix Forecast execution: checkbox + cost-gate + H3 + serial run ────
+// Called by runConflictMode (post-scan), runSavedFixForecast (standalone menu),
+// and runCommitForecastMode (after Commit Forecast conflict scan).
+// Keeps all Fix Forecast prompt logic in one place — single source of truth.
+//
+// parsedFindings  — array of normalized findings (must have fix_direction field)
+// codebaseContext — real loaded context ({ fileMap, loadedFiles, ... })
+// opts            — { tier, profile }
+export async function runPostScanFixForecast(parsedFindings, codebaseContext, opts = {}) {
+  const { tier, profile } = opts;
+  const forecasted = new Set();
+  let selectedFindings = await promptFixForecast(parsedFindings, forecasted);
+
+  while (selectedFindings.length > 0) {
+    const count = selectedFindings.length;
+    const estimatedCost = (count * 1.31).toFixed(2);
+
+    const { confirmed } = await inquirer.prompt([{
+      type:    'confirm',
+      name:    'confirmed',
+      message: chalk.cyan(`You selected ${count} finding${count === 1 ? '' : 's'}. Estimated cost ~$${estimatedCost}. Continue?`),
+      default: true,
+    }]);
+
+    if (confirmed) {
+      const alreadyForecasted = selectedFindings.filter(f => forecasted.has(f.id));
+
+      if (alreadyForecasted.length > 0) {
+        const names = alreadyForecasted.map(f => chalk.yellow(f.title)).join(', ');
+        console.log(chalk.yellow(`\n${alreadyForecasted.length} finding${alreadyForecasted.length === 1 ? '' : 's'} already forecasted: ${names}`));
+
+        const { runRepeats } = await inquirer.prompt([{
+          type:    'confirm',
+          name:    'runRepeats',
+          message: chalk.yellow('Run them again?'),
+          default: false,
+        }]);
+
+        if (!runRepeats) {
+          selectedFindings = selectedFindings.filter(f => !forecasted.has(f.id));
+          console.log(chalk.cyan(`Proceeding with ${selectedFindings.length} finding${selectedFindings.length === 1 ? '' : 's'}.`));
+        }
+      }
+
+      break;
+    }
+
+    selectedFindings = await promptFixForecast(parsedFindings, forecasted);
+  }
+
+  if (selectedFindings.length > 0) {
+    for (const finding of selectedFindings) {
+      await runFixForecast(finding, codebaseContext, { tier, profile, label: null });
+      forecasted.add(finding.id);
+    }
+  }
+}
+
+// ── Standalone Fix Forecast: load saved findings and run promptFixForecast ───
+// Exported so bin/ghost.js can call it as a top-level menu mode.
+// Does NOT require a live codebase context — reads from a saved findings JSON.
+export async function runSavedFixForecast({ tier, profile } = {}) {
+  // 1. Glob all _findings.json files from the reports directory.
+  const reportsDir = REPORTS_DIR || path.join(os.homedir(), 'Ghost Architect Reports');
+  let allFiles;
+  try {
+    allFiles = fs.readdirSync(reportsDir);
+  } catch {
+    console.log(chalk.yellow('\nNo saved reports directory found. Run a Conflict Detection scan first.\n'));
+    return;
+  }
+
+  // 2. Filter to conflict findings JSONs only.
+  const findingsFiles = allFiles
+    .filter(f => f.startsWith('ghost-conflict-') && f.endsWith('.findings.json'))
+    .map(f => path.join(reportsDir, f));
+
+  if (findingsFiles.length === 0) {
+    console.log(chalk.yellow('\nNo saved conflict findings found. Run a Conflict Detection scan first.\n'));
+    return;
+  }
+
+  // 3. Parse each file: extract project name, timestamp, eligible count.
+  //    Filename pattern: ghost-conflict-<project>-<YYYY>-<MM>-<DDT<HH>-<MM>-<SS>.findings.json
+  //    The date segment starts at the first run of four digits (the year).
+  const parsed = [];
+  for (const filePath of findingsFiles) {
+    const base = path.basename(filePath, '.findings.json');
+    // Strip leading "ghost-conflict-"
+    const rest = base.slice('ghost-conflict-'.length);
+    // Find the date segment: last occurrence of \d{4}-\d{2}-\d{2}T
+    const dateMatch = rest.match(/^(.*?)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})$/);
+    if (!dateMatch) continue;
+
+    const project   = dateMatch[1];
+    const isoRaw    = dateMatch[2]; // e.g. "2026-06-01T13-33-33"
+    // Convert time separators: "2026-06-01T13-33-33" → "2026-06-01T13:33:33"
+    const isoStr    = isoRaw.replace(/T(\d{2})-(\d{2})-(\d{2})$/, 'T$1:$2:$3');
+    const date      = new Date(isoStr + 'Z'); // treat as UTC (matches filename convention)
+
+    // Count eligible findings
+    let eligibleCount = 0;
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const findings = raw.findings || [];
+      eligibleCount = findings.filter(f => f.fix_direction && typeof f.fix_direction === 'object').length;
+    } catch {
+      // Unreadable file — skip
+      continue;
+    }
+
+    parsed.push({ filePath, project, date, eligibleCount });
+  }
+
+  if (parsed.length === 0) {
+    console.log(chalk.yellow('\nNo readable conflict findings files found.\n'));
+    return;
+  }
+
+  // 4. Sort newest-first.
+  parsed.sort((a, b) => b.date - a.date);
+
+  // 5. Format display labels.
+  const choices = parsed.map(({ filePath, project, date, eligibleCount }) => {
+    const dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    const timeLabel = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+    const eligibleLabel = eligibleCount === 0
+      ? chalk.gray('(0 eligible findings)')
+      : chalk.cyan(`(${eligibleCount} eligible finding${eligibleCount === 1 ? '' : 's'})`);
+    return {
+      name:  `  ${project} — ${dateLabel} ${timeLabel}  ${eligibleLabel}`,
+      value: filePath,
+    };
+  });
+  choices.push(new inquirer.Separator());
+  choices.push({ name: chalk.gray('  Cancel'), value: null });
+
+  // 6. Show selection prompt.
+  console.log('');
+  const { selectedFile } = await inquirer.prompt([{
+    type:    'list',
+    name:    'selectedFile',
+    message: chalk.cyan('Select a saved conflict scan to load:'),
+    choices,
+  }]);
+
+  if (!selectedFile) {
+    console.log(chalk.gray('\nCancelled.\n'));
+    return;
+  }
+
+  // 7. Load and parse selected findings JSON.
+  let findings;
+  try {
+    const raw = JSON.parse(fs.readFileSync(selectedFile, 'utf8'));
+    findings = raw.findings || [];
+  } catch (err) {
+    console.log(chalk.red(`\nFailed to load findings file: ${err.message}\n`));
+    return;
+  }
+
+  if (findings.length === 0) {
+    console.log(chalk.yellow('\nNo findings in selected file.\n'));
+    return;
+  }
+
+  // 8. Prompt for codebase directory and load real fileMap.
+  // Must happen before the Fix Forecast flow since runPostScanFixForecast
+  // needs a real codebaseContext to read baseline file contents.
+  console.log(chalk.gray('\nFix Forecast needs to read the codebase files to generate a corrected version.'));
+  const { codebasePath } = await inquirer.prompt([{
+    type:     'input',
+    name:     'codebasePath',
+    message:  chalk.cyan('Path to codebase directory:'),
+    validate: (v) => v.trim().length > 0 || 'Path is required',
+  }]);
+
+  let codebaseContext;
+  try {
+    codebaseContext = await loadFromPath(codebasePath.trim());
+  } catch (err) {
+    console.log(chalk.red(`\nFailed to load codebase: ${err.message}\n`));
+    return;
+  }
+
+  if (!codebaseContext || Object.keys(codebaseContext.fileMap || {}).length === 0) {
+    console.log(chalk.yellow('\nNo files found in the specified directory.\n'));
+    return;
+  }
+
+  console.log(chalk.green(`\n  ✓ Loaded ${codebaseContext.loadedFiles} files from ${codebasePath.trim()}\n`));
+
+  // 9. Run Fix Forecast — checkbox, cost-gate, H3 re-forecast protection, serial execution.
+  await runPostScanFixForecast(findings, codebaseContext, { tier, profile });
 }

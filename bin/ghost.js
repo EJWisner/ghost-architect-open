@@ -35,7 +35,7 @@ const inquirerTheme = process.platform === 'win32' ? {
 } : {};
 
 import { runCompareMode } from '../src/modes/compare.js';
-import { runConflictMode } from '../src/modes/conflict.js';
+import { runConflictMode, runSavedFixForecast } from '../src/modes/conflict.js';
 import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { runCommitForecastMode } from '../src/modes/commit-forecast.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
@@ -360,6 +360,7 @@ async function selectMode(codebaseContext, tier = 'open') {
     { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
     { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
     { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
+    { name: IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ' + chalk.gray('— Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
     { name: IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ' + chalk.gray('— Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
     { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
     { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
@@ -1585,6 +1586,7 @@ async function main() {
       case 'poi':             await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
       case 'blast':           await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
       case 'conflict':        await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
+      case 'fix-forecast':    await runSavedFixForecast({ tier: TIER, profile }); break;
       // Commit Forecast: gate is handled inside runCommitForecastMode via
       // checkForecastGate(), which reads getForecastCount() and calls
       // renderForecastPaywall() directly. This keeps the paywall-dispatch
