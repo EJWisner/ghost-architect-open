@@ -423,6 +423,19 @@ async function promptFixForecast(findings, forecasted = new Set()) {
     return [];
   }
 
+  // Print summary of all eligible findings before checkbox appears
+  console.log(chalk.cyan('\n  Eligible findings for Fix Forecast:\n'));
+  eligible.forEach((f, i) => {
+    const files = (f.files || []).slice(0, 2).join(', ') + ((f.files || []).length > 2 ? ` +${f.files.length - 2} more` : '');
+    console.log(
+      `  ${chalk.bold(`[${i + 1}]`)}  ${severityLabel(f.severity)}  ${chalk.white(f.title)}`
+    );
+    if (files) {
+      console.log(`       ${chalk.gray(files)}`);
+    }
+  });
+  console.log('');
+
   const { chosen } = await inquirer.prompt([{
     type:    'checkbox',
     name:    'chosen',
