@@ -21,6 +21,7 @@ import { loadSession, saveSession, deleteSession } from './multipass.js';
 import { mergeRates } from '../profile/index.js';
 import { getTierCap } from '../loader/tierCaps.js';
 import { generateFindingId } from '../utils/finding-parser.js';
+import { SessionCostTracker } from './estimator.js';
 
 // Per-pass token budget for conflict detection. Scales with tier cap to leave
 // uniform 20% headroom across all tiers. Setting this equal to or near the
@@ -41,7 +42,7 @@ const SESSION_PREFIX    = 'conflict-';
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
-async function callClaude(prompt, system, maxTokens = 8096, onChunk = null) {
+async function callClaude(prompt, system, maxTokens = 8096, onChunk = null, onUsage = null) {
   const anthropic = getClient();
   let result = '';
   const stream = anthropic.messages.stream({
@@ -53,6 +54,23 @@ async function callClaude(prompt, system, maxTokens = 8096, onChunk = null) {
       const text = chunk.delta.text;
       result += text;
       if (onChunk) onChunk(text);
+    }
+  }
+  // Capture real usage from the stream's final message.
+  // stream.finalMessage() resolves once the stream is complete (it has already
+  // drained by this point) — safe to call without an extra network round-trip.
+  if (onUsage) {
+    try {
+      const finalMsg = await stream.finalMessage();
+      if (finalMsg?.usage) {
+        onUsage(
+          finalMsg.usage.input_tokens  ?? 0,
+          finalMsg.usage.output_tokens ?? 0,
+          getModel()
+        );
+      }
+    } catch (_) {
+      // Usage capture failed — streaming response was already delivered. Ignore.
     }
   }
   return result;
@@ -90,7 +108,7 @@ export function getConflictPassInfo(fileMap, tier = 'open') {
 
 // ── Single-pass conflict scan ──────────────────────────────────────────────────
 
-async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFindings, onChunk, profile, forecastContext) {
+async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFindings, onChunk, profile, forecastContext, onUsage = null) {
   let context = '';
   for (const [fp, content] of Object.entries(files)) {
     context += `\n\n=== FILE: ${fp} ===\n${content}`;
@@ -101,7 +119,7 @@ async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFin
     : '';
 
   const prompt = buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext, forecastContext });
-  return callClaude(prompt, buildSystemConflict(profile), 8096, passNum === totalPasses ? onChunk : null);
+  return callClaude(prompt, buildSystemConflict(profile), 8096, passNum === totalPasses ? onChunk : null, onUsage);
 }
 
 // ── Extract conflict candidates from raw pass results ─────────────────────────
@@ -122,105 +140,24 @@ async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFin
 // If a candidate's title starts with one of these, it's almost certainly a
 // fix instruction, not a conflict claim. The verbs are listed lowercased
 // because we lowercase the title before checking.
-const FIX_VERB_RE = /^(add|address|adjust|apply|audit|build|change|check|choose|configure|consider|consolidate|convert|create|define|delete|deprecate|disable|document|enable|ensure|establish|exclude|export|extract|fix|gate|generate|harden|implement|improve|include|inject|install|introduce|investigate|isolate|keep|load|log|maintain|migrate|modify|move|normalize|prevent|provide|publish|refactor|register|remove|rename|replace|resolve|restructure|return|review|run|save|search|set|setup|simplify|split|standardize|store|switch|test|track|update|use|validate|verify|wire|wrap)\b/i;
+// "store" removed: in Magento/PHP "Store" is overwhelmingly a noun (store entity,
+// store ID, store config). Zero imperative-verb usages found across 8 real sessions.
+// "test" retained: 2 confirmed legitimate imperative uses in real sessions.
+const FIX_VERB_RE = /^(add|address|adjust|apply|audit|build|change|check|choose|configure|consider|consolidate|convert|create|define|delete|deprecate|disable|document|enable|ensure|establish|exclude|export|extract|fix|gate|generate|harden|implement|improve|include|inject|install|introduce|investigate|isolate|keep|load|log|maintain|migrate|modify|move|normalize|prevent|provide|publish|refactor|register|remove|rename|replace|resolve|restructure|return|review|run|save|search|set|setup|simplify|split|standardize|switch|test|track|update|use|validate|verify|wire|wrap)\b/i;
 
 // Section headers that mark the start of a fix-recommendation sub-section.
 // Numbered items inside these sections are fix steps, not conflict findings.
 // Patterns are matched against pre-stripped lines (no `**`).
-const FIX_SECTION_RE = /^(?:resolution|recommended\s+fix|fix\s+steps?|fix|what\s+to\s+do|how\s+to\s+(?:fix|resolve)|remediation|action\s+items?|next\s+steps?|to\s+resolve|to\s+fix|recommendation|recommendations)\s*:/i;
+//
+// Two real formats found across 8 sessions:
+//   Format A: - Resolution: ...  (bullet-bold: "- **Resolution:**" → stripped "- Resolution:")
+//   Format B: Resolution: ...    (standalone bold: "**Resolution:**" → stripped "Resolution:")
+// The optional `(?:-\s+)?` prefix handles Format A.
+// The optional `(?:\([^)]*\))?` handles parentheticals like (future) or (from Pass 1).
+const FIX_SECTION_RE = /^(?:-\s+)?(?:resolution|recommended\s+fix|fix\s+steps?|fix|what\s+to\s+do|how\s+to\s+(?:fix|resolve)|remediation|action\s+items?|next\s+steps?|to\s+resolve|to\s+fix|recommendation|recommendations)\s*(?:\([^)]*\))?\s*:/i;
 
 function stripBoldMarkdown(line) {
   return line.replace(/\*+/g, '');
-}
-
-// ── Fix-direction extractor ───────────────────────────────────────────────────
-// Extracts structured fix_direction from the raw lines of a finding's
-// Resolution/Fix section, accumulated during the extractCandidates pass.
-//
-// Returns null (not an error) when:
-//   - No code block is present in the fix lines
-//   - files array is empty or has multiple entries (no single target file)
-//   - Multiple code blocks found (ambiguous)
-//   - fixLines is empty or malformed
-//
-// NOTE: This function is intentionally kept narrow in scope so it can be
-// extracted to src/utils/fix-direction-extractor.js when Blast enrichment
-// is added in Phase 2b. Keep the signature (fixLines: string[], files: string[])
-// stable for that migration.
-function extractFixDirection(fixLines, files) {
-  try {
-    // Gate 1: must have exactly one target file
-    if (!Array.isArray(files) || files.length !== 1 || !files[0] || !files[0].trim()) {
-      return null;
-    }
-    const targetFile = files[0].trim();
-
-    if (!Array.isArray(fixLines) || fixLines.length === 0) return null;
-
-    // Gate 2: find code blocks in the fix lines
-    // Code blocks are delimited by ``` (with optional language tag)
-    const codeBlockRe = /^```/;
-    const blocks = [];
-    let inBlock = false;
-    let blockLines = [];
-    let reasoningLines = [];
-
-    for (const line of fixLines) {
-      if (codeBlockRe.test(line.trim())) {
-        if (inBlock) {
-          // closing fence
-          blocks.push(blockLines.join('\n'));
-          blockLines = [];
-          inBlock = false;
-        } else {
-          // opening fence — capture prose before this as reasoning
-          inBlock = true;
-        }
-      } else if (inBlock) {
-        blockLines.push(line);
-      } else {
-        // Outside a code block — accumulate as reasoning prose
-        const stripped = stripBoldMarkdown(line).trim();
-        if (stripped && !stripped.match(/^Remediation estimate/i)) {
-          reasoningLines.push(stripped);
-        }
-      }
-    }
-
-    // Gate 3: must have exactly one code block (multiple = ambiguous)
-    if (blocks.length !== 1) return null;
-
-    const patchInstruction = blocks[0].trim();
-    if (!patchInstruction) return null;
-
-    // Gate 4: patch instruction sanity — reject obviously non-code content
-    // (e.g. a block that only contains prose like "run: rector process")
-    // Heuristic: if it's > 30 lines it's probably a full-file replacement,
-    // not a surgical patch. Return null and let the human decide.
-    const patchLines = patchInstruction.split('\n').length;
-    if (patchLines > 30) return null;
-
-    // Confidence: single file + code block found
-    // high: ≤ 10 lines (surgical), medium: 11-30 lines (larger change)
-    const confidence = patchLines <= 10 ? 'high' : 'medium';
-
-    // Reasoning: join prose lines, collapse whitespace
-    const reasoning = reasoningLines
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .replace(/:\s*$/, '.');  // normalize trailing colon to period
-
-    return {
-      target_file:       targetFile,
-      patch_instruction: patchInstruction,
-      reasoning:         reasoning || null,
-      confidence,
-    };
-  } catch {
-    // Never crash the scan due to fix-direction parsing
-    return null;
-  }
 }
 
 // ── Candidate normalizer ──────────────────────────────────────────────────────
@@ -261,125 +198,68 @@ export function normalizeCandidateToFinding(candidate) {
   };
 }
 export function extractCandidates(rawResults) {
+  const combined = Array.isArray(rawResults) ? rawResults.join('\n') : rawResults;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function normalizeSeverity(s) {
+    const v = (s || '').toString().toUpperCase().trim();
+    if (v === 'CRITICAL') return 'CRITICAL';
+    if (v === 'HIGH')     return 'HIGH';
+    if (v === 'LOW')      return 'LOW';
+    if (v === 'INFO')     return 'INFO';
+    return 'MEDIUM'; // default
+  }
+
+  function buildFixDirection(fd, files) {
+    if (!fd || typeof fd !== 'object') return null;
+    const targetFiles = Array.isArray(fd.target_files)
+      ? fd.target_files.filter(Boolean)
+      : (Array.isArray(files) ? files.slice(0, 1) : []);
+    if (targetFiles.length === 0) return null;
+    if (!fd.patch_instruction || typeof fd.patch_instruction !== 'string') return null;
+    return {
+      target_files:      targetFiles,
+      patch_instruction: fd.patch_instruction,
+      reasoning:         fd.reasoning || null,
+      confidence:        fd.confidence === 'medium' ? 'medium' : 'high',
+    };
+  }
+
+  // ── JSON fence extraction ──────────────────────────────────────────────────
+  // Find all ```json ... ``` fences in the combined string.
+  const fenceRe = /```json\s*([\s\S]*?)```/g;
   const candidates = [];
-  const combined   = Array.isArray(rawResults) ? rawResults.join('\n') : rawResults;
-  const lines      = combined.split('\n');
 
-  // Patterns assume pre-stripped lines. Anchored to start of line so body
-  // text like "…both files…" can't hijack the file list.
-  const severityRe = /^[Ss]everity\s*:[^A-Za-z]*(BLOCKING|CRITICAL|HIGH|MEDIUM|LOW|INFO)/;
-  const filesRe    = /^[Ff]iles?\s*:\s*(.+)/;
-  const findingRe  = /^\d+\.\s+(.+?)$/;
-
-  let current        = null;
-  let inFixSection   = false;  // Inside a Resolution/Fix-steps sub-section?
-  let currentFixLines = [];    // Raw lines of the current finding's fix section
-
-  for (const line of lines) {
-    const tRaw = line.trim();
-    const t    = stripBoldMarkdown(tRaw);
-
-    // Section state tracking. A fix-section header ("Resolution:",
-    // "Recommended Fix:", etc.) starts a fix block. A markdown header
-    // (## / ###), a horizontal rule (---), or a new finding header
-    // ("### Conflict 2", `1. **Title**`) ends the fix block.
-    if (FIX_SECTION_RE.test(t)) {
-      inFixSection = true;
-    } else if (/^#{1,3}\s+/.test(tRaw)) {
-      inFixSection = false;
-    } else if (tRaw.startsWith('---')) {
-      inFixSection = false;
-    }
-
-    // Accumulate fix-section lines for the current candidate.
-    // These are passed to extractFixDirection when the candidate is finalized.
-    if (inFixSection && current && !FIX_SECTION_RE.test(t)) {
-      currentFixLines.push(line);
-    }
-
-    // Try to match a finding header. Skip this match if we're inside a fix
-    // sub-section — those numbered items are fix steps, not findings.
-    const fm = !inFixSection ? t.match(findingRe) : null;
-    if (fm) {
-      const titleCandidate = fm[1].trim();
-
-      // Backstop: if the title starts with an imperative fix-verb, it's
-      // almost certainly a fix-step bullet that escaped the section
-      // detection. Skip it. Keep `current` open so the surrounding finding
-      // continues to accumulate description.
-      if (FIX_VERB_RE.test(titleCandidate)) {
-        // Treat as description content of the current finding, not a new one.
-        if (current && titleCandidate.length > 10) {
-          current.description += (current.description ? ' ' : '') + tRaw;
-        }
-        continue;
-      }
-
-      // Backstop: titles ending with `:` (like "Update both functions to
-      // reference this constant:") are usually fix-step bullet headers.
-      if (titleCandidate.endsWith(':')) {
-        if (current && titleCandidate.length > 10) {
-          current.description += (current.description ? ' ' : '') + tRaw;
-        }
-        continue;
-      }
-
-      if (current) {
-        current.fix_direction = extractFixDirection(currentFixLines, current.files);
-        candidates.push(current);
-      }
-      currentFixLines = [];
-      // Long titles indicate the model wrote title + description on a single
-      // line without a newline separator. Split on the first sentence-end
-      // character (period, semicolon, em-dash followed by capital) so the
-      // verifier gets a short, focused title to anchor on. The remainder
-      // becomes the description — the verifier reads both, so no info is
-      // lost. Threshold of 120 chars matches the skeleton extractor's limit.
-      let titleText = titleCandidate;
-      let extractedDescription = '';
-      if (titleText.length > 120) {
-        // Find the first natural split point. Prefer em-dash (most common in
-        // model output: "NAME — explanation") then sentence terminators.
-        const dashSplit  = titleText.search(/\s—\s/);
-        const colonSplit = titleText.search(/:\s+[A-Z]/);
-        const periodSplit = titleText.search(/\.\s+[A-Z]/);
-        const candidateSplits = [dashSplit, colonSplit, periodSplit].filter(i => i > 0 && i < 120);
-        if (candidateSplits.length > 0) {
-          const firstSplit = Math.min(...candidateSplits);
-          extractedDescription = titleText.slice(firstSplit + 1).trim();
-          titleText = titleText.slice(0, firstSplit).trim();
-        }
-      }
-
-      current = {
-        title:       titleText,
-        description: extractedDescription,
-        severity:    'MEDIUM',
-        files:       [],
-        type:        'scan_detected',
-        confidence:  60,
-      };
+  let match;
+  while ((match = fenceRe.exec(combined)) !== null) {
+    let parsed;
+    try {
+      parsed = JSON.parse(match[1].trim());
+    } catch (err) {
+      // Malformed JSON from this pass — skip and continue
+      console.warn(`[extractCandidates] JSON parse failed: ${err.message}`);
       continue;
     }
 
-    if (current) {
-      const sm = t.match(severityRe);
-      if (sm) { current.severity = sm[1].toUpperCase(); continue; }
+    const conflicts = parsed.conflicts;
+    if (!Array.isArray(conflicts)) continue;
 
-      const fileM = t.match(filesRe);
-      if (fileM) {
-        current.files = fileM[1].split(/[,;]/).map(f => f.trim().replace(/`/g, '')).filter(Boolean);
-        continue;
-      }
+    for (const conflict of conflicts) {
+      if (!conflict || typeof conflict !== 'object') continue;
+      const title = (conflict.title || 'Untitled').trim();
+      if (!title) continue;
 
-      if (t && !t.startsWith('---') && t.length > 10) {
-        current.description += (current.description ? ' ' : '') + t;
-      }
+      candidates.push({
+        title,
+        description:   conflict.description || '',
+        severity:      normalizeSeverity(conflict.severity),
+        files:         Array.isArray(conflict.files) ? conflict.files.filter(Boolean) : [],
+        type:          'scan_detected',
+        confidence:    60,
+        fix_direction: buildFixDirection(conflict.fix_direction, conflict.files),
+      });
     }
-  }
-  if (current) {
-    current.fix_direction = extractFixDirection(currentFixLines, current.files);
-    candidates.push(current);
   }
 
   // Dedupe by title prefix (catches near-duplicates from multi-pass merge)
@@ -424,7 +304,7 @@ function extractConflictSkeleton(result) {
 
 // ── Fallback merge (used when verifier is skipped) ────────────────────────────
 
-async function mergeConflictResults(results, onChunk, profile) {
+async function mergeConflictResults(results, onChunk, profile, onUsage = null) {
   const combined = results.map((r, i) =>
     `=== CONFLICT FINDINGS — BATCH ${i + 1} ===\n${r}`
   ).join('\n\n');
@@ -440,7 +320,7 @@ async function mergeConflictResults(results, onChunk, profile) {
     `- Produce the final CONFLICT SUMMARY table with all counts and risk ratings\n\n` +
     `BATCHES:\n${combined}\n\nMerged conflict report:`;
 
-  return callClaude(prompt, buildSystemConflict(profile), 8096, onChunk);
+  return callClaude(prompt, buildSystemConflict(profile), 8096, onChunk, onUsage);
 }
 
 // ── Session key helper ─────────────────────────────────────────────────────────
@@ -478,6 +358,16 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   // forgets to pass tier does not leak a paid-tier privilege. See
   // TODO-verifier-agent-stage3-evaluate.md.
   const tier = options.tier || 'open';
+
+  // ── Cost tracker — accumulates real API usage from every pipeline stage ─────
+  // Accepts an external tracker (when caller pre-records plan stage costs) or
+  // creates a fresh one. Each stage fires onUsage(inputTokens, outputTokens, model).
+  const tracker = options.tracker instanceof SessionCostTracker
+    ? options.tracker
+    : new SessionCostTracker();
+  const scanUsage    = (i, o, m) => tracker.record('scan',    i, o, m);
+  const verifyUsage  = (i, o, m) => tracker.record('verify',  i, o, m);
+  const narrateUsage = (i, o, m) => tracker.record('narrate', i, o, m);
 
   const info       = getConflictPassInfo(fileMap, tier);
   const totalFiles = info.totalFiles;
@@ -526,7 +416,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   if (info.singlePass) {
     onProgress({ type: 'scanning', fileCount: totalFiles, tokens: info.totalTokens });
-    const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null, profile, forecastContext);
+    const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null, profile, forecastContext, scanUsage);
     passResults.push(result);
   } else {
     const sessionKey = conflictSessionKey(options.projectLabel || 'default');
@@ -538,7 +428,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
       onProgress({ type: 'passStart', passNum, totalPasses: info.passes.length, fileCount, tokens: pass.tokens });
 
-      const result   = await runConflictPass(pass.files, passNum, info.passes.length, totalFiles, skeletons, null, profile, forecastContext);
+      const result   = await runConflictPass(pass.files, passNum, info.passes.length, totalFiles, skeletons, null, profile, forecastContext, scanUsage);
       const skeleton = extractConflictSkeleton(result);
       skeletons.push(skeleton);
       passResults.push(result);
@@ -567,9 +457,9 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   if (candidates.length === 0) {
     onProgress({ type: 'merging', count: passResults.length });
-    const finalReport = await mergeConflictResults(passResults, onChunk, profile);
+    const finalReport = await mergeConflictResults(passResults, onChunk, profile, scanUsage);
     onProgress({ type: 'done', passCount: info.passes.length });
-    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, candidates: [] };
+    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, candidates: [], tracker };
   }
 
   // ── Phase 3: Verify each candidate ────────────────────────────────────────
@@ -601,9 +491,9 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
         surfaced:       0,
       },
     };
-    const finalReport = await narrateConflictReport(skippedResult, { rates, profile, projectLabel: options.projectLabel }, onChunk);
+    const finalReport = await narrateConflictReport(skippedResult, { rates, profile, projectLabel: options.projectLabel }, onChunk, narrateUsage);
     onProgress({ type: 'done', passCount: info.passes.length });
-    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, stats: skippedResult.stats, candidates };
+    return { finalReport, passCount: info.passes.length, totalFiles, verified: false, stats: skippedResult.stats, candidates, tracker };
   }
 
   onProgress({ type: 'verification_start', count: candidates.length });
@@ -615,6 +505,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
       onProgress({ type: 'verified', title: verified.title, verdict: verified.verdict }),
     onProgress: ({ current, total }) =>
       onProgress({ type: 'verification_progress', current, total }),
+    onUsage: verifyUsage,
   }, verifyChoice, tier);
 
   onProgress({
@@ -629,7 +520,8 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   const finalReport = await narrateConflictReport(
     verificationResult,
     { rates, profile, projectLabel: options.projectLabel },
-    onChunk
+    onChunk,
+    narrateUsage
   );
 
   onProgress({ type: 'done', passCount: info.passes.length });
@@ -641,5 +533,6 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
     verified:   true,
     stats:      verificationResult.stats,
     candidates,
+    tracker,
   };
 }

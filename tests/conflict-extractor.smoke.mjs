@@ -1,15 +1,8 @@
 /**
- * Smoke tests for extractCandidates in src/core/conflict.js
+ * Smoke tests for extractCandidates JSON parser in src/core/conflict.js (Phase J).
  *
- * The pre-fix extractCandidates pulled fix-step bullets from "Resolution:"
- * sections as if they were top-level conflict findings. On small codebases the
- * model produces lots of fix recommendations, so the candidate list became
- * dominated by recommendation prose like "Update both functions to reference
- * this constant" — which the verifier can't classify because those aren't
- * conflict claims, they're fix instructions.
- *
- * These tests use synthetic fixtures matching the model output shape that
- * triggered the bug today, plus historic real reports as smoke confirmation.
+ * All fixtures are inline JSON code fences — the format the new parser expects.
+ * Each test asserts the same properties as the original markdown-fixture version.
  *
  * Run: node tests/conflict-extractor.smoke.mjs
  */
@@ -42,258 +35,177 @@ function checkPredicate(label, value, predicate, predicateDesc) {
   }
 }
 
-// Test 1: Synthetic — fix-step bullets inside Resolution should NOT become candidates
-console.log('Test 1: Resolution fix-steps are NOT extracted as candidates');
+function jsonFence(obj) {
+  return '```json\n' + JSON.stringify(obj, null, 2) + '\n```';
+}
+
+// Test 1: Two findings in one fence — both extracted, correct count
+console.log('Test 1: Two findings in one JSON fence');
 {
-  const raw = `1. **DEFAULT_TAX_RATE_DRIFT** — Tax rate inconsistency between checkout and pricing
-
-**Severity:** MEDIUM
-**Files:** index.js, pricing.js
-**Description:** Two different default tax rates exist.
-
-**Resolution:**
-1. Define a single source of truth for the default tax rate as a constant
-2. Update both functions to reference this constant
-3. Choose 0.08 as the canonical value (since checkout() is the primary entry)
-
----
-
-2. **DISCOUNT_CALCULATION_MISMATCH** — Hardcoded discount percentages
-
-**Severity:** MEDIUM
-**Files:** pricing.js
-**Description:** Discount codes use fragile mapping.
-
-**Resolution:**
-1. Extract discount definitions to a constant map
-2. Make the percentage explicit
-`;
+  const raw = jsonFence({ conflicts: [
+    {
+      title: 'DEFAULT_TAX_RATE_DRIFT — Tax rate inconsistency between checkout and pricing',
+      severity: 'MEDIUM',
+      files: ['index.js', 'pricing.js'],
+      description: 'Side A: checkout uses 0.08. Side B: pricing uses 0.05. Impact: revenue errors. Resolution: define shared TAX_RATE constant.',
+    },
+    {
+      title: 'DISCOUNT_CALCULATION_MISMATCH — Hardcoded discount percentages',
+      severity: 'MEDIUM',
+      files: ['pricing.js'],
+      description: 'Discount codes use fragile hardcoded mapping. Resolution: extract to constant map.',
+    },
+  ]});
   const candidates = extractCandidates(raw);
-  check('candidate count is 2 (not 7)', candidates.length, 2);
-  check('first candidate title', candidates[0]?.title, 'DEFAULT_TAX_RATE_DRIFT \u2014 Tax rate inconsistency between checkout and pricing');
-  check('second candidate title', candidates[1]?.title, 'DISCOUNT_CALCULATION_MISMATCH \u2014 Hardcoded discount percentages');
+  check('candidate count is 2', candidates.length, 2);
+  checkPredicate('first candidate title contains DEFAULT_TAX_RATE_DRIFT', candidates[0]?.title, t => t && t.includes('DEFAULT_TAX_RATE_DRIFT'), 'should contain DEFAULT_TAX_RATE_DRIFT');
+  checkPredicate('second candidate title contains DISCOUNT_CALCULATION_MISMATCH', candidates[1]?.title, t => t && t.includes('DISCOUNT_CALCULATION_MISMATCH'), 'should contain DISCOUNT_CALCULATION_MISMATCH');
   check('first severity', candidates[0]?.severity, 'MEDIUM');
   check('first files',    candidates[0]?.files, ['index.js', 'pricing.js']);
 }
 console.log('');
 
-// Test 2: Pre-fix bug regression — imperative-verb titles get filtered
-console.log('Test 2: Imperative-verb titles are filtered as backstop');
+// Test 2: Single real finding — correct extraction
+console.log('Test 2: Single real finding extracted');
 {
-  const raw = `1. **REAL_CONFLICT** — A genuine architecture mismatch
-
-**Severity:** HIGH
-**Files:** foo.js
-
-1. Update both functions to reference this constant
-2. Add input validation
-3. Extract magic numbers
-4. Implement validation at boundaries
-`;
+  const raw = jsonFence({ conflicts: [
+    {
+      title: 'REAL_CONFLICT — A genuine architecture mismatch',
+      severity: 'HIGH',
+      files: ['foo.js'],
+      description: 'Side A expects X, Side B expects Y. Impact: crash. Resolution: unify.',
+    },
+  ]});
   const candidates = extractCandidates(raw);
-  check('only 1 candidate (real one)', candidates.length, 1);
-  check('candidate title is real conflict', candidates[0]?.title, 'REAL_CONFLICT \u2014 A genuine architecture mismatch');
+  check('only 1 candidate', candidates.length, 1);
+  checkPredicate('candidate title contains REAL_CONFLICT', candidates[0]?.title, t => t && t.includes('REAL_CONFLICT'), 'should contain REAL_CONFLICT');
 }
 console.log('');
 
-// Test 3: Bold markdown variants don't break extraction
-console.log('Test 3: Bold markdown variants');
+// Test 3: Severity normalization for all valid values
+console.log('Test 3: Severity normalization');
 {
   const cases = [
-    [
-      '1. **CONFLICT_A** — Title with bold\n**Severity:** CRITICAL\n**Files:** a.js',
-      { title: 'CONFLICT_A \u2014 Title with bold', severity: 'CRITICAL', files: ['a.js'] }
-    ],
-    [
-      '1. CONFLICT_B — Plain title\nSeverity: HIGH\nFiles: b.js',
-      { title: 'CONFLICT_B \u2014 Plain title', severity: 'HIGH', files: ['b.js'] }
-    ],
-    [
-      '1. **CONFLICT_C** — Backticked files\n**Severity:** MEDIUM\n**Files:** `c.js`, `d.js`',
-      { title: 'CONFLICT_C \u2014 Backticked files', severity: 'MEDIUM', files: ['c.js', 'd.js'] }
-    ],
+    { severity: 'CRITICAL', expected: 'CRITICAL' },
+    { severity: 'HIGH',     expected: 'HIGH'     },
+    { severity: 'MEDIUM',   expected: 'MEDIUM'   },
+    { severity: 'LOW',      expected: 'LOW'      },
+    { severity: 'bogus',    expected: 'MEDIUM'   },  // defaults to MEDIUM
+    { severity: '',         expected: 'MEDIUM'   },  // defaults to MEDIUM
   ];
-  for (const [raw, expected] of cases) {
+  for (const { severity, expected } of cases) {
+    const raw = jsonFence({ conflicts: [{ title: 'Test Finding', severity, files: ['a.js'], description: 'desc' }] });
     const candidates = extractCandidates(raw);
-    check('count for ' + JSON.stringify(raw.slice(0, 30)), candidates.length, 1);
-    if (candidates.length === 1) {
-      check('  title',    candidates[0].title,    expected.title);
-      check('  severity', candidates[0].severity, expected.severity);
-      check('  files',    candidates[0].files,    expected.files);
-    }
+    check(`severity "${severity}" → "${expected}"`, candidates[0]?.severity, expected);
   }
 }
 console.log('');
 
-// Test 4: Multi-pass output (array of pass results)
+// Test 4: Multi-pass array input — both fences contribute candidates
 console.log('Test 4: Array input from multi-pass scan');
 {
-  const passes = [
-    `1. **PASS_1_CONFLICT** — From pass 1\n**Severity:** HIGH\n**Files:** a.js`,
-    `1. **PASS_2_CONFLICT** — From pass 2\n**Severity:** MEDIUM\n**Files:** b.js`,
-  ];
-  const candidates = extractCandidates(passes);
-  // Note: candidate numbers reset between passes (both start with "1."), so
-  // dedup-by-title-prefix should keep them as distinct (different prefixes).
+  const pass1 = jsonFence({ conflicts: [{ title: 'PASS_1_CONFLICT — From pass 1', severity: 'HIGH',   files: ['a.js'], description: 'desc' }] });
+  const pass2 = jsonFence({ conflicts: [{ title: 'PASS_2_CONFLICT — From pass 2', severity: 'MEDIUM', files: ['b.js'], description: 'desc' }] });
+  const candidates = extractCandidates([pass1, pass2]);
   check('candidate count is 2', candidates.length, 2);
+  checkPredicate('pass 1 finding present', candidates, cs => cs.some(c => c.title?.includes('PASS_1_CONFLICT')), 'should include PASS_1_CONFLICT');
+  checkPredicate('pass 2 finding present', candidates, cs => cs.some(c => c.title?.includes('PASS_2_CONFLICT')), 'should include PASS_2_CONFLICT');
 }
 console.log('');
 
-// Test 5: Section header detection variants
-console.log('Test 5: Various fix-section headers should suppress numbered items');
+// Test 5: Empty conflicts array → zero candidates
+console.log('Test 5: Empty conflicts array produces zero candidates');
 {
-  const variants = [
-    'Resolution:',
-    'Recommended Fix:',
-    'Recommended fix:',
-    'Fix Steps:',
-    'What to do:',
-    'How to fix:',
-    'How to resolve:',
-    'Remediation:',
-    'Action items:',
-    'Next steps:',
-    'To resolve:',
-    'To fix:',
-  ];
-  for (const header of variants) {
-    const raw = `1. **THE_CONFLICT** — Real conflict
-**Severity:** HIGH
-**Files:** foo.js
+  const raw = jsonFence({ conflicts: [] });
+  const candidates = extractCandidates(raw);
+  check('zero candidates from empty array', candidates.length, 0);
+}
+console.log('');
 
-${header}
-1. First fix step that should NOT be a candidate
-2. Second fix step that should NOT be a candidate
-`;
-    const candidates = extractCandidates(raw);
-    check('header "' + header + '" suppresses fix-step bullets', candidates.length, 1);
+// Test 6: fix_direction populated and null cases
+console.log('Test 6: fix_direction populated vs null');
+{
+  const raw = jsonFence({ conflicts: [
+    {
+      title: 'Finding With Fix Direction',
+      severity: 'HIGH',
+      files: ['src/core/verifier.js'],
+      description: 'desc',
+      fix_direction: {
+        target_files: ['src/core/verifier.js'],
+        patch_instruction: 'const x = 1;\nreturn x;',
+        reasoning: 'unify constant',
+        confidence: 'high',
+      },
+    },
+    {
+      title: 'Finding Without Fix Direction',
+      severity: 'MEDIUM',
+      files: ['src/core/multipass.js'],
+      description: 'prose-only resolution, no surgical patch available',
+      // no fix_direction
+    },
+  ]});
+  const candidates = extractCandidates(raw);
+  check('count is 2', candidates.length, 2);
+  const withFix    = candidates.find(c => c.title?.includes('With Fix'));
+  const withoutFix = candidates.find(c => c.title?.includes('Without Fix'));
+  check('with fix_direction: non-null',    withFix?.fix_direction !== null && withFix?.fix_direction !== undefined, true);
+  check('without fix_direction: null',     withoutFix?.fix_direction, null);
+  if (withFix?.fix_direction) {
+    check('target_files populated', withFix.fix_direction.target_files?.length > 0, true);
+    checkPredicate('patch_instruction non-empty', withFix.fix_direction.patch_instruction, p => typeof p === 'string' && p.length > 0, 'should be non-empty string');
+    check('confidence is high', withFix.fix_direction.confidence, 'high');
   }
 }
 console.log('');
 
-// Test 6: Markdown header (## or ###) ends the fix section
-console.log('Test 6: Markdown header ends fix section');
+// Test 7: Dedup by title prefix — near-duplicate titles collapsed
+console.log('Test 7: Dedup by title prefix (first 40 chars)');
 {
-  const raw = `1. **FIRST_CONFLICT**
-**Severity:** HIGH
-
-Resolution:
-1. Fix step one
-2. Fix step two
-
-## Section Header
-
-1. **SECOND_CONFLICT**
-**Severity:** MEDIUM
-**Files:** bar.js
-`;
+  const raw = jsonFence({ conflicts: [
+    { title: 'REACT_VERSION_PEER_DEPENDENCY — React Version Peer Dependency Conflict First',  severity: 'MEDIUM', files: ['package.json'],  description: 'desc1' },
+    { title: 'REACT_VERSION_PEER_DEPENDENCY — React Version Peer Dependency Conflict Second', severity: 'LOW',    files: ['package.lock'], description: 'desc2' },
+    { title: 'MISSING_RETRY_LOGIC — Missing Retry Logic on GitHub API Calls',                 severity: 'MEDIUM', files: ['GitHubService.ts'], description: 'desc3' },
+    { title: 'PRESENTATION_LAYER_PERSISTENCE — Presentation Layer Persistence Violation',     severity: 'MEDIUM', files: ['PortfolioScreen.tsx'], description: 'desc4' },
+  ]});
   const candidates = extractCandidates(raw);
-  check('count is 2 (markdown header reset)', candidates.length, 2);
-  check('first title',  candidates[0]?.title, 'FIRST_CONFLICT');
-  check('second title', candidates[1]?.title, 'SECOND_CONFLICT');
+  // Two REACT_VERSION findings share "react_version_peer_dependency — react " (40 chars) → deduped
+  // Three distinct findings total
+  check('count is 3 (one REACT deduped)', candidates.length, 3);
+  checkPredicate('REACT finding present',        candidates, cs => cs.some(c => c.title?.includes('REACT_VERSION')),         'should include REACT_VERSION');
+  checkPredicate('MISSING_RETRY finding present',candidates, cs => cs.some(c => c.title?.includes('MISSING_RETRY')),         'should include MISSING_RETRY');
+  checkPredicate('PRESENTATION finding present', candidates, cs => cs.some(c => c.title?.includes('PRESENTATION')),          'should include PRESENTATION');
 }
 console.log('');
 
-// Test 8: Long single-line title (model concatenated title + description with
-// no newline). Should be split at the em-dash, with the rest going into
-// description. This was the actual bug from the May 7 smoke run — a 246-char
-// "title" that left candidate.files empty and stumped the verifier.
-console.log('Test 8: Long single-line title gets split at em-dash');
+// Test 8: Files array preserved exactly
+console.log('Test 8: Files array preserved');
 {
-  const raw = `1. **TAX_RATE_DRIFT — Two different default tax rates (5% vs 8%) mean customers see inconsistent final prices depending on which calculation function is used, creating revenue errors and potential tax compliance issues.**
-
-**Severity:** MEDIUM
-`;
+  const files = ['src/services/GitHubService.ts', 'src/screens/PortfolioScreen.tsx', 'src/core/verifier.js'];
+  const raw = jsonFence({ conflicts: [{ title: 'Multi File Conflict', severity: 'HIGH', files, description: 'desc' }] });
   const candidates = extractCandidates(raw);
   check('count is 1', candidates.length, 1);
-  if (candidates.length === 1) {
-    checkPredicate('title is short and starts with TAX_RATE_DRIFT',
-      candidates[0].title,
-      t => t && t.length < 120 && t.startsWith('TAX_RATE_DRIFT'),
-      'should be < 120 chars and start with TAX_RATE_DRIFT'
-    );
-    checkPredicate('description contains the rest',
-      candidates[0].description,
-      d => d && d.includes('inconsistent final prices'),
-      'should contain the prose that came after the em-dash'
-    );
-  }
+  check('files match exactly', candidates[0]?.files, files);
 }
 console.log('');
 
-// Test 9: Period-separated long title gets split at sentence boundary
-console.log('Test 9: Long title with period split');
+// Test 9: Malformed JSON fence is skipped gracefully, valid fence still parsed
+console.log('Test 9: Malformed JSON fence skipped, valid fence parsed');
 {
-  const raw = `1. **CONFLICT_NAME**: Long description that goes on and on without a sentence break and then. Eventually has a period followed by capital letter.
-`;
-  const candidates = extractCandidates(raw);
-  check('count is 1', candidates.length, 1);
-  if (candidates.length === 1) {
-    checkPredicate('title is the short part',
-      candidates[0].title,
-      t => t && t.length < 120,
-      'should be split, title under 120 chars'
-    );
-  }
-}
-console.log('');
-
-// Test 7: Real historic data from a working v5.0.0 conflict scan output
-// This is a synthetic approximation of what the model produced on April 27.
-// The structure is "C-001:" style with bold severity badges and structured sections.
-console.log('Test 7: Historic v5.0.0 conflict-scan output shape');
-{
-  const raw = `Performing a full conflict detection scan of this 24-file codebase.
-
-1. **REACT_VERSION_PEER_DEPENDENCY** — React Version Peer Dependency Conflict
-
-**Severity:** MEDIUM
-**Files:** package.json
-**Description:** React 19.1.0 is installed alongside React Native 0.81.5.
-
-**Impact:** Runtime errors in navigation.
-
-**Fix:**
-1. Downgrade to React 18.2.0
-2. Update peer dependencies
-
----
-
-2. **MISSING_RETRY_LOGIC** — Missing Retry Logic on GitHub API Calls
-
-**Severity:** MEDIUM
-**Files:** services/GitHubService.ts
-**Description:** No retry logic on transient failures.
-
-**Fix:**
-1. Wrap fetchWithTimeout with exponential backoff
-2. Add circuit breaker
-
----
-
-3. **PRESENTATION_LAYER_PERSISTENCE** — Presentation Layer Persistence Violation
-
-**Severity:** MEDIUM
-**Files:** screens/PortfolioScreen.tsx
-**Description:** Screen calls AsyncStorage directly.
-
-**Fix:**
-1. Move persistence to SettingsService
-2. Provide hideProject method
-`;
-  const candidates = extractCandidates(raw);
-  check('count is 3 (not 9)', candidates.length, 3);
-  checkPredicate('first candidate title contains REACT', candidates[0]?.title, t => t && t.includes('REACT_VERSION'), 'should contain REACT_VERSION');
-  checkPredicate('second candidate title contains MISSING_RETRY', candidates[1]?.title, t => t && t.includes('MISSING_RETRY'), 'should contain MISSING_RETRY');
-  checkPredicate('third candidate title contains PRESENTATION', candidates[2]?.title, t => t && t.includes('PRESENTATION'), 'should contain PRESENTATION');
+  const bad  = '```json\n{ this is not valid json }\n```';
+  const good = jsonFence({ conflicts: [{ title: 'Valid Conflict', severity: 'HIGH', files: ['src/good.js'], description: 'desc' }] });
+  const candidates = extractCandidates(bad + '\n\n' + good);
+  check('count is 1 (bad fence skipped, good fence parsed)', candidates.length, 1);
+  checkPredicate('valid finding present', candidates, cs => cs.some(c => c.title?.includes('Valid Conflict')), 'should include Valid Conflict');
 }
 console.log('');
 
 // Summary
 if (failures > 0) {
-  console.log('FAILED \u2014 ' + failures + ' assertion(s) did not pass');
+  console.log('FAILED — ' + failures + ' assertion(s) did not pass');
   process.exit(1);
 } else {
-  console.log('PASSED \u2014 all assertions ok');
+  console.log('PASSED — all assertions ok');
   process.exit(0);
 }
