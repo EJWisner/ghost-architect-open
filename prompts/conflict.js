@@ -54,7 +54,7 @@ Return your findings as a JSON code fence. Output ONLY the JSON code fence — n
       "description": "Full description including side A expects, side B expects, conflicting values, impact, and resolution steps.",
       "fix_direction": {
         "target_files": ["path/to/file.php"],
-        "patch_instruction": "single surgical code block under 30 lines",
+        "patch_instruction": "ONLY the raw code to insert or replace — no explanatory prose, no comments describing what to do, no markdown text. Pure code only, under 30 lines.",
         "reasoning": "why this patch resolves the conflict",
         "confidence": "high|medium"
       }

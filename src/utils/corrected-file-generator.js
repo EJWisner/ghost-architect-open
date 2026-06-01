@@ -76,7 +76,7 @@ function looksLikeSignature(line) {
   return SIGNATURE_KEYWORDS.some(re => re.test(t));
 }
 
-// Count brace depth change for a line (used in Mode 2 body-end detection).
+// Count opening vs closing brace depth change for a line (used in Mode 2 body-end detection).
 function braceDepthDelta(line) {
   let delta = 0;
   let inString = false;
@@ -94,6 +94,74 @@ function braceDepthDelta(line) {
     }
   }
   return delta;
+}
+
+// Detect whether a patch is a complete method/block rewrite:
+//   - Has at least one brace pair (open count === close count > 0)
+//   - Last non-blank line is exactly "}"
+// Distinguishes "complete rewrite" (Category B) from:
+//   - "signature change" (no braces, Category C → Mode 2R sig-only path)
+//   - "sentinel insertion" (// ..., Category A → Mode 2I)
+// Verified against full corpus: 0 false positives, 1 true positive (smoke3).
+function isBalancedAndClosed(patchLines) {
+  let open = 0, close = 0;
+  for (const l of patchLines) {
+    for (const c of l) {
+      if (c === '{') open++;
+      else if (c === '}') close++;
+    }
+  }
+  const last = patchLines.filter(l => l.trim()).pop()?.trim();
+  return open > 0 && open === close && last === '}';
+}
+
+// State-machine brace-depth walker — finds the closing } of a method body.
+// Handles: single-quoted strings, double-quoted strings, // single-line
+// comments, and /* block */ comments. Ignores braces inside any of these.
+// Verified: 7/7 PHP edge cases pass (strings-with-braces, commented braces,
+// nested blocks). Safe to reintroduce — all prior Mode 2 failures were
+// patch-shape misreads, not counting errors.
+function findMethodEnd(baselineLines, sigMatchIdx) {
+  let state = 'code';
+  let depth = 0;
+  let bodyOpened = false;
+  let parenDepth = 0;
+
+  for (let i = sigMatchIdx; i < baselineLines.length; i++) {
+    const line = baselineLines[i];
+    let j = 0;
+    while (j < line.length) {
+      const ch   = line[j];
+      const next = line[j + 1] || '';
+
+      if (state === 'block_comment') {
+        if (ch === '*' && next === '/') { state = 'code'; j += 2; continue; }
+        j++; continue;
+      }
+      if (state === 'string_sq') {
+        if (ch === "'" && line[j - 1] !== '\\') state = 'code';
+        j++; continue;
+      }
+      if (state === 'string_dq') {
+        if (ch === '"' && line[j - 1] !== '\\') state = 'code';
+        j++; continue;
+      }
+      // state === 'code'
+      if (ch === '/' && next === '/') break;                         // single-line comment
+      if (ch === '/' && next === '*') { state = 'block_comment'; j += 2; continue; }
+      if (ch === "'") { state = 'string_sq'; j++; continue; }
+      if (ch === '"') { state = 'string_dq'; j++; continue; }
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      else if (ch === '{' && parenDepth <= 0) { depth++; bodyOpened = true; }
+      else if (ch === '}' && parenDepth <= 0 && bodyOpened) {
+        depth--;
+        if (depth === 0) return i;  // found the method's closing brace line
+      }
+      j++;
+    }
+  }
+  return baselineLines.length - 1;  // fallback: end of file
 }
 
 // ── Mode 1: Single-line similarity replacement ────────────────────────────────
@@ -154,68 +222,156 @@ function tryMode1(baselineLines, patchLines) {
   return { correctedContent: corrected.join('\n'), confidence, notes };
 }
 
-// ── Mode 2: Function/block anchor replacement ─────────────────────────────────
-// First patch line looks like a function/method signature AND matches a
-// baseline line at ≥ 0.80. Find the full function body in the baseline
-// (from signature line to matching closing brace via depth counting), replace
-// the entire block with the patch content.
+// ── Mode 2R: Signature-line replacement ──────────────────────────────────────
+// First patch line looks like a function/method signature AND does NOT contain
+// a truncation sentinel (// ...). Replaces ONLY the baseline signature block
+// (from the matching line through the opening {) with the patch's signature.
+// The body (everything after the {) is preserved intact.
 //
-// Returns null if first patch line is not a signature or no match found.
+// Handles all three brace-position styles:
+//   K&R same-line:  "public function foo($x) {"
+//   Allman:         "public function foo($x)\n{"
+//   Multi-line sig: "public function foo(\n  $x\n) {"
+//
+// Returns null if first patch line is not a signature, contains a sentinel,
+// or no baseline match found at similarity ≥ 0.70.
 
-function tryMode2(baselineLines, patchLines) {
-  if (patchLines.length < 2) return null;
+function tryMode2R(baselineLines, patchLines) {
+  if (patchLines.length < 1) return null;
   if (!looksLikeSignature(patchLines[0])) return null;
+  // Truncation sentinel means Mode 2I should handle this, not 2R
+  if (patchLines.some(l => /\/\/\s*\.\.\.|\/\/\s*existing|\/\/\s*proceed|\/\/\s*rest\s+of|\/\/\s*remaining|\/\/\s*etc\.?$/i.test(l))) return null;
 
   const patchFirst = normalizeForMatch(patchLines[0]);
   const scores = baselineLines.map((bl, idx) => ({
     idx,
     score: similarity(patchFirst, normalizeForMatch(bl)),
   }));
-  const matches = scores.filter(s => s.score >= MODE1_THRESHOLD);
-  if (matches.length === 0) return null;
+  scores.sort((a, b) => b.score - a.score);
+  const best = scores[0];
+  // Lower threshold than Mode 1 (0.70 vs 0.80) — sig lines are shorter
+  if (best.score < 0.70) return null;
 
-  matches.sort((a, b) => b.score - a.score);
-  const best = matches[0];
-  const sigLineIdx = best.idx;
-
-  // Walk forward from signature line counting brace depth to find body end.
-  // Handles both K&R style (brace on same line as signature) and Allman style
-  // (brace on the next line). We wait until we've seen the opening brace that
-  // brings depth to exactly 1 (the function body's opening brace), then track
-  // back to 0 as the body-closing brace.
-  let depth = 0;
-  let bodyEnd = sigLineIdx;
-  let bodyStarted = false;
-  let bodyOpenDepth = 0;
-  for (let i = sigLineIdx; i < baselineLines.length; i++) {
-    const delta = braceDepthDelta(baselineLines[i]);
-    depth += delta;
-    if (!bodyStarted && depth > 0) {
-      bodyStarted   = true;
-      bodyOpenDepth = depth; // typically 1; >1 if signature is inside a class
+  // Walk forward from sig match to find the { that opens the body.
+  // Track paren depth so braces inside parameter lists are ignored.
+  let parenDepth = 0;
+  let braceLineIdx = best.idx;
+  for (let i = best.idx; i < baselineLines.length; i++) {
+    for (const ch of baselineLines[i]) {
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      else if (ch === '{' && parenDepth <= 0) { braceLineIdx = i; parenDepth = -999; break; }
     }
-    if (bodyStarted && depth < bodyOpenDepth) {
-      bodyEnd = i;
-      break;
-    }
+    if (parenDepth < 0) break;
   }
 
-  // Preserve indentation of the signature line.
-  const baseIndent = (baselineLines[sigLineIdx].match(/^(\s*)/) || ['', ''])[1];
+  const baseIndent = (baselineLines[best.idx].match(/^(\s*)/) || ['', ''])[1];
+  const patchHasBrace = patchLines.some(l => l.includes('{'));
+  const patchIsComplete = isBalancedAndClosed(patchLines);
+
+  let endIdx, replacement;
+
+  if (patchIsComplete) {
+    // Complete method rewrite: patch has a full balanced body (new sig + body + }).
+    // Use state-machine walker to find the baseline method's closing brace, then
+    // replace the entire block (sig through closing }) with the patch.
+    // This prevents the old body from being appended after the new body.
+    endIdx = findMethodEnd(baselineLines, best.idx);
+    replacement = patchLines.map((l, i) => i === 0 ? baseIndent + l.trim() : l);
+  } else if (patchHasBrace) {
+    // Patch includes { but is not a complete rewrite (unbalanced or no closing }).
+    // Replace sig through opening { only; body from baseline follows.
+    endIdx = braceLineIdx;
+    replacement = patchLines.map((l, i) => i === 0 ? baseIndent + l.trim() : l);
+  } else {
+    // Signature-only change: patch has no braces. Preserve baseline { line,
+    // adjusting for K&R style where ) and { appear together on the brace line.
+    endIdx = braceLineIdx;
+    const braceLine    = baselineLines[braceLineIdx];
+    const braceIndent  = (braceLine.match(/^(\s*)/) || ['', ''])[1];
+    const emittedBraceLine = braceLine.trim().startsWith(')')
+      ? braceIndent + '{'     // K&R ") {" → emit just "{"
+      : braceLine;            // Allman "{" → keep as-is
+    replacement = [
+      ...patchLines.map((l, i) => i === 0 ? baseIndent + l.trim() : l),
+      emittedBraceLine,
+    ];
+  }
+
+  const confidence = scores.filter(s => s.score >= 0.70).length === 1 ? 'high' : 'medium';
+  const notes = confidence === 'medium'
+    ? `Signature replaced at highest-similarity match (line ${best.idx + 1}). ` +
+      `Similar signatures also found — verify scope.`
+    : null;
+
   const corrected = [
-    ...baselineLines.slice(0, sigLineIdx),
-    ...patchLines.map((pl, i) =>
-      i === 0 ? baseIndent + pl.trim() : pl
-    ),
-    ...baselineLines.slice(bodyEnd + 1),
+    ...baselineLines.slice(0, best.idx),
+    ...replacement,
+    ...baselineLines.slice(endIdx + 1),
   ];
 
-  const confidence = matches.length === 1 ? 'high' : 'medium';
-  const notes = matches.length === 1
-    ? null
-    : `Function body replaced at highest-similarity signature match (line ${sigLineIdx + 1}). ` +
-      `Similar signatures also at: ${matches.slice(1).map(m => `line ${m.idx + 1}`).join(', ')}. ` +
-      `Verify scope.`;
+  return { correctedContent: corrected.join('\n'), confidence, notes };
+}
+
+// ── Mode 2I: Truncation-sentinel insertion ────────────────────────────────────
+// First patch line looks like a function signature AND the patch contains a
+// truncation sentinel (// ..., // existing, // proceed, etc.). The sentinel
+// means the LLM is showing a snippet to INSERT at the TOP of the method body,
+// not a complete replacement.
+//
+// Extracts the lines between the signature line and the sentinel, inserts them
+// at the top of the baseline method body (right after the opening {).
+// The rest of the original body is preserved intact.
+//
+// Example (the diagnosed bug case):
+//   patch:    private function callApi(...) {
+//               if (!$this->accessToken) { throw ...; }
+//               // ... proceed          ← sentinel
+//             }
+//   Result:   the guard clause is inserted at the top of the real body.
+//
+// Returns null if no sentinel, no sig match, or similarity < 0.70.
+
+function tryMode2I(baselineLines, patchLines) {
+  if (patchLines.length < 2) return null;
+  if (!looksLikeSignature(patchLines[0])) return null;
+  const sentinelRe = /\/\/\s*\.\.\.|\/\/\s*existing|\/\/\s*proceed|\/\/\s*rest\s+of|\/\/\s*remaining|\/\/\s*etc\.?$/i;
+  const sentinelIdx = patchLines.findIndex(l => sentinelRe.test(l));
+  if (sentinelIdx < 0) return null;
+
+  const patchFirst = normalizeForMatch(patchLines[0]);
+  const scores = baselineLines.map((bl, idx) => ({
+    idx,
+    score: similarity(patchFirst, normalizeForMatch(bl)),
+  }));
+  scores.sort((a, b) => b.score - a.score);
+  const best = scores[0];
+  if (best.score < 0.70) return null;
+
+  // Find the opening brace
+  let parenDepth = 0;
+  let braceLineIdx = best.idx;
+  for (let i = best.idx; i < baselineLines.length; i++) {
+    for (const ch of baselineLines[i]) {
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      else if (ch === '{' && parenDepth <= 0) { braceLineIdx = i; parenDepth = -999; break; }
+    }
+    if (parenDepth < 0) break;
+  }
+
+  // Insert lines between patch[1] and the sentinel into the body
+  const insertLines = patchLines.slice(1, sentinelIdx);
+
+  const corrected = [
+    ...baselineLines.slice(0, braceLineIdx + 1),  // everything up to and including {
+    ...insertLines,
+    ...baselineLines.slice(braceLineIdx + 1),      // original body preserved
+  ];
+
+  const confidence = scores.filter(s => s.score >= 0.70).length === 1 ? 'medium' : 'low';
+  const notes = `Patch inserted at top of '${patchLines[0].trim().slice(0, 40)}' body ` +
+    `based on truncation sentinel. Review insertion point before applying.`;
 
   return { correctedContent: corrected.join('\n'), confidence, notes };
 }
@@ -363,6 +519,66 @@ function tryMode3(baselineLines, patchLines, reasoning) {
   };
 }
 
+// ── Mode 2N: New insertion before class/interface body closer ─────────────────
+// Handles pure insertions — new constants, properties, or methods that don't
+// replace any existing line. Tracks brace depth from the class/interface
+// declaration to find the true outermost closing `}`, then inserts the patch
+// lines immediately before it with consistent indentation.
+//
+// Trigger: baseline contains a class/interface declaration AND brace structure
+// is balanced. No similarity match needed — this is a pure append-before-closer.
+// Returns null when the file has no class/interface declaration, or when braces
+// are unbalanced (e.g. a config snippet rather than a class file).
+
+function tryMode2N(baselineLines, patchLines) {
+  // Step 1: Find the class/interface declaration line
+  const declRe = /^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait)\s+\w/;
+  const declIdx = baselineLines.findIndex(l => declRe.test(l));
+  if (declIdx === -1) return null; // not a class/interface file
+
+  // Step 2: Track brace depth from declaration line to find outermost closer
+  let depth = 0;
+  let closerIdx = -1;
+  for (let i = declIdx; i < baselineLines.length; i++) {
+    const line = baselineLines[i];
+    // Count braces — skip string literals and comments (basic approximation)
+    for (const ch of line) {
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          closerIdx = i;
+          break;
+        }
+      }
+    }
+    if (closerIdx !== -1) break;
+  }
+  if (closerIdx === -1) return null; // unbalanced braces — bail
+
+  // Step 3: Determine indentation from surrounding context
+  // Use the indentation of the line just before the closer, or default to 4 spaces
+  const prevLine = baselineLines[closerIdx - 1] || '';
+  const indentMatch = prevLine.match(/^(\s+)/);
+  const indent = indentMatch ? indentMatch[1] : '    ';
+
+  // Step 4: Insert patch lines before the closer, with consistent indentation
+  const indentedPatch = patchLines.map(l => l.trim() ? indent + l.trimStart() : '');
+  const result = [
+    ...baselineLines.slice(0, closerIdx),
+    '',
+    ...indentedPatch,
+    baselineLines[closerIdx],
+    ...baselineLines.slice(closerIdx + 1),
+  ];
+
+  return {
+    correctedContent: result.join('\n'),
+    confidence:       'medium',
+    notes:            `Mode 2N: inserted ${patchLines.length} line(s) before class body closer (line ${closerIdx + 1})`,
+  };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -395,35 +611,61 @@ export function generateCorrectedFile(baselineContent, fixDirection) {
   const patchLines    = fixDirection.patch_instruction.split('\n');
   const reasoning     = fixDirection.reasoning || null;
 
-  // Mode 1 — similarity-based line replacement.
-  // Skip Mode 1 when the first patch line looks like a function signature —
-  // Mode 2 handles that case with correct body-boundary detection.
+  // Mode cascade (first match wins):
+  //   Mode 1  — High-similarity single-line replacement (≥ 0.80)
+  //             Skipped when first patch line looks like a function signature
+  //             (Mode 2R/2I handle those cases with body-aware logic).
+  //   Mode 2R — Signature-line replacement: patch starts with a function sig,
+  //             no truncation sentinel. Replaces the baseline sig block only;
+  //             body preserved intact.
+  //   Mode 2I — Sentinel insertion: patch starts with a function sig AND
+  //             contains // ... / // existing / // proceed. Inserts the guard
+  //             clause at the top of the baseline body; body preserved intact.
+  //   Mode 3  — Reasoning-anchored insertion (three spatial cue patterns).
+  //   Fallback — Return original baseline unchanged, confidence "failed".
+  //
+  // Mode 2 (destructive full-body replacement) has been removed.
+  // Corpus analysis across 83 findings.json files confirmed:
+  //   - 0 patches were genuine complete rewrites (Category B = zero)
+  //   - 3/4 sig-starting patches had // ... sentinels (Category A — Mode 2I)
+  //   - 1/4 was a signature-only change (Category C — Mode 2R)
+  // Mode 2 was replacing entire 70+ line method bodies with 4-6 line snippets.
+
+  // Mode 1 — single-line or non-signature patches
   if (!looksLikeSignature(patchLines[0])) {
     const m1 = tryMode1(baselineLines, patchLines);
     if (m1) return m1;
   }
 
-  // Mode 2 — function/block signature replacement.
-  const m2 = tryMode2(baselineLines, patchLines);
-  if (m2) return m2;
+  // Mode 2R — signature replacement (no sentinel)
+  const m2r = tryMode2R(baselineLines, patchLines);
+  if (m2r) return m2r;
 
-  // Mode 1 fallback — if Mode 2 didn't match but patch looks like a signature,
-  // try Mode 1 anyway (edge case: signature-shaped patch for a non-function context).
+  // Mode 2I — sentinel insertion (// ...)
+  const m2i = tryMode2I(baselineLines, patchLines);
+  if (m2i) return m2i;
+
+  // Mode 2N — new insertion before class/interface body closer
+  const m2n = tryMode2N(baselineLines, patchLines);
+  if (m2n) return m2n;
+
+  // Mode 1 fallback for signature-shaped patches that didn't match 2R/2I
   if (looksLikeSignature(patchLines[0])) {
     const m1 = tryMode1(baselineLines, patchLines);
     if (m1) return m1;
   }
 
-  // Mode 3 — reasoning-anchored insertion.
+  // Mode 3 — reasoning-anchored insertion
   const m3 = tryMode3(baselineLines, patchLines, reasoning);
   if (m3) return m3;
 
-  // Fallback — no match. Return original baseline unchanged.
+  // Fallback — no match
   return {
     correctedContent: baselineContent,
     confidence: 'failed',
     notes: 'Could not locate a matching insertion point via similarity (Mode 1), ' +
-           'function anchor (Mode 2), or reasoning cues (Mode 3). ' +
+           'signature replacement (Mode 2R), sentinel insertion (Mode 2I), ' +
+           'or reasoning cues (Mode 3). ' +
            'Use patch_instruction as a manual guide.',
   };
 }

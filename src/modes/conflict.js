@@ -555,18 +555,22 @@ export async function runSavedFixForecast({ tier, profile, codebaseContext: prov
   }
 
   // 3. Parse each file: extract project name, timestamp, eligible count.
-  //    Filename pattern: ghost-conflict-<project>-<YYYY>-<MM>-<DDT<HH>-<MM>-<SS>.findings.json
-  //    The date segment starts at the first run of four digits (the year).
+  //    Two filename patterns:
+  //      Labeled:  ghost-conflict-<project>-<YYYY>-<MM>-<DD>T<HH>-<MM>-<SS>.findings.json
+  //      No-label: ghost-conflict-<YYYY>-<MM>-<DD>T<HH>-<MM>-<SS>.findings.json
+  //    The project prefix is optional — when absent, display as "one-time scan".
   const parsed = [];
   for (const filePath of findingsFiles) {
     const base = path.basename(filePath, '.findings.json');
     // Strip leading "ghost-conflict-"
     const rest = base.slice('ghost-conflict-'.length);
-    // Find the date segment: last occurrence of \d{4}-\d{2}-\d{2}T
-    const dateMatch = rest.match(/^(.*?)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})$/);
+    // Match optional project prefix followed by the ISO-ish timestamp segment.
+    // Group 1: project slug (may be empty for no-label files)
+    // Group 2: timestamp "YYYY-MM-DDTHH-MM-SS"
+    const dateMatch = rest.match(/^(?:(.*?)-)?(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})$/);
     if (!dateMatch) continue;
 
-    const project   = dateMatch[1];
+    const project   = dateMatch[1] || 'one-time scan';
     const isoRaw    = dateMatch[2]; // e.g. "2026-06-01T13-33-33"
     // Convert time separators: "2026-06-01T13-33-33" → "2026-06-01T13:33:33"
     const isoStr    = isoRaw.replace(/T(\d{2})-(\d{2})-(\d{2})$/, 'T$1:$2:$3');
@@ -638,10 +642,27 @@ export async function runSavedFixForecast({ tier, profile, codebaseContext: prov
     return;
   }
 
-  // 8. Resolve codebase context — use session context if provided, else prompt for path.
-  // Must happen before the Fix Forecast flow since runPostScanFixForecast
-  // needs a real codebaseContext to read baseline file contents.
-  let codebaseContext = providedContext || null;
+  // 8. Resolve codebase context — validate providedContext before trusting it.
+  // The session context may have a fileMap truncated by the token cap, missing
+  // target files that were in the scan. If none of the eligible findings' target
+  // files match any key in providedContext.fileMap, fall back to prompting.
+  let codebaseContext = null;
+
+  if (providedContext && Object.keys(providedContext.fileMap || {}).length > 0) {
+    const eligibleFindings = findings.filter(f => f.fix_direction);
+    const allTargetFiles = eligibleFindings.flatMap(f =>
+      (f.fix_direction?.target_files || [])
+    );
+    const hasMatch = allTargetFiles.some(target => {
+      const normalized = target.split(/[\\/]/).join('/');
+      return Object.keys(providedContext.fileMap).some(k =>
+        k.split(/[\\/]/).join('/') === normalized
+      );
+    });
+    if (hasMatch) {
+      codebaseContext = providedContext;
+    }
+  }
 
   if (!codebaseContext) {
     console.log(chalk.gray('\nFix Forecast needs to read the codebase files to generate a corrected version.'));
