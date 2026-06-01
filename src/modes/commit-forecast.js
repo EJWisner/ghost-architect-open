@@ -33,6 +33,7 @@ import { runBlastRadius }      from '../analyst/index.js';
 import { runConflictScan, getConflictPassInfo, normalizeCandidateToFinding } from '../core/conflict.js';
 import { runPostScanFixForecast } from './conflict.js';
 import { showCostEstimate, showActualCost, showConflictCost } from '../estimator.js';
+import { SessionCostTracker } from '../core/estimator.js';
 import { getConfig }           from '../config.js';
 import { saveReport }          from '../reports.js';
 import { requireTier }         from '../license/tier-gates.js';
@@ -297,6 +298,9 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
 
   // ── Blast ─────────────────────────────────────────────────────────────
   if (analysisMode === 'blast' || analysisMode === 'both') {
+    const blastTracker = new SessionCostTracker();
+    const blastUsage   = (i, o, m) => blastTracker.record('scan', i, o, m);
+
     if (blastInfo && !blastInfo.singlePass) {
       console.log(chalk.cyan(`  Running Blast Radius (${blastInfo.passCount} passes)...`));
       try {
@@ -304,16 +308,19 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
           tier, profile, forecastMode: true,
           onPassComplete: (n, t) => console.log(chalk.green(`  ${SYM.check} Blast pass ${n} of ${t} complete`)),
           onSynthesisStart: () => console.log(chalk.gray('  Synthesizing blast results...')),
+          onUsage: blastUsage,
         });
         console.log(chalk.green(`  ${SYM.check} Blast Radius forecast ready\n`));
+        showConflictCost(blastTracker);
       } catch (err) {
         console.error(chalk.red(`  ✗ Blast failed: ${err.message}`));
       }
     } else {
       const blastSpinner = ora({ text: chalk.gray('  Running Blast Radius...'), color: 'cyan' }).start();
       try {
-        await runBlastRadius(patchedContext, allChanged, (c) => { blastBuffer += c; }, { profile, forecastMode: true });
+        await runBlastRadius(patchedContext, allChanged, (c) => { blastBuffer += c; }, { profile, forecastMode: true, onUsage: blastUsage });
         blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
+        showConflictCost(blastTracker);
       } catch (err) {
         blastSpinner.fail(chalk.red('Blast failed'));
         showFriendlyError(err);
@@ -583,6 +590,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
   // ── Blast Radius ────────────────────────────────────────────────────────
   let blastBuffer = '';
+  const blastTracker = new SessionCostTracker();
+  const blastUsage   = (i, o, m) => blastTracker.record('scan', i, o, m);
 
   if (analysisMode === 'blast' || analysisMode === 'both') {
     // For Commit Forecast, the "target" is the changed file set — we pass
@@ -621,9 +630,11 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           onSynthesisStart: () => {
             blastSpinner = ora({ text: chalk.gray('  Synthesizing blast radius results...'), color: 'cyan' }).start();
           },
+          onUsage: blastUsage,
         });
         if (blastSpinner) { blastSpinner.stop(); blastSpinner = null; }
         console.log(chalk.green(`\n  ${SYM.check} Blast Radius forecast ready\n`));
+        showConflictCost(blastTracker);
       } catch (err) {
         if (blastSpinner) blastSpinner.stop();
         console.log(chalk.red('  Blast Radius forecast failed'));
@@ -647,14 +658,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
             },
             profile,
             forecastMode: true,
+            onUsage: blastUsage,
           }
         );
         blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
         console.log('');
-
-        const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 300;
-        const outputTokens = Math.ceil(blastBuffer.length / 4);
-        showActualCost(inputTokens, outputTokens, model);
+        showConflictCost(blastTracker);
         console.log('');
       } catch (err) {
         blastSpinner.fail(chalk.red('Blast Radius forecast failed'));

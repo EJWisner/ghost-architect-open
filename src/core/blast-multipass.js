@@ -13,6 +13,7 @@
 import { getTierCap }       from '../loader/tierCaps.js';
 import { prioritizeFileMap } from '../prioritizer.js';
 import { runBlastRadius }   from '../analyst/index.js';
+import { getConfig }        from '../config.js';
 
 // Blast uses max_tokens: 8096 for output. Leave 20% headroom on top of that
 // for system prompt and framing. Mirrors getPassTokenLimit() in conflict.js.
@@ -79,7 +80,7 @@ export function getBlastPassInfo(fileMap, tier = 'open') {
 //   onSynthesisStart()
 //
 export async function runMultipassBlast(patchedContext, forecastTarget, options = {}) {
-  const { tier = 'open', profile, forecastMode, onPassStart, onPassComplete, onSynthesisStart } = options;
+  const { tier = 'open', profile, forecastMode, onPassStart, onPassComplete, onSynthesisStart, onUsage = null } = options;
 
   const fileMap = patchedContext.fileMap || {};
   const passes  = buildBlastPasses(fileMap, tier);
@@ -102,6 +103,7 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
         profile,
         forecastMode,
         onNarratorStart: () => {},
+        onUsage,
       }
     );
 
@@ -122,7 +124,8 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
   // Build synthesis prompt inline — asks the model to merge N blast outputs
   // into one de-duplicated, priority-ranked rollback plan.
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || (await import('../config.js')).getConfig().get('anthropicApiKey') });
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || getConfig().get('anthropicApiKey') });
+  const synthesisModel = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 
   const systemPrompt = `You are a senior software architect synthesizing multiple Blast Radius analysis passes into one unified report. Each pass analyzed a different chunk of the codebase. Your job is to merge them into a single, de-duplicated, priority-ranked Blast Radius + Rollback Plan. Remove duplicates. Merge related findings. Produce one clean report in the same format as a standard Ghost Architect Blast Radius report.`;
 
@@ -137,7 +140,7 @@ ${combinedResults}`;
 
   let synthesisOutput = '';
   const stream = await anthropic.messages.stream({
-    model:      'claude-sonnet-4-5',
+    model:      synthesisModel,
     max_tokens: 8096,
     system:     systemPrompt,
     messages:   [{ role: 'user', content: userMessage }],
@@ -146,6 +149,22 @@ ${combinedResults}`;
   for await (const chunk of stream) {
     if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
       synthesisOutput += chunk.delta.text;
+    }
+  }
+
+  // Capture real token usage from the synthesis call.
+  if (onUsage) {
+    try {
+      const synthFinal = await stream.finalMessage();
+      if (synthFinal?.usage) {
+        onUsage(
+          synthFinal.usage.input_tokens  ?? 0,
+          synthFinal.usage.output_tokens ?? 0,
+          synthesisModel
+        );
+      }
+    } catch (_) {
+      // Usage capture failed — response already delivered. Non-fatal.
     }
   }
 

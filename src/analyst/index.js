@@ -276,6 +276,22 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     }
   }
 
+  // Capture real token usage from the blast scan call.
+  if (options.onUsage) {
+    try {
+      const blastFinal = await stream.finalMessage();
+      if (blastFinal?.usage) {
+        options.onUsage(
+          blastFinal.usage.input_tokens  ?? 0,
+          blastFinal.usage.output_tokens ?? 0,
+          getModel()
+        );
+      }
+    } catch (_) {
+      // Usage capture failed — response already delivered. Non-fatal.
+    }
+  }
+
   // Step 2: Narrator rewrites — streaming to user
   const findings = extractFindings(rawOutput, 'blast');
 
