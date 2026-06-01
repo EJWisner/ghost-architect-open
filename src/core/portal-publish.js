@@ -314,6 +314,7 @@ const MODE_LABELS = {
   blast:         { label: 'Blast Radius',       order: 2 },
   conflict:      { label: 'Conflict',           order: 3 },
   forecast:      { label: 'Commit Forecast',    order: 3.5 },
+  'fix-forecast-combined': { label: 'Fix Forecast', order: 3.7 },
   recon:         { label: 'Recon',              order: 4 },
   audit:         { label: 'Inheritance Audit',  order: 5 },
   inheritance:   { label: 'Inheritance Audit',  order: 5 },
