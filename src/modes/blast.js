@@ -6,7 +6,7 @@ import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { runBlastRadius } from '../analyst/index.js';
-import { showCostEstimate, showActualCost } from '../estimator.js';
+import { showCostEstimate, showActualCost, showConflictCost, SessionCostTracker } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
@@ -302,6 +302,9 @@ export async function runBlastMode(codebaseContext, options = {}) {
     // The spinner stays on screen the whole time and gives a clear
     // "still working" signal. The full report lives in `buffer` and
     // is what we save to disk; the user reads it from the saved files.
+    const blastTracker = new SessionCostTracker();
+    const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m);
+
     const result = await runBlastRadius(
       codebaseContext,
       target,
@@ -311,15 +314,14 @@ export async function runBlastMode(codebaseContext, options = {}) {
           spinner.text = chalk.gray('Ghost is writing the blast radius report...');
         },
         profile,  // Ghost Partner — threads consultant lens into prompt + narrator
+        onUsage: blastUsage,
       }
     );
 
     spinner.succeed(chalk.green('Blast radius report ready'));
     console.log('');
 
-    const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 300;
-    const outputTokens = Math.ceil(result.length / 4);
-    showActualCost(inputTokens, outputTokens, model);
+    showConflictCost(blastTracker);
 
     const { doSave } = await inquirer.prompt([{
       type: 'confirm', name: 'doSave',
