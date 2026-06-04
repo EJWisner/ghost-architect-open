@@ -570,6 +570,28 @@ Documentation and product info: [ghostarchitect.dev](https://ghostarchitect.dev)
 
 ---
 
+## Ghost Portal™
+
+Ghost Portal™ is a web-based dashboard that displays your scan reports in a living, shareable interface — organized by mode, project, and severity. Every scan you run automatically pushes its artifacts to your private GitHub repository and appears in your Portal within seconds.
+
+**Activate Ghost Portal™ (Pro and above)**
+
+1. Visit [ghostarchitect.dev/portal-setup](https://ghostarchitect.dev/portal-setup)
+2. Click **Connect GitHub** — Ghost will request permission to create one private repository in your account
+3. Your Portal goes live immediately at `ghostarchitect.dev/portal-{your-github-username}`
+4. Run any Ghost scan — reports push automatically, no additional configuration needed
+
+**What your Portal includes**
+
+- All scan modes: Points of Interest, Blast Radius, Conflict Detection, Commit Forecast, Fix Forecast, Inheritance Audit, Prompt Triage, and more
+- Per-project remediation tracking with progress over time
+- Client-ready PDF reports accessible from any browser
+- No file attachments — share a URL, not a document
+
+Ghost Portal™ is available on Ghost Pro, Team, and Enterprise tiers. Ghost Open users can upgrade at [ghostarchitect.dev/pricing](https://ghostarchitect.dev/pricing).
+
+---
+
 *"The best architects don't write all the code. They help you understand what you have."*
 
 ---
