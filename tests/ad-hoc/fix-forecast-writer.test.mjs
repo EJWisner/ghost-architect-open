@@ -68,7 +68,7 @@ const RULE    = '─'.repeat(59);
 function buildFixArtifact(finding, generateResult, generatedAt) {
   const { fix_direction, title, severity, id } = finding;
   const { correctedContent, confidence, notes } = generateResult;
-  const targetFile = fix_direction.target_file;
+  const targetFile = fix_direction.target_files?.[0] ?? fix_direction.target_file;
 
   const lines = [
     'Ghost Architect™ — Suggested Fix',
@@ -125,7 +125,7 @@ console.log('\n=== Case 1: Fix artifact written — high-confidence match ===');
       severity: 'MEDIUM',
       files: ['app/code/Vendor/Sales/Model/Api/CreateOrderApi.php'],
       fix_direction: {
-        target_file: 'app/code/Vendor/Sales/Model/Api/CreateOrderApi.php',
+        target_files: ['app/code/Vendor/Sales/Model/Api/CreateOrderApi.php'],
         patch_instruction: '$storeId = (int)$quote->getStoreId();',
         reasoning: 'Add explicit type cast immediately after retrieving store ID.',
         confidence: 'high',
@@ -143,8 +143,9 @@ console.log('\n=== Case 1: Fix artifact written — high-confidence match ===');
     ].join('\n');
 
     const genResult = generateCorrectedFile(baseline, finding.fix_direction);
+    const primaryFile = finding.fix_direction.target_files?.[0] ?? finding.fix_direction.target_file;
     genResult.unifiedDiff = computeUnifiedDiff(baseline, genResult.correctedContent,
-      finding.fix_direction.target_file, finding.fix_direction.target_file);
+      primaryFile, primaryFile);
 
     const slug = idToSlug(finding.id);
     const fixPath = path.join(tmpDir, `ghost-fix-${slug}.txt`);
@@ -180,7 +181,7 @@ console.log('\n=== Case 2: Failed-confidence — patch_instruction shown as-is =
       severity: 'HIGH',
       files: ['src/some/file.js'],
       fix_direction: {
-        target_file: 'src/some/file.js',
+        target_files: ['src/some/file.js'],
         patch_instruction: 'SELECT * FROM users WHERE admin = true;',
         reasoning: 'Completely unrelated SQL.',
         confidence: 'high',

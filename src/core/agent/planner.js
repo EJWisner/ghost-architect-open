@@ -194,6 +194,15 @@ Respond with JSON only. No preamble.`;
       messages:   [{ role: 'user', content: prompt }],
     });
 
+    // Capture usage for cost tracking if caller provided a callback
+    if (options.onUsage && response.usage) {
+      options.onUsage(
+        response.usage.input_tokens  ?? 0,
+        response.usage.output_tokens ?? 0,
+        getModel()
+      );
+    }
+
     const raw   = response.content[0]?.text || '{}';
     const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(clean);

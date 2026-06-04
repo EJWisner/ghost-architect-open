@@ -1412,7 +1412,7 @@ export async function narrateExecutiveSummary(memoryResult, context = {}) {
 // is handled downstream by saveReport via meta.profile — the narrator just
 // needs to keep the prose consistent with that branding.
 
-export async function narrateConflictReport(verificationResult, context = {}, onChunk = () => {}) {
+export async function narrateConflictReport(verificationResult, context = {}, onChunk = () => {}, onUsage = null) {
   const anthropic = getClient();
 
   const { confirmed, possible, insufficient, stats } = verificationResult;
@@ -1504,6 +1504,20 @@ export async function narrateConflictReport(verificationResult, context = {}, on
       onChunk(text);
       report += text;
     }
+  }
+
+  // Capture real usage for cost tracking
+  if (onUsage) {
+    try {
+      const finalMsg = await stream.finalMessage();
+      if (finalMsg?.usage) {
+        onUsage(
+          finalMsg.usage.input_tokens  ?? 0,
+          finalMsg.usage.output_tokens ?? 0,
+          getModel()
+        );
+      }
+    } catch (_) { /* Usage capture failure is non-fatal */ }
   }
 
   return report;

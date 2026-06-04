@@ -93,7 +93,7 @@ Use your verification budget efficiently — you have a limited number of steps 
   // (4) flagFinding and (5) finish. Three steps was too tight — the agent
   // would burn all its budget on context-gathering and never reach the
   // verdict-producing actions, falling through to INSUFFICIENT.
-  const result = await runMiniLoop(task, tools, memory, 5);
+  const result = await runMiniLoop(task, tools, memory, 5, { onUsage: callbacks.onUsage });
 
   // Determine verdict from what the agent did
   let verdict    = Verdict.INSUFFICIENT;
@@ -225,15 +225,15 @@ Use your verification budget efficiently — you have a limited number of steps 
  * @returns {object}            — { confirmed, possible, falsePositives, insufficient, all }
  */
 export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode = 'full', tier = 'open') {
-  const { onProgress } = callbacks;
+  const { onProgress, onUsage } = callbacks;
   const results = [];
 
   for (let i = 0; i < candidates.length; i++) {
     if (onProgress) onProgress({ current: i + 1, total: candidates.length });
 
     const verified = mode === 'quick'
-      ? await quickVerify(candidates[i], fileMap, tier)
-      : await verifyOne(candidates[i], fileMap, callbacks);
+      ? await quickVerify(candidates[i], fileMap, tier, onUsage)
+      : await verifyOne(candidates[i], fileMap, { ...callbacks });
 
     // Normalize quickVerify verdict to match verifyOne output
     if (mode === 'quick' && verified.verdict === 'INSUFFICIENT') {
@@ -273,7 +273,7 @@ export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode 
 // ── Quick single-call verification (cheaper alternative) ─────────────────────
 // For when you want to verify without a full agent loop — one Claude call
 
-export async function quickVerify(candidate, fileMap, tier = 'open') {
+export async function quickVerify(candidate, fileMap, tier = 'open', onUsage = null) {
   const anthropic = getClient();
 
   // First try to look up only the files the candidate cited. This is the
@@ -350,6 +350,14 @@ Respond with JSON only:
     });
 
     const raw    = response.content[0]?.text || '{}';
+    // Capture usage for cost tracking
+    if (onUsage && response.usage) {
+      onUsage(
+        response.usage.input_tokens  ?? 0,
+        response.usage.output_tokens ?? 0,
+        getModel()
+      );
+    }
     const clean  = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(clean);
 

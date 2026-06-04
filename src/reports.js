@@ -93,7 +93,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     : prefix === 'ghost-audit'    ? 'Inheritance Audit Report'
     : prefix === 'ghost-question' ? 'Question and Answer'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
-    : prefix === 'ghost-forecast' ? 'Commit Forecast'
+    : prefix === 'ghost-forecast' ? (meta.mode === 'fix-forecast' ? 'Fix Forecast' : 'Commit Forecast')
     : 'Report';
 
   // Pull trial state from the active license session so PDFs generated under
@@ -366,7 +366,7 @@ function convertToMarkdown(content, prefix, label, meta, timestamp = null, brand
     : prefix === 'ghost-audit'    ? 'Inheritance Audit Report'
     : prefix === 'ghost-question' ? 'Question and Answer'
     : prefix === 'ghost-chat'     ? 'Chat Transcript'
-    : prefix === 'ghost-forecast' ? 'Commit Forecast'
+    : prefix === 'ghost-forecast' ? (meta.mode === 'fix-forecast' ? 'Fix Forecast' : 'Commit Forecast')
     : 'Report';
 
   // ── Header ──────────────────────────────────────────────────────────────

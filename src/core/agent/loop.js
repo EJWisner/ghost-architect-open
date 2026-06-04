@@ -108,6 +108,7 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
     onToolCall   = () => {},
     onToolResult = () => {},
     onWarning    = () => {},   // NEW: ({ message }) — surfaces warnings to CLI
+    onUsage      = null,       // (inputTokens, outputTokens, model) — cost tracking
   } = callbacks;
 
   const anthropic    = getClient();
@@ -141,6 +142,14 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
           messages:   [{ role: 'user', content: prompt }],
         });
         raw = response.content[0]?.text || '';
+        // Capture real API usage for cost tracking (one record per loop step)
+        if (onUsage && response.usage) {
+          onUsage(
+            response.usage.input_tokens  ?? 0,
+            response.usage.output_tokens ?? 0,
+            getModel()
+          );
+        }
       } catch (err) {
         // API error — record and break out of step loop entirely
         memory.record('api_error', { step, attempt }, { error: err.message }, 'API call failed');
@@ -216,6 +225,6 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
   return result;
 }
 
-export async function runMiniLoop(task, tools, memory, maxSteps = 3) {
-  return runAgentLoop(task, tools, memory, maxSteps);
+export async function runMiniLoop(task, tools, memory, maxSteps = 3, callbacks = {}) {
+  return runAgentLoop(task, tools, memory, maxSteps, callbacks);
 }
