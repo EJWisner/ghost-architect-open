@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createRequire } from 'module';
 import chalk from 'chalk';
 import gradient from 'gradient-string';
 import figlet from 'figlet';
@@ -68,7 +69,9 @@ import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount,
 const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
   || 'https://license.ghostarchitect.dev/activate';
 
-const VERSION   = '7.2.0';
+// VERSION is read dynamically from package.json so `npm version` bumps both.
+const _require = createRequire(import.meta.url);
+const VERSION   = _require('../package.json').version;
 // TIER is resolved at runtime from the active license (post-validateLicense).
 // Defaults to 'open' when no license is present (per D2). The constant
 // declaration is `let` rather than `const` because Phase 1 moved the
