@@ -51,45 +51,45 @@ import { getActiveTier } from './session.js';
 // behaviors; everything else mirrors Pro.
 const TIER_POLICY = {
   // Modes
-  'mode:question':         { open: true,              trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:chat':             { open: false,              trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:recon':            { open: true,               trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:poi':              { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:blast':            { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:conflict':         { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:prompt-triage':    { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
-  'mode:audit':            { open: false,              trial: false, pro: true,  'pro-max': true,  team: true,  enterprise: true  },
+  'mode:question':         { open: true,              trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:chat':             { open: false,              trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:recon':            { open: true,               trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:poi':              { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:blast':            { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:conflict':         { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:prompt-triage':    { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:audit':            { open: false,              trial: false, pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   // Ghost Brief: pro-max and above only. Pro and below are blocked.
-  'mode:ghost-brief':      { open: false,              trial: false, pro: false, 'pro-max': true,  team: true,  enterprise: true  },
+  'mode:ghost-brief':      { open: false,              trial: false, pro: false, 'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   // Commit Forecast: Open gets 'forecast-quota' — a separate 1-run quota managed
   // by src/freemium.js's getForecastCount/incrementForecastCount (isolated from
   // ghostOpenScanCount so daily pro-tier usage patterns don't burn the shared
   // 4-scan quota in minutes). bin/ghost.js checks tier first, then dispatches to
   // renderForecastPaywall when the quota is exhausted. Pro+ are unlimited.
-  'mode:commit-forecast':  { open: 'forecast-quota',     trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
+  'mode:commit-forecast':  { open: 'forecast-quota',     trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   // Corrected-file forecast: Open gets 'fix-forecast-quota' — a separate 1-run
   // quota managed by src/freemium.js's getFixForecastCount/incrementFixForecastCount.
   // Isolated from both SCAN_QUOTA and FORECAST_QUOTA because this is a distinct
   // surface (post-scan fix evaluation vs pre-commit impact analysis).
-  'mode:fix-forecast':     { open: 'fix-forecast-quota', trial: true,  pro: true,  'pro-max': true,  team: true,  enterprise: true  },
+  'mode:fix-forecast':     { open: 'fix-forecast-quota', trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
 
   // Features — consulted as soft-gate callout sites (D3 once-per-session
   // suppression). Not yet wired at every site; this is the registry for
   // Phase 2/3 to adopt. Verdict semantics same as modes.
-  'feature:profiles':           { open: false, trial: true,  pro: true, 'pro-max': true, team: true, enterprise: true },
-  'feature:project-tracking':   { open: false, trial: true,  pro: true, 'pro-max': true, team: true, enterprise: true },
-  'feature:ghost-partner-pdf':  { open: false, trial: true,  pro: true, 'pro-max': true, team: true, enterprise: true },
+  'feature:profiles':           { open: false, trial: true,  pro: true, 'pro-max': true, team: true, 'team-max': true, enterprise: true, 'enterprise-max': true },
+  'feature:project-tracking':   { open: false, trial: true,  pro: true, 'pro-max': true, team: true, 'team-max': true, enterprise: true, 'enterprise-max': true },
+  'feature:ghost-partner-pdf':  { open: false, trial: true,  pro: true, 'pro-max': true, team: true, 'team-max': true, enterprise: true, 'enterprise-max': true },
   // verifier-fallback: when a conflict-detection candidate has no usable file
   // references, quickVerify() can fall back to loading ~5K tokens of project
   // context to still produce a verdict. Costs ~5K extra tokens per ambiguous
   // verification. Open gets the cheaper INSUFFICIENT verdict instead; trial+
   // get the fallback. See TODO-verifier-agent-stage3-evaluate.md (closed
   // 2026-05-25 via Cycle 13 Block 2).
-  'feature:verifier-fallback':  { open: false, trial: true,  pro: true, 'pro-max': true, team: true, enterprise: true },
+  'feature:verifier-fallback':  { open: false, trial: true,  pro: true, 'pro-max': true, team: true, 'team-max': true, enterprise: true, 'enterprise-max': true },
   // pdf-watermark-free: trial gets watermarked PDFs, others get clean PDFs.
   // Open gets clean PDFs too — the freemium gate is quota-based, not
   // watermark-based. Trial is the only "watermarked" tier.
-  'feature:pdf-watermark-free': { open: true,  trial: false, pro: true, 'pro-max': true, team: true, enterprise: true },
+  'feature:pdf-watermark-free': { open: true,  trial: false, pro: true, 'pro-max': true, team: true, 'team-max': true, enterprise: true, 'enterprise-max': true },
 };
 
 // Per D1: bumped from 2 to 4. The bump lives here, not in src/freemium.js's

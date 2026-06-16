@@ -207,25 +207,31 @@ console.log('\nC) TIER_POLICY — mode:ghost-brief');
 const ghostBriefPolicy = TIER_POLICY['mode:ghost-brief'];
 
 ok("'mode:ghost-brief' exists in TIER_POLICY", ghostBriefPolicy !== undefined);
-check('open  tier → false', ghostBriefPolicy?.open,      false);
-check('pro   tier → false', ghostBriefPolicy?.pro,       false);
-check('pro-max    → true',  ghostBriefPolicy?.['pro-max'], true);
-check('team  tier → true',  ghostBriefPolicy?.team,      true);
-check('enterprise → true',  ghostBriefPolicy?.enterprise, true);
+check('open         tier → false', ghostBriefPolicy?.open,              false);
+check('pro          tier → false', ghostBriefPolicy?.pro,               false);
+check('pro-max           → true',  ghostBriefPolicy?.['pro-max'],       true);
+check('team         tier → true',  ghostBriefPolicy?.team,              true);
+check('team-max          → true',  ghostBriefPolicy?.['team-max'],      true);
+check('enterprise   tier → true',  ghostBriefPolicy?.enterprise,        true);
+check('enterprise-max    → true',  ghostBriefPolicy?.['enterprise-max'], true);
 
 // Verify via requireTier() with tier override
 {
-  const openVerdict     = requireTier('mode:ghost-brief', { tier: 'open'       });
-  const proVerdict      = requireTier('mode:ghost-brief', { tier: 'pro'        });
-  const proMaxVerdict   = requireTier('mode:ghost-brief', { tier: 'pro-max'    });
-  const teamVerdict     = requireTier('mode:ghost-brief', { tier: 'team'       });
-  const enterpriseVerdict = requireTier('mode:ghost-brief', { tier: 'enterprise' });
+  const openVerdict          = requireTier('mode:ghost-brief', { tier: 'open'           });
+  const proVerdict           = requireTier('mode:ghost-brief', { tier: 'pro'            });
+  const proMaxVerdict        = requireTier('mode:ghost-brief', { tier: 'pro-max'        });
+  const teamVerdict          = requireTier('mode:ghost-brief', { tier: 'team'           });
+  const teamMaxVerdict       = requireTier('mode:ghost-brief', { tier: 'team-max'       });
+  const enterpriseVerdict    = requireTier('mode:ghost-brief', { tier: 'enterprise'     });
+  const enterpriseMaxVerdict = requireTier('mode:ghost-brief', { tier: 'enterprise-max' });
 
-  check('requireTier: open     → allowed=false', openVerdict.allowed,       false);
-  check('requireTier: pro      → allowed=false', proVerdict.allowed,        false);
-  check('requireTier: pro-max  → allowed=true',  proMaxVerdict.allowed,     true);
-  check('requireTier: team     → allowed=true',  teamVerdict.allowed,       true);
-  check('requireTier: enterprise→ allowed=true', enterpriseVerdict.allowed, true);
+  check('requireTier: open          → allowed=false', openVerdict.allowed,          false);
+  check('requireTier: pro           → allowed=false', proVerdict.allowed,           false);
+  check('requireTier: pro-max       → allowed=true',  proMaxVerdict.allowed,        true);
+  check('requireTier: team          → allowed=true',  teamVerdict.allowed,          true);
+  check('requireTier: team-max      → allowed=true',  teamMaxVerdict.allowed,       true);
+  check('requireTier: enterprise    → allowed=true',  enterpriseVerdict.allowed,    true);
+  check('requireTier: enterprise-max→ allowed=true',  enterpriseMaxVerdict.allowed, true);
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────

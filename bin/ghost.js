@@ -1624,7 +1624,7 @@ if (process.argv.includes('--brief')) {
   setActiveLicense(briefLicenseResult);
   const briefTier = getActiveTier() || 'open';
 
-  const BRIEF_TIERS = ['pro-max', 'team', 'enterprise'];
+  const BRIEF_TIERS = ['pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
   if (!BRIEF_TIERS.includes(briefTier)) {
     console.error('Ghost Brief requires Ghost Pro Max or higher.');
     console.error('Upgrade at: https://ghostarchitect.dev/upgrade');
