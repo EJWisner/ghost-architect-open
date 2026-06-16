@@ -17,6 +17,7 @@
   "files": [
     "bin/",
     "src/",
+    "lib/",
     "prompts/",
     "README.md",
     "LICENSE",
