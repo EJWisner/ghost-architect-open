@@ -1613,6 +1613,78 @@ async function main() {
   }
 }
 
+// ── Ghost Brief ───────────────────────────────────────────────────────────
+if (process.argv.includes('--brief')) {
+  const { generateBrief, writeBrief } = await import('../lib/ghostBrief.js');
+  const { fromFixForecast, fromPOI, fromConflict } = await import('../lib/ghostBriefAdapter.js');
+  const { version } = _require('../package.json');
+
+  // Resolve license tier before doing anything else
+  const briefLicenseResult = await validateLicense({ skipNetworkClock: true });
+  setActiveLicense(briefLicenseResult);
+  const briefTier = getActiveTier() || 'open';
+
+  const BRIEF_TIERS = ['pro-max', 'team', 'enterprise'];
+  if (!BRIEF_TIERS.includes(briefTier)) {
+    console.error('Ghost Brief requires Ghost Pro Max or higher.');
+    console.error('Upgrade at: https://ghostarchitect.dev/upgrade');
+    process.exit(1);
+  }
+
+  const args = process.argv.slice(2);
+  const inputFlag = args.find(a => a.startsWith('--input='));
+  const outputFlag = args.find(a => a.startsWith('--output='));
+  const inputFile = inputFlag ? inputFlag.split('=')[1] : 'ghost-report.json';
+  const outputFile = outputFlag ? outputFlag.split('=')[1] : 'ghost-brief.json';
+
+  if (!fs.existsSync(inputFile)) {
+    console.error(`Ghost Brief: input file not found: ${inputFile}`);
+    process.exit(1);
+  }
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+  } catch (e) {
+    console.error(`Ghost Brief: failed to parse ${inputFile}: ${e.message}`);
+    process.exit(1);
+  }
+
+  // Detect source and adapt findings
+  let findings = [];
+  if (raw.prompts) {
+    // Already in Brief format — re-validate only
+    findings = raw.prompts;
+  } else if (raw.findings) {
+    const mode = raw.scan_mode || raw.mode || 'fix-forecast';
+    if (mode === 'fix-forecast') findings = fromFixForecast(raw.findings);
+    else if (mode === 'poi') findings = fromPOI(raw.findings);
+    else if (mode === 'conflict') findings = fromConflict(raw.findings);
+    else findings = fromFixForecast(raw.findings); // best-effort fallback
+  } else {
+    console.error('Ghost Brief: input file has no recognized findings structure.');
+    process.exit(1);
+  }
+
+  try {
+    const brief = generateBrief({
+      findings,
+      ghostVersion: version,
+      scanFile: inputFile,
+      codemaseRoot: process.cwd()
+    });
+    const outPath = writeBrief(brief, outputFile);
+    console.log(`Ghost Brief written to: ${outPath}`);
+    console.log(`  ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated`);
+  } catch (e) {
+    console.error(`Ghost Brief failed: ${e.message}`);
+    process.exit(1);
+  }
+
+  process.exit(0);
+}
+// ── End Ghost Brief ───────────────────────────────────────────────────────
+
 // Resolve symlinks on both sides so the `ghost` global-install symlink
 // (which points at this file via realpath) is recognized as the entry
 // point and triggers main(). The fallback catches edge cases where
