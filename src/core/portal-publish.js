@@ -548,6 +548,46 @@ export async function testPortalConnection() {
   }
 }
 
+// ── Ghost Brief publish ───────────────────────────────────────────────────────
+
+/**
+ * Push a ghost-brief.json file to the portal repo.
+ *
+ * Called from the --brief CLI handler after writeBrief() succeeds.
+ * Non-fatal by design — the caller wraps in try/catch.
+ *
+ * Portal path: briefs/ghost-brief-<iso-datestamp>.json
+ * A fixed-name alias (briefs/ghost-brief-latest.json) is also pushed
+ * so the portal can always find the most recent Brief without manifest
+ * traversal.
+ *
+ * @param {string} briefJsonPath  Absolute path to the written ghost-brief.json
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+export async function publishBriefToPortal(briefJsonPath) {
+  if (!isPortalConfigured()) return { ok: false, reason: 'not_configured' };
+  if (!fs.existsSync(briefJsonPath)) return { ok: false, reason: 'file_not_found' };
+
+  const cfg             = getPortalConfig();
+  const octokit         = getOctokit();
+  const { owner, repo } = parseRepo(cfg.repo);
+  const content         = fs.readFileSync(briefJsonPath);
+  const stamp           = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+  await Promise.all([
+    upsertFile(octokit, owner, repo,
+      `briefs/ghost-brief-${stamp}.json`,
+      content,
+      `portal: ghost-brief ${stamp}`),
+    upsertFile(octokit, owner, repo,
+      'briefs/ghost-brief-latest.json',
+      content,
+      `portal: ghost-brief-latest`),
+  ]);
+
+  return { ok: true };
+}
+
 // ── Dashboard publish ─────────────────────────────────────────────────────────
 
 /**

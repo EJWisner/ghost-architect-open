@@ -1617,6 +1617,7 @@ async function main() {
 if (process.argv.includes('--brief')) {
   const { generateBrief, writeBrief } = await import('../lib/ghostBrief.js');
   const { fromFixForecast, fromPOI, fromConflict } = await import('../lib/ghostBriefAdapter.js');
+  const { publishBriefToPortal, isPortalConfigured } = await import('../src/core/portal-publish.js');
   const { version } = _require('../package.json');
 
   // Resolve license tier before doing anything else
@@ -1676,6 +1677,20 @@ if (process.argv.includes('--brief')) {
     const outPath = writeBrief(brief, outputFile);
     console.log(`Ghost Brief written to: ${outPath}`);
     console.log(`  ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated`);
+
+    // ── Portal Publish (non-fatal) ─────────────────────────────────────
+    if (isPortalConfigured() && fs.existsSync(outPath)) {
+      try {
+        const portalResult = await publishBriefToPortal(outPath);
+        if (portalResult.ok) {
+          console.log('  Ghost Brief pushed to portal.');
+        } else {
+          console.log(`  Portal push skipped: ${portalResult.reason}`);
+        }
+      } catch (e) {
+        console.log(`  Portal push failed (non-fatal): ${e.message}`);
+      }
+    }
   } catch (e) {
     console.error(`Ghost Brief failed: ${e.message}`);
     process.exit(1);
