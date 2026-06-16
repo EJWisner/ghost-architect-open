@@ -239,6 +239,15 @@ Commit Forecast (non-interactive / CI mode):
   runs fully non-interactive. Any missing required flag drops back to the
   interactive prompt flow.
 
+Ghost Brief™ (Pro Max and above):
+  --brief                  Convert scan findings into a validated,
+                           blast-radius-aware Claude Code prompt pack.
+                           Writes ghost-brief.json to the current directory.
+                           Requires an existing scan output file.
+  --input=<path>           Input findings JSON file (default: ghost-report.json)
+  --output=<path>          Output path for ghost-brief.json
+                           (default: ghost-brief.json in current directory)
+
 Misc:
   --version, -v            Print version and exit.
   --help, -h               Print this help and exit.
