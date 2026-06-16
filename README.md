@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v8.0.0** — Now includes Ghost Brief™: governed AI remediation pipeline.
+
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
 The most expensive moments in any engagement are not writing new code. They are the first weeks on an inherited codebase, and the gut-check before every risky change. A senior architect spending 2-3 days reading legacy code before contributing costs $3,000 to $5,000 in billable time. Ghost Architect compresses that to minutes.
@@ -23,6 +25,24 @@ ghost
 That's it. On first run, Ghost walks you through a one-time setup wizard (API key, optional GitHub token, model preference, billing rates, context size). Your config is saved locally and every future run goes straight to the main menu.
 
 **Requirements:** Node.js 18 or higher, an Anthropic API key (pay-as-you-go, not the same as a Claude.ai subscription), and optionally a GitHub Personal Access Token for private repos.
+
+---
+
+## What's New in v8.0.0
+
+### Ghost Brief™
+
+Convert any Ghost scan into a validated, blast-radius-aware Claude Code prompt pack. Feed `ghost-brief.json` directly into Claude Code, Cursor, or Copilot. Ghost briefs the AI. The AI fixes the code.
+
+**Run it:**
+
+```bash
+ghost --brief --input=ghost-report.json
+```
+
+Ghost reads your findings JSON, converts each finding into a structured prompt with blast-radius ordering, validation hints, and file context — and writes `ghost-brief.json` to disk. If Ghost Portal™ is configured, the Brief is pushed automatically.
+
+Ghost Brief™ requires Ghost Pro Max or higher.
 
 ---
 
@@ -248,29 +268,44 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 
 ## Tier comparison
 
-| Feature | Open (free) | Pro | Team | Enterprise |
-|---|---|---|---|---|
-| Question | ✅ | ✅ | ✅ | ✅ |
-| Points of Interest scan | ✅ | ✅ | ✅ | ✅ |
-| Blast Radius + Rollback | ✅ | ✅ | ✅ | ✅ |
-| Conflict Detection | ✅ | ✅ | ✅ | ✅ |
-| Commit Forecast | 1 free / install | ✅ unlimited | ✅ unlimited | ✅ unlimited |
-| Prompt Triage | ✅ | ✅ | ✅ | ✅ |
-| Recon sizing | ✅ | ✅ | ✅ | ✅ |
-| Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ |
-| Project labels + history tracking | — | ✅ | ✅ | ✅ |
-| Project Dashboard | — | ✅ | ✅ | ✅ |
-| Compare Reports (before/after) | — | ✅ | ✅ | ✅ |
-| Inheritance Audit (deal-grade) | — | ✅ | ✅ | ✅ |
-| Ghost Partner™ profiles | — | ✅ | ✅ | ✅ |
-| White-label PDF rendering | — | ✅ | ✅ | ✅ |
-| Per-profile billing rate overrides | — | ✅ | ✅ | ✅ |
-| Team sync features | — | — | ✅ | ✅ |
-| Custom enterprise gating | — | — | — | ✅ |
-| Context cap | 50K tokens | 100K | 150K | 200K |
-| Pricing | Free, BYOK | $99/mo | $399/mo | $1,200/mo+ |
+| Feature | Open (free) | Pro | Pro Max | Team | Team Max | Enterprise | Ent. Max |
+|---|---|---|---|---|---|---|---|
+| Question | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Points of Interest scan | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Blast Radius + Rollback | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Conflict Detection | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Commit Forecast | 1 free / install | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Prompt Triage | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Recon sizing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Project labels + history tracking | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Project Dashboard | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Compare Reports (before/after) | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Inheritance Audit (deal-grade) | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Ghost Partner™ profiles | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| White-label PDF rendering | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Per-profile billing rate overrides | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Ghost Brief™** | — | — | ✅ | — | ✅ | — | ✅ |
+| **Unified Brief (all seats)** | — | — | — | — | ✅ | — | ✅ |
+| **Ghost Partner co-engagement** | — | — | — | — | — | — | ✅ |
+| Team sync features | — | — | — | ✅ | ✅ | ✅ | ✅ |
+| Custom enterprise gating | — | — | — | — | — | ✅ | ✅ |
+| Context cap | 50K tokens | 100K | 100K | 150K | 150K | 200K | 200K |
+| Pricing | Free, BYOK | $99/mo | $199/mo | $399/mo | $799/mo | $1,200/mo+ | $2,500/mo+ |
 
-The free Open tier is fully featured for individual scans. Project history, before/after comparison, white-label consultant rendering, deal-grade Inheritance Audit, and team sync are paid-tier capabilities.
+**Ghost Brief™ tiers at a glance:**
+
+| Tier | Price | Ghost Brief™ |
+|---|---|---|
+| Ghost Open | Free | ❌ |
+| Ghost Pro | $99/mo | ❌ |
+| Ghost Pro Max | $199/mo | ✅ |
+| Ghost Team | $399/mo | ✅ |
+| Ghost Team Max | $799/mo | ✅ Unified Brief |
+| Ghost Enterprise | $1,200/mo | ✅ |
+| Ghost Enterprise Max | $2,500/mo | ✅ + Ghost Partner |
+
+The free Open tier is fully featured for individual scans. Project history, before/after comparison, white-label consultant rendering, deal-grade Inheritance Audit, and team sync are paid-tier capabilities. Ghost Brief™ is available on Pro Max and above.
 
 Pricing details and sign-up at [ghostarchitect.dev](https://ghostarchitect.dev).
 
