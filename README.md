@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v8.0.0** — Now includes Ghost Brief™: governed AI remediation pipeline.
+**v8.0.2** — Now includes Ghost Brief™: governed AI remediation pipeline.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
@@ -28,7 +28,7 @@ That's it. On first run, Ghost walks you through a one-time setup wizard (API ke
 
 ---
 
-## What's New in v8.0.0
+## What's New in v8.0.2
 
 ### Ghost Brief™
 
@@ -39,6 +39,10 @@ Convert any Ghost scan into a validated, blast-radius-aware Claude Code prompt p
 ```bash
 ghost --brief --input=ghost-report.json
 ```
+
+Or select Ghost Brief™ from the interactive menu after any scan.
+Ghost auto-detects your most recent findings file and confirms
+before generating.
 
 Ghost reads your findings JSON, converts each finding into a structured prompt with blast-radius ordering, validation hints, and file context — and writes `ghost-brief.json` to disk. If Ghost Portal™ is configured, the Brief is pushed automatically.
 
