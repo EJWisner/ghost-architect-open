@@ -21,6 +21,7 @@ import { loadProfile } from '../src/profile/index.js';
 import { runProfileWizard } from '../src/profile/wizard.js';
 import { writeProfile, listProfiles, deleteProfile, profilePathFor, getProfilesDir } from '../src/profile/writer.js';
 import fs, { realpathSync } from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -351,6 +352,8 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
 // ── Mode selector ───────────────────────────────────────────────────────────
 
 async function selectMode(codebaseContext, tier = 'open') {
+  const BRIEF_TIERS = ['pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+
   console.log('\n' + boxen(
     chalk.green.bold(SYM.check + ' Project processed') + '\n' +
     chalk.gray(`${codebaseContext.loadedFiles} files | ${codebaseContext.fileIndex.slice(0, 3).join(', ')}${codebaseContext.fileIndex.length > 3 ? '...' : ''}`),
@@ -374,6 +377,13 @@ async function selectMode(codebaseContext, tier = 'open') {
     { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
     { name: IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ' + chalk.gray('— Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
     { name: IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ' + chalk.gray('— Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
+    {
+      name: IS_WINDOWS
+        ? '[GBR] Ghost Brief™     — Generate AI remediation prompt pack'
+        : '📋  Ghost Brief™     ' + chalk.gray('— Generate AI remediation prompt pack'),
+      value: 'ghost-brief',
+      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
+    },
     { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
     { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
@@ -1618,6 +1628,116 @@ async function main() {
       case 'audit':           await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
       case 'compare':         await runCompareMode();                         break;
       case 'dashboard':       await showProjectDashboard();                   break;
+      case 'ghost-brief': {
+        // ── Ghost Brief™ — in-menu handler ────────────────────────────────
+        const REPORTS_DIR_GB = path.join(os.homedir(), 'Ghost Architect Reports');
+        let inputFile = null;
+
+        // Bug fix 1: sort by mtime (most recently modified first)
+        if (fs.existsSync(REPORTS_DIR_GB)) {
+          const files = fs.readdirSync(REPORTS_DIR_GB)
+            .filter(f => f.endsWith('.findings.json'))
+            .map(f => ({
+              name: f,
+              mtime: fs.statSync(path.join(REPORTS_DIR_GB, f)).mtimeMs,
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+          const recentFile = files[0];
+          if (recentFile) inputFile = path.join(REPORTS_DIR_GB, recentFile.name);
+        }
+
+        if (!inputFile) {
+          console.log(chalk.yellow('\n  No findings file found in ~/Ghost Architect Reports/'));
+          console.log(chalk.gray('  Run a scan first, then select Ghost Brief™.\n'));
+          break;
+        }
+
+        console.log(chalk.gray(`\n  Using findings: ${path.basename(inputFile)}`));
+        const { confirmed } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'confirmed',
+          message: `Generate Ghost Brief™ from ${path.basename(inputFile)}?`,
+          default: true,
+          theme: inquirerTheme,
+        }]);
+
+        // Bug fix 2: if user says No, offer file picker instead of bailing
+        if (!confirmed) {
+          const allFiles = fs.readdirSync(REPORTS_DIR_GB)
+            .filter(f => f.endsWith('.findings.json'))
+            .map(f => ({
+              name: f,
+              mtime: fs.statSync(path.join(REPORTS_DIR_GB, f)).mtimeMs,
+            }))
+            .sort((a, b) => b.mtime - a.mtime)
+            .slice(0, 10);
+
+          if (allFiles.length === 0) {
+            console.log(chalk.yellow('\n  No findings files found. Run a scan first.\n'));
+            break;
+          }
+
+          const { chosenFile } = await inquirer.prompt([{
+            type: 'list',
+            name: 'chosenFile',
+            message: 'Choose a findings file:',
+            theme: inquirerTheme,
+            choices: [
+              ...allFiles.map(f => ({
+                name: f.name,
+                value: path.join(REPORTS_DIR_GB, f.name),
+              })),
+              { name: '← Back to menu', value: null },
+            ],
+          }]);
+
+          if (!chosenFile) break;
+          inputFile = chosenFile;
+        }
+
+        const briefOutputFile = path.join(process.cwd(), 'ghost-brief.json');
+        try {
+          const { generateBrief, writeBrief } = await import('../lib/ghostBrief.js');
+          const { fromFixForecast, fromPOI, fromConflict } = await import('../lib/ghostBriefAdapter.js');
+          const { publishBriefToPortal, isPortalConfigured } = await import('../src/core/portal-publish.js');
+          const briefVersion = _require('../package.json').version;
+
+          const raw = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+          let findings = [];
+          if (raw.prompts) {
+            findings = raw.prompts;
+          } else if (raw.findings) {
+            const scanMode = raw.scan_mode || raw.mode || 'fix-forecast';
+            if (scanMode === 'poi')           findings = fromPOI(raw.findings);
+            else if (scanMode === 'conflict') findings = fromConflict(raw.findings);
+            else                              findings = fromFixForecast(raw.findings);
+          } else {
+            console.log(chalk.yellow('\n  Input file has no recognized findings structure.\n'));
+            break;
+          }
+
+          const brief = generateBrief({
+            findings,
+            ghostVersion: briefVersion,
+            scanFile:     inputFile,
+            codemaseRoot: process.cwd(),
+          });
+
+          const outPath = writeBrief(brief, briefOutputFile);
+          console.log(chalk.green(`\n  ${SYM.check} Ghost Brief™ written to: ${outPath}`));
+          console.log(chalk.gray(`    ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated\n`));
+
+          if (isPortalConfigured() && fs.existsSync(outPath)) {
+            try {
+              const result = await publishBriefToPortal(outPath);
+              if (result?.ok) console.log(chalk.gray('  ✓ Ghost Brief pushed to portal.\n'));
+            } catch { /* non-fatal */ }
+          }
+        } catch (e) {
+          console.error(chalk.red(`\n  Ghost Brief failed: ${e.message}\n`));
+        }
+        break;
+      }
     }
   }
 }
