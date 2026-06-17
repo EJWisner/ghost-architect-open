@@ -669,10 +669,24 @@ async function runOpenProfileFlow(profiles) {
   ]);
   const requested = process.env.VISUAL || process.env.EDITOR || (IS_WINDOWS ? 'notepad' : 'vi');
   const editor = path.basename(requested.trim());
-  if (!ALLOWED_EDITORS.has(editor.toLowerCase().replace(/\.exe$/, ''))) {
-    console.log(chalk.red(`\nRefusing to launch unrecognized editor: ${requested}`));
-    console.log(chalk.gray(`Set VISUAL or EDITOR to one of: ${[...ALLOWED_EDITORS].join(', ')}`));
-    console.log(chalk.gray(`Or open the file manually: ${target.path}\n`));
+  const editorName = editor.toLowerCase();
+
+  // Validate the FULL basename against the whitelist first. Only after that
+  // fails do we strip a trailing .exe (Windows compatibility) and re-check.
+  // Stripping before the whitelist check let names like "notepad++.exe.bat"
+  // slip through: the .exe$ strip is a no-op there, but the principle is the
+  // same, so we never let suffix handling widen what counts as a match.
+  let normalized = editorName;
+  let allowed = ALLOWED_EDITORS.has(normalized);
+  if (!allowed && normalized.endsWith('.exe')) {
+    normalized = normalized.replace(/\.exe$/, '');
+    allowed = ALLOWED_EDITORS.has(normalized);
+  }
+  // Second validation pass: the name we settled on must still be whitelisted.
+  if (!allowed || !ALLOWED_EDITORS.has(normalized)) {
+    console.error(chalk.red(`\nRefusing to launch unrecognized editor: ${requested}`));
+    console.error(chalk.gray(`Set VISUAL or EDITOR to one of: ${[...ALLOWED_EDITORS].join(', ')}`));
+    console.error(chalk.gray(`Or open the file manually: ${target.path}\n`));
     return;
   }
 
