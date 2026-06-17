@@ -147,7 +147,15 @@ export function requireTier(gateId, opts = {}) {
     };
   }
   if (verdict === 'quota') {
-    const used = opts.scansUsed ?? 0;
+    // Fail-loud: a missing count must never silently fall through to 0, which
+    // would hand an exhausted Open user unlimited scans. The caller is required
+    // to pass the current count (from freemium.getScanCount()), even when 0.
+    if (opts.scansUsed === undefined) {
+      throw new Error(
+        `requireTier('${gateId}'): opts.scansUsed is required for quota verdicts`
+      );
+    }
+    const used = opts.scansUsed;
     if (used < SCAN_QUOTA) {
       return { allowed: true, quotaRemaining: SCAN_QUOTA - used };
     }
@@ -162,7 +170,12 @@ export function requireTier(gateId, opts = {}) {
   // and the limit is FORECAST_QUOTA (1 for Open). Verdict semantics mirror
   // 'quota' but use a different counter and a different paywall kind.
   if (verdict === 'forecast-quota') {
-    const used  = opts.forecastsUsed ?? 0;
+    if (opts.forecastsUsed === undefined) {
+      throw new Error(
+        `requireTier('${gateId}'): opts.forecastsUsed is required for forecast-quota verdicts`
+      );
+    }
+    const used  = opts.forecastsUsed;
     const limit = FORECAST_QUOTA;
     if (used < limit) {
       return { allowed: true, quotaRemaining: limit - used };
@@ -178,7 +191,12 @@ export function requireTier(gateId, opts = {}) {
   // counter (freemium.getFixForecastCount / incrementFixForecastCount).
   // Caller passes opts.fixForecastsUsed.
   if (verdict === 'fix-forecast-quota') {
-    const used  = opts.fixForecastsUsed ?? 0;
+    if (opts.fixForecastsUsed === undefined) {
+      throw new Error(
+        `requireTier('${gateId}'): opts.fixForecastsUsed is required for fix-forecast-quota verdicts`
+      );
+    }
+    const used  = opts.fixForecastsUsed;
     const limit = FIX_FORECAST_QUOTA;
     if (used < limit) {
       return { allowed: true, quotaRemaining: limit - used };

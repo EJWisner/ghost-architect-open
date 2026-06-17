@@ -234,6 +234,32 @@ check('enterprise-max    → true',  ghostBriefPolicy?.['enterprise-max'], true)
   check('requireTier: enterprise-max→ allowed=true',  enterpriseMaxVerdict.allowed, true);
 }
 
+// ── requireTier: quota verdicts must fail loud on a missing count ───────────────
+//
+// Regression guard: a quota-gated mode must NEVER default a missing count to 0,
+// which would let an exhausted Open user scan without limit. requireTier must
+// throw when the caller forgets to pass the count.
+{
+  // Empty opts → resolves to 'open' tier → 'quota' verdict, no scansUsed.
+  throws('requireTier: empty opts on quota mode throws', () =>
+    requireTier('mode:poi', {}));
+  throws('requireTier: open quota mode without scansUsed throws', () =>
+    requireTier('mode:poi', { tier: 'open' }));
+  throws('requireTier: open forecast-quota without forecastsUsed throws', () =>
+    requireTier('mode:commit-forecast', { tier: 'open' }));
+  throws('requireTier: open fix-forecast-quota without fixForecastsUsed throws', () =>
+    requireTier('mode:fix-forecast', { tier: 'open' }));
+
+  // A count of 0 is valid and must NOT throw — it means "fresh quota".
+  check('requireTier: scansUsed=0 allowed',
+    requireTier('mode:poi', { tier: 'open', scansUsed: 0 }).allowed, true);
+  check('requireTier: scansUsed at limit blocked',
+    requireTier('mode:poi', { tier: 'open', scansUsed: 4 }).allowed, false);
+  // Non-quota tiers short-circuit before the count check, so no count needed.
+  check('requireTier: pro quota mode allowed without count',
+    requireTier('mode:poi', { tier: 'pro' }).allowed, true);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(50)}`);
