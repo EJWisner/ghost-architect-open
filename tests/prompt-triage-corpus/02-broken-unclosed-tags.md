@@ -1,3 +1,10 @@
+<!--
+  Fixture: 02-broken-unclosed-tags
+  Expected triage findings: two formatting/unclosed-tag findings at HIGH
+  severity, one for the opening system block and one for the opening rules
+  block, neither of which is ever closed. Enforced by
+  tests/assert-prompt-pack.mjs (expected range 1-12 findings).
+-->
 <system>
 You are a customer service agent for a software company.
 
