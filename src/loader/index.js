@@ -263,6 +263,51 @@ async function loadFromZip() {
   return buildContext(fileMap);
 }
 
+// ── GitHub rate-limit helpers ────────────────────────────────────────────────
+// GitHub signals rate limiting two ways: a 429, or a 403 with
+// x-ratelimit-remaining: 0 (primary limit) or a "rate limit" message
+// (secondary/abuse limit). Both are retryable after a wait, unlike a plain
+// 403 (private repo / bad permissions) which is not.
+function isRateLimitError(err) {
+  if (!err) return false;
+  if (err.status === 429) return true;
+  if (err.status === 403) {
+    const headers = err.response?.headers || {};
+    if (headers['x-ratelimit-remaining'] === '0') return true;
+    const msg = (err.message || '').toLowerCase();
+    if (msg.includes('rate limit') || msg.includes('secondary rate')) return true;
+  }
+  return false;
+}
+
+// How long to wait before retrying a rate-limited request. Prefer the
+// Retry-After header (seconds), then x-ratelimit-reset (unix epoch seconds),
+// then a 60s default. Capped at 300s so a far-future reset still surfaces the
+// continue/stop prompt to the user instead of silently hanging.
+function rateLimitWaitSeconds(err) {
+  const headers = err?.response?.headers || {};
+  const cap = (s) => Math.min(Math.max(s, 1), 300);
+
+  const retryAfter = headers['retry-after'];
+  if (retryAfter != null) {
+    const s = parseInt(retryAfter, 10);
+    if (Number.isFinite(s) && s > 0) return cap(s);
+  }
+
+  const reset = headers['x-ratelimit-reset'];
+  if (reset != null) {
+    const resetSec = parseInt(reset, 10);
+    if (Number.isFinite(resetSec)) {
+      const deltaSec = Math.ceil((resetSec * 1000 - Date.now()) / 1000);
+      if (deltaSec > 0) return cap(deltaSec);
+    }
+  }
+
+  return 60;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function loadFromGitHub() {
   const config = getConfig();
   const githubToken = config.get('githubToken');
@@ -423,26 +468,71 @@ async function loadFromGitHub() {
     spinner.start(`Fetching ${Math.min(filteredFiles.length, fetchCap)} files from ${selectedFolders.length} folder(s)...`);
 
     const filesToFetch = filteredFiles.slice(0, fetchCap);
+    const total = filesToFetch.length;
+    const baseFetchText = `Fetching ${Math.min(filteredFiles.length, fetchCap)} files from ${selectedFolders.length} folder(s)...`;
     let fetched = 0;
+    let stoppedEarly = false;
 
-    for (const file of filesToFetch) {
-      try {
-        const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: file.sha });
-        if (data.content) {
-          const content = Buffer.from(data.content, 'base64').toString('utf8');
-          const estTokens = Math.ceil(content.length / 4);
-          if (estTokens > MAX_FILE_TOKENS) {
-            console.log(chalk.gray(`  ⚠ Skipped ${file.path} — too large (${Math.round(estTokens/1000)}k tokens)`));
-            continue;
+    for (let i = 0; i < total; i++) {
+      const file = filesToFetch[i];
+      spinner.text = baseFetchText;
+      // Inner retry loop: a rate-limited file is retried after a wait; any
+      // other error skips the file (preserving prior best-effort behavior).
+      // After 3 consecutive rate-limit hits on the SAME file, hand the user
+      // the choice to keep waiting or stop and keep the partial scan.
+      let rateLimitHits = 0;
+      while (true) {
+        try {
+          const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: file.sha });
+          if (data.content) {
+            const content = Buffer.from(data.content, 'base64').toString('utf8');
+            const estTokens = Math.ceil(content.length / 4);
+            if (estTokens > MAX_FILE_TOKENS) {
+              console.log(chalk.gray(`  ⚠ Skipped ${file.path} — too large (${Math.round(estTokens/1000)}k tokens)`));
+            } else {
+              fileMap[file.path] = content;
+              fetched++;
+            }
           }
-          fileMap[file.path] = content;
-          fetched++;
+          break; // fetched (or intentionally skipped) — move to next file
+        } catch (err) {
+          if (!isRateLimitError(err)) break; // non-rate-limit error: skip this file
+
+          rateLimitHits++;
+          if (rateLimitHits >= 3) {
+            spinner.stop();
+            console.log('');
+            const { action } = await inquirer.prompt([{
+              type: 'list',
+              name: 'action',
+              message: chalk.yellow(`Hit GitHub's rate limit 3 times on ${file.path} (file ${i + 1}/${total}). What now?`),
+              choices: [
+                { name: `Keep waiting and retrying (${fetched} files fetched so far)`, value: 'continue' },
+                { name: 'Stop and analyze the files already fetched', value: 'stop' },
+              ],
+              default: 'continue',
+            }]);
+            if (action === 'stop') {
+              stoppedEarly = true;
+              break;
+            }
+            rateLimitHits = 0; // user chose to keep going — reset the counter
+            spinner.start(baseFetchText);
+          }
+
+          const waitSec = rateLimitWaitSeconds(err);
+          spinner.text = `Rate limit hit — waiting ${waitSec}s before continuing (file ${i + 1}/${total})`;
+          await sleep(waitSec * 1000);
+          // loop continues — retry the same file
         }
-      } catch {}
+      }
+      if (stoppedEarly) break;
     }
 
     spinner.succeed(`Processed ${fetched} files from ${owner}/${repo}`);
-    if (filteredFiles.length > fetchCap) {
+    if (stoppedEarly) {
+      console.log(chalk.yellow(`  ⚠ Stopped early at the rate limit — analyzed ${fetched} of ${total} selected file(s).`));
+    } else if (filteredFiles.length > fetchCap) {
       console.log(chalk.yellow(`  ⚠ Large repo — analyzed first ${fetchCap} code files (${filteredFiles.length} total)`));
     }
 
