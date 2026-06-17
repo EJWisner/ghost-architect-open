@@ -357,6 +357,26 @@ function rateLimitWaitSeconds(err) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ── GitHub API response-shape guard ──────────────────────────────────────────
+// Octokit normally throws on HTTP errors, but a malformed/empty body or an
+// unexpected error-object response can come back with the wrong shape. Accessing
+// nested fields blindly (repoData.default_branch, tree.tree, item.sha) then
+// throws a bare TypeError that surfaces to the user as "Cannot read properties
+// of undefined". assertField() turns that into a clear, named error: which field
+// was missing on which endpoint. The thrown message is plain so the catch block
+// in loadFromGitHub can pattern-match it (401/403/Not Found/rate) where relevant.
+function assertField(obj, field, endpoint) {
+  if (obj == null || typeof obj !== 'object' || obj[field] === undefined) {
+    const got = obj == null ? String(obj) : (obj.message || obj.error || 'unexpected shape');
+    throw new Error(
+      `GitHub API returned an unexpected response from ${endpoint}: ` +
+      `missing field '${field}' (got: ${got}). The API may be returning an error ` +
+      `object instead of the expected data.`
+    );
+  }
+  return obj[field];
+}
+
 async function loadFromGitHub() {
   const config = getConfig();
   const githubToken = config.get('githubToken');
@@ -414,7 +434,7 @@ async function loadFromGitHub() {
       }
     }
 
-    const branch = repoData.default_branch;
+    const branch = assertField(repoData, 'default_branch', `GET /repos/${owner}/${repo}`);
     const fileMap = {};
 
     const { data: tree } = await octokit.rest.git.getTree({
@@ -423,10 +443,22 @@ async function loadFromGitHub() {
       recursive: 'true'
     });
 
+    // getTree returns { tree: [...], truncated, ... }. A missing or non-array
+    // `tree` means the response is not the expected shape (error object, empty
+    // body) — surface that clearly instead of letting .filter throw a TypeError.
+    const treeEntries = assertField(tree, 'tree', `GET /repos/${owner}/${repo}/git/trees/${branch}`);
+    if (!Array.isArray(treeEntries)) {
+      throw new Error(
+        `GitHub API returned an unexpected response from GET /repos/${owner}/${repo}/git/trees/${branch}: ` +
+        `field 'tree' is not an array. The repository may be empty or the API returned an error object.`
+      );
+    }
+
     const ghExcludePatterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
     let ghExcludedCount = 0;
 
-    const codeFiles = tree.tree.filter(item => {
+    const codeFiles = treeEntries.filter(item => {
+      if (!item || typeof item !== 'object' || typeof item.path !== 'string') return false;
       if (item.type !== 'blob') return false;
       const ext = path.extname(item.path).toLowerCase();
       if (!CODE_EXTENSIONS.includes(ext)) return false;
@@ -525,6 +557,13 @@ async function loadFromGitHub() {
     for (let i = 0; i < total; i++) {
       const file = filesToFetch[i];
       spinner.text = baseFetchText;
+      // A tree blob entry should carry a sha; if it doesn't, there's no way to
+      // fetch its content. Skip it rather than passing undefined to getBlob
+      // (which would otherwise produce a confusing 404/validation error).
+      if (typeof file.sha !== 'string') {
+        console.log(chalk.gray(`  ⚠ Skipped ${file.path} — tree entry missing a blob sha`));
+        continue;
+      }
       // Inner retry loop: a rate-limited file is retried after a wait; any
       // other error skips the file (preserving prior best-effort behavior).
       // After 3 consecutive rate-limit hits on the SAME file, hand the user
@@ -588,7 +627,22 @@ async function loadFromGitHub() {
     return buildContext(fileMap);
   } catch (err) {
     spinner.fail('GitHub fetch failed.');
-    if (err.message.includes('401') || err.message.includes('403') || err.message.includes('Not Found')) {
+    // Classify by HTTP status first (Octokit sets err.status reliably), then
+    // fall back to message-substring matching for errors that carry no status
+    // (e.g. the shape-guard errors thrown above, network errors).
+    const status = err?.status;
+    const msg = err?.message || String(err);
+    const isAuthOrNotFound =
+      status === 401 || status === 403 || status === 404 ||
+      msg.includes('401') || msg.includes('403') || msg.includes('Not Found');
+    const isRateLimit = isRateLimitError(err) || msg.includes('rate') || msg.includes('429');
+    if (isRateLimit) {
+      console.log('');
+      console.log(chalk.yellow('  ⚠  GitHub API rate limit reached.'));
+      console.log(chalk.gray('  Add a GitHub token in Reconfigure to increase your limit from 60 to 5,000 requests/hour.'));
+      console.log(chalk.gray('  Alternative: Download the repo as a ZIP and use "ZIP file" instead.'));
+      console.log('');
+    } else if (isAuthOrNotFound) {
       console.log('');
       console.log(chalk.yellow('  ⚠  This repository is private or requires authentication.'));
       console.log('');
@@ -602,14 +656,8 @@ async function loadFromGitHub() {
       console.log('');
       console.log(chalk.gray('  Alternative: Download the repo as a ZIP and use "ZIP file" instead.'));
       console.log('');
-    } else if (err.message.includes('rate') || err.message.includes('429')) {
-      console.log('');
-      console.log(chalk.yellow('  ⚠  GitHub API rate limit reached.'));
-      console.log(chalk.gray('  Add a GitHub token in Reconfigure to increase your limit from 60 to 5,000 requests/hour.'));
-      console.log(chalk.gray('  Alternative: Download the repo as a ZIP and use "ZIP file" instead.'));
-      console.log('');
     } else {
-      console.log(chalk.gray(`  Details: ${err.message}`));
+      console.log(chalk.gray(`  Details: ${msg}`));
     }
     return null;
   }
