@@ -34,7 +34,7 @@ export function isSetupUserAbort(err) {
 //     failure as success.
 function handleSetupInterrupt(err) {
   if (isSetupUserAbort(err)) {
-    console.log('\n' + chalk.yellow('Setup cancelled by user. No changes were lost.'));
+    console.log('\n' + chalk.yellow('Setup cancelled by user. Nothing was saved; your existing configuration is unchanged.'));
     console.log(chalk.gray('Run the command again to finish configuring Ghost Architect.\n'));
     process.exit(0);
   }
@@ -189,17 +189,6 @@ export async function runSetupWizard() {
       message: chalk.cyan('Max file context size in tokens (50000 recommended):'),
       default: 50000,
     },
-  ]);
-
-  // Persist the core config (API key, GitHub token, model, context) before
-  // prompting for rates. If the rate prompts are interrupted, a retry resumes
-  // with these already saved instead of forcing full re-entry.
-  config.set('anthropicApiKey', answers.anthropicApiKey);
-  config.set('defaultModel', answers.defaultModel);
-  config.set('maxTokensContext', answers.maxTokensContext);
-  if (answers.githubToken) config.set('githubToken', answers.githubToken);
-
-  const rates = await inquirer.prompt([
     {
       type: 'number',
       name: 'rateJunior',
@@ -220,9 +209,26 @@ export async function runSetupWizard() {
     },
   ]);
 
-  config.set('rateJunior', rates.rateJunior || 85);
-  config.set('rateMid', rates.rateMid || 125);
-  config.set('rateSenior', rates.rateSenior || 200);
+  // Persist the whole config block atomically, only after EVERY answer has
+  // been collected. Collecting the rates in the same prompt list (rather than
+  // a second inquirer.prompt call) means an interrupt at any question leaves
+  // the configstore completely untouched, so modes never see a half-written
+  // config where some fields are present and others absent. It also keeps the
+  // "No changes were lost" cancellation message honest: nothing is written
+  // until this point, so a Ctrl+C before here truly loses nothing.
+  //
+  // The object form of config.set persists all keys in a single file write,
+  // so even a filesystem failure cannot leave a subset of fields on disk.
+  const block = {
+    anthropicApiKey: answers.anthropicApiKey,
+    defaultModel: answers.defaultModel,
+    maxTokensContext: answers.maxTokensContext,
+    rateJunior: answers.rateJunior || 85,
+    rateMid: answers.rateMid || 125,
+    rateSenior: answers.rateSenior || 200,
+  };
+  if (answers.githubToken) block.githubToken = answers.githubToken;
+  config.set(block);
 
   // Note: the inline "Set up Ghost Team shared sync repo?" prompt that lived
   // here in Team v6.0.1 was removed during v7 unification. The unified
