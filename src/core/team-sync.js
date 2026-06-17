@@ -29,10 +29,44 @@ function getOctokit(syncEntry) {
   return createOctokit({ auth: syncEntry.token });
 }
 
-function parseRepo(repoUrl) {
-  const clean = repoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
-  const [owner, repo] = clean.split('/');
-  return { owner, repo };
+/**
+ * Extract { owner, repo } from a GitHub repository URL.
+ *
+ * Domain-agnostic on purpose: the owner/repo pair is read from the URL path,
+ * so GitHub Enterprise Server hosts parse the same way as github.com. The
+ * earlier implementation hard-stripped the "https://github.com/" prefix, which
+ * left Enterprise URLs (https://github.company.com/owner/repo) with the domain
+ * still embedded in the owner segment and 404'd on every Octokit call.
+ *
+ * Supported formats:
+ *   https://github.com/owner/repo
+ *   https://github.com/owner/repo.git
+ *   https://github.company.com/owner/repo          (Enterprise Server)
+ *   https://github.company.com/owner/repo.git
+ *   git@github.com:owner/repo.git                  (SSH)
+ *   git@github.company.com:owner/repo              (Enterprise SSH)
+ *
+ * A trailing ".git" and trailing slashes are tolerated. Throws if the URL does
+ * not contain a valid <owner>/<repo> path.
+ */
+export function parseRepo(repoUrl) {
+  const url = String(repoUrl).trim().replace(/\.git$/, '').replace(/\/+$/, '');
+
+  // HTTP(S): protocol, then any host, then exactly owner/repo.
+  // SSH:     git@<host>:owner/repo.
+  const match =
+    url.match(/^https?:\/\/[^/]+\/([^/]+)\/([^/]+)$/) ||
+    url.match(/^git@[^:]+:([^/]+)\/([^/]+)$/);
+
+  if (!match) {
+    throw new Error(
+      `Unsupported team sync repo URL: "${repoUrl}". Expected a GitHub URL of ` +
+      `the form https://<host>/<owner>/<repo> (github.com or GitHub Enterprise ` +
+      `Server) or git@<host>:<owner>/<repo>.`
+    );
+  }
+
+  return { owner: match[1], repo: match[2] };
 }
 
 // ── Low-level GitHub helpers ──────────────────────────────────────────────────
