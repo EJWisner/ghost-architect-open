@@ -41,7 +41,7 @@
   "scripts": {
     "start": "node bin/ghost.js",
     "dev": "node bin/ghost.js",
-    "test": "node test/parser-fixtures.test.js && node test/ghostBrief.test.mjs && node tests/error-classification.smoke.mjs"
+    "test": "node test/parser-fixtures.test.js && node test/ghostBrief.test.mjs && node tests/error-classification.smoke.mjs && node tests/setup-interrupt.smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

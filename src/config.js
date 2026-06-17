@@ -5,14 +5,46 @@ import boxen from 'boxen';
 
 const config = new Configstore('ghost-architect');
 
-// Shared handler for an interrupted interactive setup (Ctrl+C, closed TTY,
-// inquirer error). Prints a friendly message and exits cleanly so a first-run
-// user never sees a raw stack trace. Exit code 0: an aborted setup is not a
-// failure, and any partial progress already persisted is preserved.
+// Distinguishes a user-initiated cancellation (Ctrl+C, force-closed prompt)
+// from a real system failure (read-only or full configstore directory,
+// EACCES, ENOSPC, corrupted config). Exported for test coverage.
+//
+// Only a genuine user abort returns true. Everything else is a system error
+// that must surface its real reason and exit non-zero, otherwise the tool
+// lies about what went wrong and (via exit 0) tells CI/scripts that setup
+// succeeded when it did not.
+export function isSetupUserAbort(err) {
+  if (!err) return false;
+  // Modern @inquirer/prompts rejects a Ctrl+C with a named ExitPromptError.
+  if (err.name === 'ExitPromptError') return true;
+  // A SIGINT surfacing as a catchable error rather than a process signal.
+  if (err.code === 'SIGINT' || err.signal === 'SIGINT') return true;
+  // Legacy inquirer / readline abort phrasings.
+  const msg = String(err.message || '');
+  return /force closed the prompt|user force closed|prompt was canceled|cancell?ed by user/i.test(msg);
+}
+
+// Shared handler for an interrupted interactive setup. Branches on the cause:
+//
+//   - User abort (Ctrl+C, closed prompt): not a failure. Any partial progress
+//     already persisted is preserved. Friendly message, exit 0.
+//   - System failure (filesystem error, corrupted configstore, etc.): the user
+//     needs to see what actually broke so they can fix it. Log the real error
+//     details and exit 1 so automation halts instead of treating a silent
+//     failure as success.
 function handleSetupInterrupt(err) {
-  console.log('\n' + chalk.yellow('Setup interrupted. No changes were lost.'));
-  console.log(chalk.gray('Run the command again to pick up where you left off.\n'));
-  process.exit(0);
+  if (isSetupUserAbort(err)) {
+    console.log('\n' + chalk.yellow('Setup cancelled by user. No changes were lost.'));
+    console.log(chalk.gray('Run the command again to finish configuring Ghost Architect.\n'));
+    process.exit(0);
+  }
+
+  const reason = (err && (err.message || err.code)) || 'unknown error';
+  console.error('\n' + chalk.red('Setup failed: ' + reason));
+  if (err && err.code) console.error(chalk.gray('  Error code: ' + err.code));
+  if (err && err.stack) console.error(chalk.gray(err.stack));
+  console.error(chalk.gray('\nThis is a system error, not a cancellation. Resolve the issue above, then run setup again.\n'));
+  process.exit(1);
 }
 
 export function getConfig() { return config; }
