@@ -42,6 +42,11 @@ let sessionUsage = { input_tokens: 0, output_tokens: 0, calls: 0 };
 
 export function resetSessionUsage() {
   sessionUsage = { input_tokens: 0, output_tokens: 0, calls: 0 };
+  // Failures are scoped to the same scan as usage. Resetting here means
+  // callers that already call resetSessionUsage() before a scan also clear
+  // stale failures from a prior scan in the same Node process, with no new
+  // call site to add.
+  resetTier2Failures();
 }
 
 export function getSessionUsage() {
@@ -53,6 +58,80 @@ function recordSessionUsage(usage) {
   sessionUsage.input_tokens  += usage.input_tokens  || 0;
   sessionUsage.output_tokens += usage.output_tokens || 0;
   sessionUsage.calls += 1;
+}
+
+// ── Session-scoped Tier 2 failure tracker ────────────────────────────────
+//
+// Tier 2 detectors fail open: on any error (SDK/key unavailable, API error,
+// or unparseable response after retry) they return zero findings so the scan
+// still completes. That is the right resilience behavior, but silent failures
+// mean a paying customer can receive an incomplete audit and never know a
+// detector was skipped. This tracker records each fail-open event during a
+// scan so the mode file can surface a single visible warning afterward. It
+// does NOT change fail-open behavior — it only makes the failures observable.
+//
+// Reset by resetSessionUsage() (called by the mode file before a scan), read
+// after via getTier2Failures() / formatTier2FailureWarning().
+let sessionTier2Failures = [];
+
+function resetTier2Failures() {
+  sessionTier2Failures = [];
+}
+
+/**
+ * Returns a copy of the Tier 2 failures recorded during the current scan.
+ * Each entry: { detector, model, errorType, error }. Empty array if none.
+ */
+export function getTier2Failures() {
+  return sessionTier2Failures.map(f => ({ ...f }));
+}
+
+// Coarse classification of a failure message into a stable category, so a
+// caller (or future telemetry) can group failures without parsing prose.
+function classifyTier2Error(errorText) {
+  const t = (errorText || '').toLowerCase();
+  if (t.includes('sdk could not be loaded') || t.includes('api_key') || t.includes('api key')) {
+    return 'auth_or_sdk';
+  }
+  if (t.includes('could not be parsed')) return 'parse';
+  if (t.includes('rate') && t.includes('limit')) return 'rate_limit';
+  if (t.includes('401') || t.includes('403') || t.includes('authentication')) return 'auth';
+  if (t.includes('overloaded') || t.includes('529') || t.includes('500') || t.includes('503')) return 'server';
+  return 'api';
+}
+
+function recordTier2Failure(detectorName, modelId, errorText) {
+  sessionTier2Failures.push({
+    detector: detectorName,
+    model: modelId,
+    errorType: classifyTier2Error(errorText),
+    error: errorText,
+  });
+}
+
+/**
+ * Build a single user-facing warning summarizing Tier 2 failures from the
+ * current scan, or null if none occurred. Callers print this once after the
+ * scan completes (e.g. alongside the actual-cost line). Plain text, no
+ * markdown — the caller owns any coloring.
+ */
+export function formatTier2FailureWarning() {
+  const failures = sessionTier2Failures;
+  if (failures.length === 0) return null;
+
+  const n = failures.length;
+  const detectors = [...new Set(failures.map(f => f.detector))];
+  const detectorList = detectors.length <= 4
+    ? detectors.join(', ')
+    : detectors.slice(0, 4).join(', ') + ', and ' + (detectors.length - 4) + ' more';
+
+  return (
+    'Warning: ' + n + ' Tier 2 deep-analysis ' + (n === 1 ? 'check' : 'checks')
+    + ' could not complete and returned no findings ('
+    + detectorList + '). '
+    + 'Results for those checks may be incomplete. '
+    + 'Re-run the scan, or set GHOST_DEBUG_TIER2=1 for failure details.'
+  );
 }
 
 let anthropicClient = null;
@@ -412,12 +491,11 @@ export async function auditPromptForDefect(params) {
 
   const client = await getAnthropicClient();
   if (!client) {
-    return {
-      ok: false,
-      findings: [],
-      error: 'Anthropic SDK could not be loaded. Tier 2 detectors '
-        + 'require @anthropic-ai/sdk and a valid ANTHROPIC_API_KEY.',
-    };
+    const errMsg = 'Anthropic SDK could not be loaded. Tier 2 detectors '
+      + 'require @anthropic-ai/sdk and a valid ANTHROPIC_API_KEY.';
+    maybeLogTier2Failure(detectorName, modelId, errMsg);
+    recordTier2Failure(detectorName, modelId, errMsg);
+    return { ok: false, findings: [], error: errMsg };
   }
 
   const envelope = buildEnvelope({
@@ -453,6 +531,7 @@ export async function auditPromptForDefect(params) {
       const errMsg = 'Audit response could not be parsed after retry: '
         + result.parsed.error;
       maybeLogTier2Failure(detectorName, modelId, errMsg);
+      recordTier2Failure(detectorName, modelId, errMsg);
       return { ok: false, findings: [], error: errMsg, usage };
     }
 
@@ -463,6 +542,7 @@ export async function auditPromptForDefect(params) {
     // F-11: optionally log to stderr if GHOST_DEBUG_TIER2 is set.
     const errMsg = 'Audit API call failed: ' + (err.message || String(err));
     maybeLogTier2Failure(detectorName, modelId, errMsg);
+    recordTier2Failure(detectorName, modelId, errMsg);
     return { ok: false, findings: [], error: errMsg };
   } finally {
     release();
