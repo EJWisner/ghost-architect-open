@@ -1,5 +1,20 @@
 import chalk from 'chalk';
 
+// ── Redactor ─────────────────────────────────────────────────────────────────
+// Strips API keys, secrets, DB credentials, private keys, and certificates from
+// content before it is concatenated into prompt context or written to reports.
+//
+// SIZE GUARD (500KB / 500_000 chars): regex-based rules are skipped on any input
+// larger than this threshold to prevent catastrophic backtracking (ReDoS) on
+// malformed or pathological files. A skipped file is NOT a clean redaction —
+// credentials in oversized files pass through untouched. When the guard fires we
+// record the file in `skippedFiles`, set `partialRedaction: true`, and emit a
+// per-file warning so the skip is never silent. Callers must treat skippedFiles
+// as "review manually before sharing." Stateful parsers (PEM/cert blocks) use
+// indexOf scanning and are ReDoS-immune, so they are exempt from the guard.
+
+const SIZE_GUARD_BYTES = 500_000; // ~500KB; above this, regex rules are skipped (ReDoS protection)
+
 
 // ── Stateful parsers for complex patterns (immune to ReDoS) ──────────────────
 
@@ -61,7 +76,7 @@ function parseCertificateBlocks(content) {
 function safeRegexReplace(content, regex, replacement, timeoutMs = 500) {
   // Simple length-based guard — skip regex on extremely large inputs
   // This prevents catastrophic backtracking on malformed files
-  if (content.length > 500_000) {
+  if (content.length > SIZE_GUARD_BYTES) {
     return { result: content, timedOut: true };
   }
   try {
@@ -73,7 +88,7 @@ function safeRegexReplace(content, regex, replacement, timeoutMs = 500) {
 }
 
 function safeRegexMatch(content, regex) {
-  if (content.length > 500_000) return null;
+  if (content.length > SIZE_GUARD_BYTES) return null;
   try { return content.match(regex); } catch { return null; }
 }
 
@@ -121,12 +136,31 @@ const REDACTION_RULES = [
  *   same { name, regex, replacement } or { name, parser } shape as REDACTION_RULES.
  *   Empty by default. Used by the loader to inject profile-declared private_patterns
  *   on top of the built-in rule set. See TODO-architect-redactor-custom-patterns-v7.md.
+ * @param {string} [filePath] - Optional path/label for the content being redacted.
+ *   Used to name the file in the per-file size-guard warning and in skippedFiles.
+ *   Defaults to a generic label when callers redact an unnamed string.
+ * @returns {{ redacted: string, findings: string[], failedRules: object[],
+ *   partialRedaction: boolean, skippedFiles: string[] }} skippedFiles lists any
+ *   inputs that exceeded the 500KB guard and were left unredacted by regex rules.
  */
-export function redactContent(content, customRules = []) {
+export function redactContent(content, customRules = [], filePath = null) {
   let redacted = content;
   const findings        = [];
   const failedRules     = [];
+  const skippedFiles    = [];
   let   partialRedaction = false;
+
+  // Size guard: regex rules cannot run on oversized inputs (ReDoS protection),
+  // so credentials in this file may pass through unredacted. Surface it loudly
+  // and exactly once per file — never let an oversized file skip silently.
+  if (typeof content === 'string' && content.length > SIZE_GUARD_BYTES) {
+    const fileLabel = filePath || '<unnamed input>';
+    skippedFiles.push(fileLabel);
+    partialRedaction = true;
+    console.warn(chalk.yellow(
+      `  ⚠  File ${fileLabel} exceeds 500KB — redaction skipped (ReDoS protection). Review manually before sharing.`
+    ));
+  }
 
   // Iterate over built-in rules first, then customer-defined patterns.
   // Custom rules go last so built-in patterns (high-confidence cryptographic
@@ -145,7 +179,7 @@ export function redactContent(content, customRules = []) {
       } else {
         // Regex path — use safe wrappers to prevent ReDoS
         const matches = safeRegexMatch(redacted, rule.regex);
-        if (matches === null && redacted.length > 500_000) {
+        if (matches === null && redacted.length > SIZE_GUARD_BYTES) {
           // safeRegexMatch returned null because the size guard fired,
           // not because there were no matches. The rule was silently
           // skipped — record it so the caller knows redaction is partial.
@@ -174,7 +208,7 @@ export function redactContent(content, customRules = []) {
     }
   }
 
-  return { redacted, findings, failedRules, partialRedaction };
+  return { redacted, findings, failedRules, partialRedaction, skippedFiles };
 }
 
 /**
@@ -183,12 +217,13 @@ export function redactContent(content, customRules = []) {
  */
 export function redactCodebase(codebaseContext) {
   try {
-    const { redacted, findings, failedRules, partialRedaction } = redactContent(codebaseContext.context);
+    const { redacted, findings, failedRules, partialRedaction, skippedFiles } =
+      redactContent(codebaseContext.context, [], codebaseContext.path || codebaseContext.name);
     const totalRedactions = findings.length;
 
     return {
       context:          { ...codebaseContext, context: redacted },
-      summary:          { findings, totalRedactions, failedRules, partialRedaction },
+      summary:          { findings, totalRedactions, failedRules, partialRedaction, skippedFiles },
       partialRedaction,
     };
   } catch (err) {
@@ -196,7 +231,7 @@ export function redactCodebase(codebaseContext) {
     // This should never happen but is a last-resort safety net
     return {
       context:          codebaseContext,
-      summary:          { findings: [], totalRedactions: 0, failedRules: [{ rule: 'ALL', error: err.message }], partialRedaction: true },
+      summary:          { findings: [], totalRedactions: 0, failedRules: [{ rule: 'ALL', error: err.message }], partialRedaction: true, skippedFiles: [] },
       partialRedaction: true,
       redactionFailed:  true,
     };
@@ -218,6 +253,14 @@ export function showRedactionSummary(summary) {
       console.log(chalk.red(`      • ${f.rule}: ${f.error}`));
     });
     console.log(chalk.yellow('  Review output manually before sharing.\n'));
+  }
+
+  if (summary.partialRedaction && summary.skippedFiles?.length > 0) {
+    console.log(chalk.red(`  ⚠  ${summary.skippedFiles.length} file(s) exceeded 500KB and were skipped (ReDoS protection):`));
+    summary.skippedFiles.forEach(file => {
+      console.log(chalk.red(`      • ${file}`));
+    });
+    console.log(chalk.yellow('  Secrets in these files may be unredacted. Review manually before sharing.\n'));
   }
 
   if (summary.totalRedactions > 0) {
