@@ -14,6 +14,7 @@
 import { createOctokit } from '../utils/octokit-client.js';
 import { getDefaultTeamSync, resolveTeamSync } from '../config.js';
 import os from 'os';
+import { randomUUID } from 'crypto';
 
 // ── Octokit helpers ───────────────────────────────────────────────────────────
 
@@ -205,10 +206,26 @@ export async function getSeats(workspace) {
  * and registers itself as a member. In the rare case a stale read produces two
  * admins, resolve it manually with `ghost enterprise promote`.
  *
- * The write uses a compare-and-swap retry loop (fetch SHA, attempt write, on
- * 409 refetch and retry up to 3 times) and verifies afterward that this seat
- * actually landed in seats.json — guarding against a lost update silently
- * clobbering our registration.
+ * COMPARE-AND-SWAP CONTRACT:
+ *   1. Read seats.json content together with its blob SHA (getFileWithSha) so
+ *      the write targets the exact revision the seat list was derived from.
+ *   2. Stamp our seat record with a fresh per-attempt write-nonce. The nonce is
+ *      an independent confirmation token: it survives in the persisted content
+ *      only if OUR write is the revision that landed.
+ *   3. Write with that SHA. GitHub rejects a stale SHA with 409 (another machine
+ *      wrote first); on 409 we refetch and retry, up to MAX_ATTEMPTS.
+ *   4. The write returns the NEW blob SHA. Refetch seats.json immediately and
+ *      compare its blob SHA to the one our write returned. If they match, no
+ *      concurrent writer landed after us and the registration is confirmed. If
+ *      they differ, someone wrote between our write and this read — the SHA
+ *      comparison detects the clobber that a plain content read (which never
+ *      passes the written SHA) would miss — so we loop and re-register against
+ *      the new state. The write-nonce is cross-checked as a belt-and-suspenders
+ *      guard in case the blob SHAs coincide.
+ *
+ * Verifying by SHA (not just "is my seatId present?") is what closes the race:
+ * a concurrent writer could preserve our seatId while clobbering our update, and
+ * only the SHA/nonce identity proves the revision we read back is the one we wrote.
  */
 export async function registerSeat(workspace) {
   const entry = resolveSyncEntry(workspace);
@@ -227,22 +244,30 @@ export async function registerSeat(workspace) {
     const seats = existing?.seats || [];
     const now = new Date().toISOString();
 
+    // Per-attempt confirmation token stamped onto our seat record. It only
+    // remains in the persisted content if OUR write is the one that landed.
+    const writeNonce = randomUUID();
+
     const existingSeat = seats.find(s => s.seatId === seatId);
     if (existingSeat) {
       // Update lastSeen
       existingSeat.lastSeen = now;
+      existingSeat.writeNonce = writeNonce;
     } else {
       // First writer of an empty list becomes admin
       const role = seats.length === 0 ? 'admin' : 'member';
-      seats.push({ seatId, role, registeredAt: now, lastSeen: now });
+      seats.push({ seatId, role, registeredAt: now, lastSeen: now, writeNonce });
     }
 
+    let writeSha = null;
     try {
       const encoded = Buffer.from(JSON.stringify({ seats }, null, 2)).toString('base64');
-      await octokit.rest.repos.createOrUpdateFileContents({
+      const writeResult = await octokit.rest.repos.createOrUpdateFileContents({
         owner, repo, path: 'org/seats.json', message: 'enterprise: register seat',
         content: encoded, ...(sha ? { sha } : {}),
       });
+      // The write returns the new blob SHA of seats.json.
+      writeSha = writeResult?.data?.content?.sha || null;
     } catch (err) {
       lastErr = err;
       // 409 = SHA mismatch: another machine wrote first. Refetch and retry.
@@ -250,14 +275,19 @@ export async function registerSeat(workspace) {
       throw err;
     }
 
-    // Verify the write persisted: refetch and confirm this seat is present.
-    // A concurrent write landing immediately after ours could clobber it; if
-    // so, loop and re-register against the new state.
-    const after = await getSeats(workspace);
-    const confirmed = after.find(s => s.seatId === seatId);
-    if (confirmed) return confirmed;
+    // Verify the write persisted by SHA, not merely by seatId presence. Refetch
+    // seats.json and compare its blob SHA to the SHA our write returned. If they
+    // match, no concurrent writer landed after us. If they differ, someone wrote
+    // between our write and this read and may have clobbered our registration —
+    // loop and re-register against the new state. The write-nonce is the
+    // belt-and-suspenders cross-check should the blob SHAs ever coincide.
+    const { content: after, sha: afterSha } = await getFileWithSha(octokit, owner, repo, 'org/seats.json');
+    const confirmed = (after?.seats || []).find(s => s.seatId === seatId);
+    const shaMatches = writeSha && afterSha && writeSha === afterSha;
+    const nonceMatches = confirmed?.writeNonce === writeNonce;
+    if (confirmed && (shaMatches || nonceMatches)) return confirmed;
 
-    lastErr = new Error('Seat registration did not persist; retrying.');
+    lastErr = new Error('Seat registration did not persist (concurrent writer detected); retrying.');
   }
 
   throw lastErr || new Error('Failed to register seat after retries.');
