@@ -52,34 +52,162 @@ function alternateSessionFilePath(label) {
   return path.join(ALT_SESSIONS_DIR, `ghost-session-${safe}.json`);
 }
 
-// Read one session file with .bak fallback. Returns the parsed session, or
-// null if the file is absent or both it and its backup are unreadable.
+// Read one session file with .bak fallback. Returns an object that
+// distinguishes the two failure modes the caller must treat differently:
+//
+//   { session, reason: 'ok' }         — parsed successfully (from main or .bak)
+//   { session: null, reason: 'absent' }    — no session file here at all
+//   { session: null, reason: 'corrupted' } — file present but it AND its backup
+//                                            failed to parse
+//
+// The distinction matters: an absent file means "no scan was ever checkpointed
+// here" (normal), but a corrupted file means a real session existed and its
+// resume state was just lost — the caller must warn loudly rather than silently
+// behave as if nothing was there. On corruption we also surface `details` so
+// the caller can log the underlying parse errors for post-mortem.
 function readSessionFile(finalPath) {
   const bakPath = finalPath + '.bak';
-  if (fs.existsSync(finalPath)) {
-    try {
-      return JSON.parse(fs.readFileSync(finalPath, 'utf8'));
-    } catch {
-      // Main file corrupted — try backup
-      if (fs.existsSync(bakPath)) {
-        try {
-          const session = JSON.parse(fs.readFileSync(bakPath, 'utf8'));
-          // Restore backup as main file
-          fs.copyFileSync(bakPath, finalPath);
-          return session;
-        } catch { /* backup also corrupted */ }
-      }
-      return null;
-    }
+  if (!fs.existsSync(finalPath)) {
+    return { session: null, reason: 'absent' };
   }
-  return null;
+  try {
+    return { session: JSON.parse(fs.readFileSync(finalPath, 'utf8')), reason: 'ok' };
+  } catch (mainErr) {
+    // Main file corrupted — try backup
+    if (fs.existsSync(bakPath)) {
+      try {
+        const session = JSON.parse(fs.readFileSync(bakPath, 'utf8'));
+        // Restore backup as main file
+        fs.copyFileSync(bakPath, finalPath);
+        return { session, reason: 'ok' };
+      } catch (bakErr) {
+        return {
+          session: null,
+          reason: 'corrupted',
+          details: { path: finalPath, mainError: mainErr.message, bakPath, bakError: bakErr.message },
+        };
+      }
+    }
+    return {
+      session: null,
+      reason: 'corrupted',
+      details: { path: finalPath, mainError: mainErr.message, bakPath, bakError: 'backup absent' },
+    };
+  }
+}
+
+// Append a session-corruption event to the debug directory for post-mortem
+// diagnosis. Best-effort: if even the debug log can't be written, there is
+// nothing more we can do, so swallow that secondary failure.
+function logSessionCorruption(label, results, salvaged) {
+  try {
+    const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const logPath = path.join(debugDir, 'session-corruption.log');
+    const lines = results
+      .filter(r => r && r.reason === 'corrupted' && r.details)
+      .map(r =>
+        `    file:   ${r.details.path}\n` +
+        `      main error:  ${r.details.mainError}\n` +
+        `      backup:      ${r.details.bakPath}\n` +
+        `      backup error:${r.details.bakError}`
+      )
+      .join('\n');
+    const salvageLine = salvaged
+      ? `  salvaged ${salvaged.completedPassCount} completed pass(es) from checkpoint sidecar`
+      : `  no usable checkpoint sidecar found — session restarted from pass 0`;
+    fs.appendFileSync(
+      logPath,
+      `[${new Date().toISOString()}] Session corruption for "${label}":\n${lines}\n${salvageLine}\n`
+    );
+  } catch { /* debug logging is best-effort — never throw from here */ }
+}
+
+// Best-effort reconstruction of a resumable session from the .checkpoints/
+// sidecar when the primary session file is corrupted. The checkpoint writer
+// (writeCheckpoint) stores the full passResults array per project label, so we
+// scan the .checkpoints directory for any checkpoint file belonging to this
+// label, pick the freshest one that still has completed passes, and rebuild a
+// session object the resume path can drive. Returns the reconstructed session,
+// or null when no usable checkpoint exists.
+function salvageSessionFromCheckpoints(label) {
+  try {
+    const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+    const dir  = path.join(home, 'Ghost Architect Reports', '.checkpoints');
+    if (!fs.existsSync(dir)) return null;
+
+    const safe = (label || 'unnamed').replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+    const candidates = fs.readdirSync(dir).filter(f =>
+      f.endsWith('.checkpoint.json') && f.toLowerCase().startsWith(safe)
+    );
+    if (candidates.length === 0) return null;
+
+    let best = null;
+    for (const f of candidates) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!Array.isArray(data.passResults) || data.passResults.length === 0) continue;
+        if (!best || (data.timestamp || 0) > (best.timestamp || 0)) best = data;
+      } catch { /* skip an unreadable checkpoint — keep scanning the rest */ }
+    }
+    if (!best) return null;
+
+    // Rebuild a session shaped like the runner's own. We place every recovered
+    // pass into pendingPassResults (not mergedGroups): the checkpoint only
+    // stores a flat passResults array, so we can't reconstruct the original
+    // merged/pending split — but synthesis merges pendingPassResults anyway,
+    // so funneling everything there is lossless for the final report.
+    const completedPassCount = best.completedPass || best.passResults.length;
+    return {
+      projectLabel:       label,
+      startedAt:          best.timestamp ? new Date(best.timestamp).toISOString() : new Date().toISOString(),
+      totalFiles:         best.totalFiles || 0,
+      totalPassCount:     best.totalPasses || completedPassCount,
+      completedPassCount,
+      mergedGroups:       [],
+      pendingPassResults: best.passResults,
+      passSkeletons:      [],
+      salvagedFromCheckpoint: true,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function loadSession(label) {
   // Primary location first, then the OS-temp fallback that persistSession's
   // retry path writes to when the Reports volume can't be written.
-  return readSessionFile(sessionFilePath(label))
-      ?? readSessionFile(alternateSessionFilePath(label));
+  const primary = readSessionFile(sessionFilePath(label));
+  if (primary.session) return primary.session;
+
+  const alternate = readSessionFile(alternateSessionFilePath(label));
+  if (alternate.session) return alternate.session;
+
+  // Neither location yielded a session. If either file was corrupted (rather
+  // than simply absent), a real scan's resume state was just lost. Silently
+  // returning null here would make the runner restart from pass 0 with no
+  // explanation — burning hours of API quota the user already paid for. Warn
+  // loudly, log the event, and try to salvage partial progress from the
+  // checkpoint sidecar before giving up.
+  const corrupted = primary.reason === 'corrupted' || alternate.reason === 'corrupted';
+  if (!corrupted) return null;
+
+  const salvaged = salvageSessionFromCheckpoints(label);
+  logSessionCorruption(label, [primary, alternate], salvaged);
+
+  if (salvaged) {
+    process.stderr.write(chalk.yellow(
+      `\n  ⚠  Session checkpoint is corrupted, but ${salvaged.completedPassCount} completed pass(es) were\n` +
+      `     recovered from the checkpoint sidecar. Resuming from recovered state.\n`
+    ));
+    return salvaged;
+  }
+
+  process.stderr.write(chalk.red(
+    `\n  ⚠  Session checkpoint is corrupted — starting fresh. Prior progress was lost.\n` +
+    `     Details logged to ~/Ghost Architect Reports/.debug/session-corruption.log\n`
+  ));
+  return null;
 }
 
 // Append session-save failure details to the debug directory for post-mortem
