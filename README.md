@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v8.0.2** — Now includes Ghost Brief™: governed AI remediation pipeline.
+**v8.0.3** — Now includes Ghost Brief™: governed AI remediation pipeline with surgical, context-aware prompts.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
@@ -25,6 +25,12 @@ ghost
 That's it. On first run, Ghost walks you through a one-time setup wizard (API key, optional GitHub token, model preference, billing rates, context size). Your config is saved locally and every future run goes straight to the main menu.
 
 **Requirements:** Node.js 18 or higher, an Anthropic API key (pay-as-you-go, not the same as a Claude.ai subscription), and optionally a GitHub Personal Access Token for private repos.
+
+---
+
+## What's New in v8.0.3
+
+**Ghost Brief™ prompt quality overhaul.** Prompts now include full remediation context, fix steps, constraints, confidence score, and effort estimate extracted directly from scan findings. Validation hints are now finding-specific.
 
 ---
 
