@@ -21,14 +21,89 @@ function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-
 // Debug telemetry directory — written when verification falls through to
 // INSUFFICIENT for diagnosability. Files here are NEVER shown to the user;
 // they're for diagnosing why the verifier couldn't classify findings.
+//
+// PRIVACY NOTE: these debug logs may contain excerpts of the scanned code
+// (candidate descriptions, file paths, agent summaries, audit-trail inputs).
+// Even after sanitizeForDebugLog() redacts the common secret patterns below,
+// they can still hold proprietary source snippets and should be treated as
+// sensitive. Do not attach them to public issues, paste them into chat, or
+// share them outside the machine that ran the scan. They auto-expire after
+// DEBUG_LOG_TTL_DAYS (see pruneOldDebugLogs).
 const DEBUG_DIR = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+const DEBUG_LOG_TTL_DAYS = 7;
+
+// Redact common secret shapes from a single string before it lands on disk.
+// Best-effort defense in depth — not a guarantee. Ordered most-specific first
+// so known token formats are caught before the generic key=value sweep.
+function redactSecretsInString(str) {
+  let s = str;
+
+  // Provider / VCS / cloud token formats (whole token replaced).
+  s = s.replace(/\bsk-ant-[A-Za-z0-9_-]{10,}/g, '<redacted-key>');     // Anthropic
+  s = s.replace(/\bsk-[A-Za-z0-9]{20,}/g,        '<redacted-key>');     // OpenAI-style
+  s = s.replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, '<redacted-key>');     // GitHub PAT
+  s = s.replace(/\bAKIA[0-9A-Z]{16}\b/g,         '<redacted-key>');     // AWS access key
+  s = s.replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, '<redacted-key>');   // Slack
+  s = s.replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '<redacted-jwt>'); // JWT
+
+  // Connection strings: scheme://user:pass@host — drop the credentials.
+  s = s.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^:@\s/]+):([^@\s/]+)@/g, '$1<redacted>:<redacted>@');
+
+  // Generic secret assignments: password=…, api_key: "…", token => …
+  s = s.replace(
+    /\b(password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth|authorization|client[_-]?secret)(\s*["']?\s*[:=]+\s*["']?)([^\s"',;)}\]]+)/gi,
+    '$1$2<redacted>'
+  );
+
+  // Filesystem paths that leak a username.
+  s = s.replace(/(\/Users\/|\/home\/)([^/\s"':;,)}\]]+)/g, '$1<user>');         // macOS / Linux
+  s = s.replace(/([A-Za-z]:\\Users\\)([^\\/\s"':;,)}\]]+)/g, '$1<user>');        // Windows
+
+  return s;
+}
+
+// Recursively sanitize an arbitrary debug payload (objects, arrays, strings)
+// so secrets and usernames never reach disk. Non-string scalars pass through.
+// Exported for testing (see tests/verifier-debug-sanitize.smoke.mjs).
+export function sanitizeForDebugLog(value) {
+  if (typeof value === 'string') return redactSecretsInString(value);
+  if (Array.isArray(value))      return value.map(sanitizeForDebugLog);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = sanitizeForDebugLog(v);
+    return out;
+  }
+  return value;
+}
+
+// TTL policy: delete debug logs older than DEBUG_LOG_TTL_DAYS. Called once per
+// scan so the .debug/ directory never accumulates stale, sensitive payloads.
+// Exported so non-verifier scan paths (e.g. the narrator patcher) can enforce
+// the same TTL on patcher-only runs that never invoke the verifier.
+export function pruneOldDebugLogs() {
+  try {
+    if (!fs.existsSync(DEBUG_DIR)) return;
+    const cutoff = Date.now() - DEBUG_LOG_TTL_DAYS * 24 * 60 * 60 * 1000;
+    for (const entry of fs.readdirSync(DEBUG_DIR)) {
+      const file = path.join(DEBUG_DIR, entry);
+      try {
+        const stat = fs.statSync(file);
+        if (stat.isFile() && stat.mtimeMs < cutoff) fs.unlinkSync(file);
+      } catch {
+        // Skip files we can't stat/remove — never let cleanup fail the scan.
+      }
+    }
+  } catch {
+    // Never let TTL cleanup fail the verifier.
+  }
+}
 
 function writeVerifierDebugLog(name, payload) {
   try {
     if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
     const ts   = new Date().toISOString().replace(/[:.]/g, '-');
     const file = path.join(DEBUG_DIR, `conflict-verifier-${ts}-${name}.json`);
-    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
+    fs.writeFileSync(file, JSON.stringify(sanitizeForDebugLog(payload), null, 2), 'utf8');
     return file;
   } catch {
     return null;  // Never let debug logging fail the verifier.
@@ -227,6 +302,9 @@ Use your verification budget efficiently — you have a limited number of steps 
 export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode = 'full', tier = 'open') {
   const { onProgress, onUsage } = callbacks;
   const results = [];
+
+  // Expire stale debug logs once per scan before any new ones are written.
+  pruneOldDebugLogs();
 
   for (let i = 0; i < candidates.length; i++) {
     if (onProgress) onProgress({ current: i + 1, total: candidates.length });

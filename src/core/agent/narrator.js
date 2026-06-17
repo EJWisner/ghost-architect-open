@@ -28,6 +28,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { getConfig, resolveApiKey } from '../../config.js';
+import { sanitizeForDebugLog, pruneOldDebugLogs } from './verifier.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
@@ -1250,7 +1251,9 @@ function writePatcherDebugLog(plan, renderedTitles, missingByCategory, report) {
       (missingEntries.length ? missingEntries.join('\n') : '  (none — all findings rendered)') + '\n\n' +
       'REPORT LENGTH: ' + report.length + ' chars\n' +
       'REPORT HEAD (first 400 chars):\n' + report.slice(0, 400) + '\n';
-    fs.writeFileSync(logPath, content);
+    // Redact secrets/usernames (titles, headers, and the report head can carry
+    // user-supplied data) before anything lands on disk. See verifier.js.
+    fs.writeFileSync(logPath, sanitizeForDebugLog(content));
     // Stash the path so the append function can add to it.
     global.__ghostPatcherLogPath = logPath;
   } catch { /* non-fatal */ }
@@ -1260,7 +1263,7 @@ function writePatcherDebugLog_append(line) {
   try {
     const logPath = global.__ghostPatcherLogPath;
     if (!logPath) return;
-    fs.appendFileSync(logPath, '\n' + line);
+    fs.appendFileSync(logPath, '\n' + sanitizeForDebugLog(line));
   } catch { /* non-fatal */ }
 }
 
@@ -1436,6 +1439,10 @@ async function renderLegacySinglePass(memoryResult, context = {}, onChunk = () =
 // ── Public entry points ──────────────────────────────────────────────────────
 
 export async function narrateReport(memoryResult, context = {}, onChunk = () => {}) {
+  // Expire stale debug logs once per narration so patcher-only runs (modes
+  // that never invoke the conflict verifier) still enforce the 7-day TTL.
+  pruneOldDebugLogs();
+
   // Mode-aware planning. Both planners share the same return contract
   // (a plan object with categories, finding ids, totals; blast plans add
   // a rollback_plan field). The renderer is also mode-aware via
