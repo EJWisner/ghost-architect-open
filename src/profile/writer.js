@@ -66,6 +66,13 @@ export function profilePathFor(name) {
  *                                          file silently. When false and a
  *                                          file already exists, throws.
  * @returns {string}  Absolute path to the written file.
+ *
+ * Overwrite safety: when replacing an existing profile (overwrite=true), the
+ * original is first copied to `{slug}.yaml.bak`, and the new content is written
+ * to a temp file that is atomically renamed into place. If the write fails part
+ * way through, the original profile is recoverable from the `.bak` file. The
+ * backup is left in place after a successful write so a Partner can still revert
+ * a profile they did not mean to change.
  */
 export function writeProfile(profile, opts = {}) {
   if (!profile || typeof profile !== 'object') {
@@ -85,7 +92,27 @@ export function writeProfile(profile, opts = {}) {
   }
 
   fs.mkdirSync(PROFILES_DIR, { recursive: true });
-  fs.writeFileSync(targetPath, renderProfileYaml(profile), 'utf8');
+
+  const content = renderProfileYaml(profile);
+
+  // Back up the existing profile before we touch it, so a malformed write
+  // (or a profile the Partner did not mean to replace) is always recoverable.
+  if (fs.existsSync(targetPath)) {
+    fs.copyFileSync(targetPath, `${targetPath}.bak`);
+  }
+
+  // Write to a temp file first, then atomically rename into place. A crash or
+  // I/O error mid-write leaves the original (or its .bak) intact rather than a
+  // half-written target.
+  const tmpPath = `${targetPath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmpPath, content, 'utf8');
+    fs.renameSync(tmpPath, targetPath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
+    throw err;
+  }
+
   return targetPath;
 }
 
