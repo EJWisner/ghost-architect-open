@@ -5,6 +5,16 @@ import boxen from 'boxen';
 
 const config = new Configstore('ghost-architect');
 
+// Shared handler for an interrupted interactive setup (Ctrl+C, closed TTY,
+// inquirer error). Prints a friendly message and exits cleanly so a first-run
+// user never sees a raw stack trace. Exit code 0: an aborted setup is not a
+// failure, and any partial progress already persisted is preserved.
+function handleSetupInterrupt(err) {
+  console.log('\n' + chalk.yellow('Setup interrupted. No changes were lost.'));
+  console.log(chalk.gray('Run the command again to pick up where you left off.\n'));
+  process.exit(0);
+}
+
 export function getConfig() { return config; }
 
 export function resolveApiKey() {
@@ -73,6 +83,7 @@ export function isTeamConfigured() {
 }
 
 export async function runSetupWizard() {
+ try {
   console.log('\n' + boxen(
       chalk.cyan.bold('GHOST ARCHITECT - FIRST RUN SETUP') + '\n\n' +
       chalk.gray('Configure your environment.\n') +
@@ -146,6 +157,17 @@ export async function runSetupWizard() {
       message: chalk.cyan('Max file context size in tokens (50000 recommended):'),
       default: 50000,
     },
+  ]);
+
+  // Persist the core config (API key, GitHub token, model, context) before
+  // prompting for rates. If the rate prompts are interrupted, a retry resumes
+  // with these already saved instead of forcing full re-entry.
+  config.set('anthropicApiKey', answers.anthropicApiKey);
+  config.set('defaultModel', answers.defaultModel);
+  config.set('maxTokensContext', answers.maxTokensContext);
+  if (answers.githubToken) config.set('githubToken', answers.githubToken);
+
+  const rates = await inquirer.prompt([
     {
       type: 'number',
       name: 'rateJunior',
@@ -166,13 +188,9 @@ export async function runSetupWizard() {
     },
   ]);
 
-  config.set('anthropicApiKey', answers.anthropicApiKey);
-  config.set('defaultModel', answers.defaultModel);
-  config.set('maxTokensContext', answers.maxTokensContext);
-  config.set('rateJunior', answers.rateJunior || 85);
-  config.set('rateMid', answers.rateMid || 125);
-  config.set('rateSenior', answers.rateSenior || 200);
-  if (answers.githubToken) config.set('githubToken', answers.githubToken);
+  config.set('rateJunior', rates.rateJunior || 85);
+  config.set('rateMid', rates.rateMid || 125);
+  config.set('rateSenior', rates.rateSenior || 200);
 
   // Note: the inline "Set up Ghost Team shared sync repo?" prompt that lived
   // here in Team v6.0.1 was removed during v7 unification. The unified
@@ -183,14 +201,22 @@ export async function runSetupWizard() {
   // See TODO-architect-inline-teamsync-prompt-removed.md for rationale.
 
   console.log('\n' + chalk.green('Configuration saved.\n'));
+ } catch (err) {
+  handleSetupInterrupt(err);
+ }
 }
 
 export async function reconfigure() {
-  console.log(chalk.yellow('\nReconfiguring Ghost Architect...\n'));
-  await runSetupWizard();
+  try {
+    console.log(chalk.yellow('\nReconfiguring Ghost Architect...\n'));
+    await runSetupWizard();
+  } catch (err) {
+    handleSetupInterrupt(err);
+  }
 }
 
 export async function configureTeamSync() {
+ try {
   console.log('\n' + boxen(
       chalk.cyan.bold('GHOST TEAM SYNC SETUP') + '\n\n' +
       chalk.gray('Configure a shared GitHub repo for your team.\n') +
@@ -243,4 +269,7 @@ export async function configureTeamSync() {
   });
 
   console.log('\n' + chalk.green('Team sync configured: ' + answers.syncName.trim() + '\n'));
+ } catch (err) {
+  handleSetupInterrupt(err);
+ }
 }
