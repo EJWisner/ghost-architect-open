@@ -109,6 +109,77 @@ console.log('Test 5: known patterns take precedence over programmer-error check'
 }
 console.log('');
 
+// Test 6: isContextOverflow against real Anthropic 400 error patterns.
+// These strings mirror what @anthropic-ai/sdk surfaces for an oversized
+// prompt. Locking them in means a future API reword that breaks detection
+// fails this test loudly instead of silently degrading to "Something went
+// wrong" in production.
+console.log('Test 6: isContextOverflow matches real Anthropic 400 phrasings');
+{
+  const overflowCases = [
+    'prompt is too long: 250000 tokens > 200000 maximum',
+    'input length and `max_tokens` exceed context limit: 210000 + 8192 > 200000',
+    "This model's maximum context length is 200000 tokens.",
+    "This model's maximum context window is 200000 tokens.",
+    'too many tokens for this request',
+  ];
+  for (const message of overflowCases) {
+    check('overflow: ' + message.slice(0, 40), isContextOverflow({ status: 400, message }), true);
+  }
+}
+console.log('');
+
+// Test 7: fallback heuristic catches reworded 400s the explicit list misses.
+console.log('Test 7: fallback heuristic catches reworded token-limit 400s');
+{
+  // tokens + exceed, no exact known phrase
+  check('tokens+exceed reword', isContextOverflow({ status: 400, message: 'request would consume 210000 tokens which exceeds what this model accepts' }), true);
+  // tokens + limit, no exact known phrase
+  check('tokens+limit reword', isContextOverflow({ status: 400, message: 'too many input tokens for this model limit' }), true);
+}
+console.log('');
+
+// Test 8: false-positive guards — non-overflow errors must NOT be classified.
+console.log('Test 8: isContextOverflow rejects non-overflow errors');
+{
+  // Unrelated 400 (no token wording)
+  check('plain bad request 400', isContextOverflow({ status: 400, message: 'invalid model parameter' }), false);
+  // A 429 rate limit whose message contains both "tokens" and "limit"
+  check('rate-limit not overflow', isContextOverflow({ status: 429, message: 'rate_limit_error: tokens per minute limit reached' }), false);
+  // Non-400 status with token wording
+  check('500 not overflow', isContextOverflow({ status: 500, message: 'tokens exceed something' }), false);
+}
+console.log('');
+
+// Test 9: friendlyError logs unrecognized 400s to stderr so phrase-match
+// drift is detectable, while still returning the generic user-facing message.
+console.log('Test 9: friendlyError logs unrecognized 400s to stderr');
+{
+  const originalError = console.error;
+  let logged = '';
+  console.error = (m) => { logged += String(m); };
+  let msg;
+  try {
+    msg = friendlyError({ status: 400, message: 'some brand new 400 wording the API just invented' });
+  } finally {
+    console.error = originalError;
+  }
+  check('still returns generic message', msg, 'Something went wrong. Please try again.');
+  checkContains('stderr names unrecognized 400', logged, 'unrecognized 400');
+  checkContains('stderr includes the message', logged, 'brand new 400 wording');
+
+  // A recognized context-overflow 400 must NOT trip the stderr diagnostic.
+  let overflowLogged = '';
+  console.error = (m) => { overflowLogged += String(m); };
+  try {
+    friendlyError({ status: 400, message: 'prompt is too long: 250000 tokens > 200000 maximum' });
+  } finally {
+    console.error = originalError;
+  }
+  check('recognized overflow logs nothing', overflowLogged, '');
+}
+console.log('');
+
 if (failures > 0) {
   console.log('FAILED — ' + failures + ' assertion(s) did not pass');
   process.exit(1);

@@ -17,19 +17,45 @@ export function isOverload(err) {
 }
 
 // True when the prompt + max_tokens + overhead exceeds the model's context
-// window. Anthropic's API returns 400 with messages like 'prompt is too long'
-// or 'maximum context length' — we match the recognizable phrasings so the
-// user gets a useful instruction ("trim files") instead of "Something went
-// wrong. Please try again." which keeps them retrying a doomed request.
+// window. Anthropic's API returns 400 with these messages so the user gets a
+// useful instruction ("trim files") instead of "Something went wrong. Please
+// try again." which keeps them retrying a doomed request.
+//
+// KNOWN ANTHROPIC PHRASINGS (verified against @anthropic-ai/sdk 0.39.0, 2026).
+// These are NOT a contract — the API can reword them at any time. If a new
+// wording shows up, friendlyError() logs the unrecognized 400 to stderr (see
+// below) so we know to add it here:
+//   - "prompt is too long: N tokens > M maximum"
+//   - "input length and `max_tokens` exceed context limit: ..."
+//   - "...maximum context length..."
+//   - "...this model's maximum context window..."
+//   - "too many tokens"
 export function isContextOverflow(err) {
   const msg = (err.message || '').toLowerCase();
-  if (err.status !== 400 && err.status !== undefined) return false;
-  return msg.includes('prompt is too long') ||
-         msg.includes('maximum context') ||
-         msg.includes('context length') ||
-         msg.includes('context window') ||
-         msg.includes('too many tokens') ||
-         (msg.includes('tokens') && msg.includes('exceed'));
+  const status = err.status;
+  // Only 400s (or status-less errors, where message matching is all we have).
+  if (status !== 400 && status !== undefined) return false;
+
+  if (msg.includes('prompt is too long') ||
+      msg.includes('maximum context') ||
+      msg.includes('context length') ||
+      msg.includes('context window') ||
+      msg.includes('too many tokens') ||
+      msg.includes('exceed context limit')) {
+    return true;
+  }
+
+  // Fallback heuristic: a 400 that mentions tokens alongside an
+  // overflow-flavored word ("exceed"/"limit"). Catches reworded messages the
+  // explicit list above misses. Gated on a real 400 status so a 429 rate-limit
+  // message ("rate_limit ... tokens per minute") — which contains both
+  // "tokens" and "limit" — can't be misclassified as a context overflow.
+  if (status === 400 &&
+      msg.includes('tokens') &&
+      (msg.includes('exceed') || msg.includes('limit'))) {
+    return true;
+  }
+  return false;
 }
 
 export function friendlyError(err) {
@@ -70,6 +96,17 @@ export function friendlyError(err) {
   if (isProgrammerError(err)) {
     const errName = (err.constructor && err.constructor.name) || err.name || 'Error';
     return `Internal error: ${errName}: ${msg || '(no message)'}\n  This is a Ghost Architect bug, not a transient issue. Retrying will not help.\n  Please report at: https://github.com/EJWisner/ghost-architect-open/issues`;
+  }
+  // Reaching here with a 400 means the API considers this a client-side error
+  // we failed to classify. The most likely culprit is a context-overflow
+  // message whose wording drifted out from under isContextOverflow()'s known
+  // phrases (see that function's comment). Surface it on stderr so we notice
+  // the drift and update the phrase list — the user still gets the generic
+  // message below. Wrapped so diagnostics can never throw over the real error.
+  if (err && err.status === 400) {
+    try {
+      console.error(`[ghost] unrecognized 400 from API — context-overflow phrase matching may be stale; message: ${msg || '(no message)'}`);
+    } catch { /* never let diagnostics throw */ }
   }
   return 'Something went wrong. Please try again.';
 }
