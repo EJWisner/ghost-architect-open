@@ -19,6 +19,19 @@
 
 import { Octokit } from 'octokit';
 
+// Suppresses ONLY the @octokit/request endpoint-deprecation warning, emitted
+// at node_modules/@octokit/request/dist-src/fetch-wrapper.js:40-42 as:
+//   [@octokit/request] "<METHOD> <URL>" is deprecated. It is scheduled to be
+//   removed on <sunset>...
+// Every other warning (token-expiration notices, OAuth scope warnings, etc.)
+// passes through to console.warn so the user still sees actionable signals.
+function filterRequestWarn(message, ...args) {
+  if (typeof message === 'string' && message.includes('[@octokit/request]') && message.includes('is deprecated')) {
+    return;
+  }
+  console.warn(message, ...args);
+}
+
 export function createOctokit({ auth, ...extraConfig } = {}) {
   return new Octokit({
     auth,
@@ -27,7 +40,7 @@ export function createOctokit({ auth, ...extraConfig } = {}) {
       log: {
         debug: () => {},
         info:  () => {},
-        warn:  () => {},
+        warn:  filterRequestWarn,
         error: (message) => console.error(message),
       },
       ...(extraConfig.request || {}),
