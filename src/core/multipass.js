@@ -36,11 +36,26 @@ function sessionFilePath(label) {
   return path.join(SESSIONS_DIR, `ghost-session-${safe}.json`);
 }
 
-export function loadSession(label) {
-  const finalPath = sessionFilePath(label);
-  const bakPath   = finalPath + '.bak';
+// Fallback session location, used when the primary Reports volume is
+// unwritable (full disk, permission flip, transient mount loss). persistSession
+// writes here as a last resort and loadSession reads it back, so a scan that
+// could only checkpoint to the fallback is still resumable.
+const ALT_SESSIONS_DIR = path.join(os.tmpdir(), 'ghost-architect-sessions');
 
-  // Try main file first
+// Backoff between save retries, in seconds. Exponential-ish: a transient
+// filesystem hiccup (brief lock, momentary ENOSPC during another process's
+// flush) usually clears within a second or two.
+const SESSION_SAVE_BACKOFF_SEC = [0.1, 0.4, 1.2];
+
+function alternateSessionFilePath(label) {
+  const safe = (label || 'default').replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+  return path.join(ALT_SESSIONS_DIR, `ghost-session-${safe}.json`);
+}
+
+// Read one session file with .bak fallback. Returns the parsed session, or
+// null if the file is absent or both it and its backup are unreadable.
+function readSessionFile(finalPath) {
+  const bakPath = finalPath + '.bak';
   if (fs.existsSync(finalPath)) {
     try {
       return JSON.parse(fs.readFileSync(finalPath, 'utf8'));
@@ -60,21 +75,121 @@ export function loadSession(label) {
   return null;
 }
 
+export function loadSession(label) {
+  // Primary location first, then the OS-temp fallback that persistSession's
+  // retry path writes to when the Reports volume can't be written.
+  return readSessionFile(sessionFilePath(label))
+      ?? readSessionFile(alternateSessionFilePath(label));
+}
+
+// Append session-save failure details to the debug directory for post-mortem
+// diagnosis. Best-effort: if even the debug log can't be written, there is
+// nothing more we can do, so swallow that secondary failure.
+function logSessionSaveFailure(label, attempts) {
+  try {
+    const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const logPath = path.join(debugDir, 'session-save-errors.log');
+    const lines = attempts
+      .map((a, i) => `    attempt ${i + 1}: ${a.path} -> ${a.message}`)
+      .join('\n');
+    fs.appendFileSync(
+      logPath,
+      `[${new Date().toISOString()}] Session save FAILED for "${label}" after ${attempts.length} attempt(s):\n${lines}\n`
+    );
+  } catch { /* debug logging is best-effort — never throw from here */ }
+}
+
+// Write a single session file. When `atomic` is true (the default), write to a
+// .tmp sibling, back up any existing file to .bak, then rename into place so a
+// crash mid-write can never corrupt the live session. Throws on any failure.
+function writeSessionFile(targetPath, session, atomic = true) {
+  const payload = JSON.stringify(session, null, 2);
+  if (!atomic) {
+    fs.writeFileSync(targetPath, payload);
+    return;
+  }
+  const tmpPath = targetPath + '.tmp';
+  const bakPath = targetPath + '.bak';
+  try {
+    fs.writeFileSync(tmpPath, payload);
+    if (fs.existsSync(targetPath)) fs.copyFileSync(targetPath, bakPath);
+    fs.renameSync(tmpPath, targetPath);
+  } catch (err) {
+    if (fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } }
+    throw err;
+  }
+}
+
+/**
+ * Persist a session durably, or throw. This is the resilient path used by the
+ * long-running multi-pass runner, where a silently-dropped checkpoint turns a
+ * multi-hour scan into unresumable wasted API quota.
+ *
+ * Strategy, in order, with exponential backoff between attempts:
+ *   1. atomic write to the primary sessions dir
+ *   2. atomic write to the primary sessions dir (retry the transient hiccup)
+ *   3. atomic write to the OS-temp fallback dir (in case the Reports volume
+ *      itself is the problem)
+ *
+ * On total failure it logs every attempt's error to the debug directory and
+ * throws an Error tagged `code: 'SESSION_SAVE_FAILED'` so callers can decide
+ * whether to continue with a prominent warning or abort. Returns the path the
+ * session was written to on success.
+ *
+ * Note: the exported saveSession() below stays non-throwing (boolean) for
+ * backward compatibility with callers that invoke it synchronously without a
+ * try/catch (e.g. the conflict scanner); this throwing variant is what the
+ * multi-pass runner uses.
+ */
+export async function persistSession(label, session) {
+  ensureSessionsDir();
+  const primary   = sessionFilePath(label);
+  const alternate = alternateSessionFilePath(label);
+  const strategies = [
+    { path: primary,   atomic: true },
+    { path: primary,   atomic: true },
+    { path: alternate, atomic: true },
+  ];
+
+  const attempts = [];
+  for (let i = 0; i < strategies.length; i++) {
+    const { path: targetPath, atomic } = strategies[i];
+    try {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      writeSessionFile(targetPath, session, atomic);
+      if (targetPath === alternate) {
+        process.stdout.write(chalk.yellow(
+          `\n  ⚠  Saved resume checkpoint to fallback location: ${alternate}\n` +
+          `     (primary sessions directory was unwritable — resume will still find it)\n`
+        ));
+      }
+      return targetPath;
+    } catch (err) {
+      attempts.push({ path: targetPath, message: err.message });
+      const backoff = SESSION_SAVE_BACKOFF_SEC[i];
+      if (i < strategies.length - 1 && backoff) await sleep(backoff);
+    }
+  }
+
+  logSessionSaveFailure(label, attempts);
+  const failure = new Error(
+    `Could not persist session "${label}" after ${attempts.length} attempts: ` +
+    attempts.map(a => `${a.path} (${a.message})`).join('; ')
+  );
+  failure.code = 'SESSION_SAVE_FAILED';
+  failure.attempts = attempts;
+  throw failure;
+}
+
 export function saveSession(label, session) {
   ensureSessionsDir();
   const finalPath = sessionFilePath(label);
-  const tmpPath   = finalPath + '.tmp';
-  const bakPath   = finalPath + '.bak';
-
   try {
-    fs.writeFileSync(tmpPath, JSON.stringify(session, null, 2));
-    if (fs.existsSync(finalPath)) {
-      fs.copyFileSync(finalPath, bakPath);
-    }
-    fs.renameSync(tmpPath, finalPath);
+    writeSessionFile(finalPath, session, true);
     return true;
   } catch (err) {
-    if (fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } }
+    logSessionSaveFailure(label, [{ path: finalPath, message: err.message }]);
     // Finding 6: warn user that session save failed
     process.stdout.write(`\n  ⚠ Progress checkpoint failed to save — resume may not work (${err.message})\n`);
     return false;
@@ -957,6 +1072,12 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
 
   const endPass = Math.min(startFromPass + cap, allPasses.length);
 
+  // Track consecutive checkpoint-save failures. A single filesystem hiccup is
+  // survivable (the in-memory session still drives final synthesis), but if
+  // checkpoints keep failing the scan is unresumable, so continuing only burns
+  // API quota — abort instead.
+  let consecutiveSaveFailures = 0;
+
   // Run passes
   for (let p = startFromPass; p < endPass; p++) {
     const pass      = allPasses[p];
@@ -986,7 +1107,28 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
       onProgress({ type: 'mergeDone' });
     }
 
-    saveSession(projectLabel, session);
+    try {
+      await persistSession(projectLabel, session);
+      consecutiveSaveFailures = 0;
+    } catch (err) {
+      consecutiveSaveFailures++;
+      process.stdout.write(chalk.yellow(
+        `\n  ⚠  Progress checkpoint failed to save after retries (pass ${passNum}/${endPass}).\n` +
+        `     ${err.message}\n` +
+        `     Details logged to ~/Ghost Architect Reports/.debug/session-save-errors.log\n`
+      ));
+      onProgress({ type: 'saveFailed', passNum, message: err.message });
+      if (consecutiveSaveFailures >= 2) {
+        process.stdout.write(chalk.red(
+          `\n  ✗  Checkpoint persistence has failed ${consecutiveSaveFailures} times in a row.\n` +
+          `     Aborting to avoid spending more API quota on a scan that cannot be resumed.\n` +
+          `     Free disk space or fix permissions on ~/Ghost Architect Reports/sessions and re-run.\n`
+        ));
+        throw err;
+      }
+      // Single failure — continue; the in-memory session still drives final
+      // synthesis, and the next pass's save may succeed.
+    }
   }
 
   const allDone  = session.completedPassCount >= allPasses.length;
@@ -1016,7 +1158,19 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
     session.mergedGroups.push(merged);
     session.pendingPassResults = [];
-    saveSession(projectLabel, session);
+    try {
+      await persistSession(projectLabel, session);
+    } catch (err) {
+      // Non-fatal here: final synthesis runs next in this same process and
+      // produces the report, so a failed save only costs resumability if
+      // synthesis is later interrupted. Warn prominently and continue.
+      process.stdout.write(chalk.yellow(
+        `\n  ⚠  Final-merge checkpoint failed to save after retries — resume may not work if synthesis is interrupted.\n` +
+        `     ${err.message}\n` +
+        `     Details logged to ~/Ghost Architect Reports/.debug/session-save-errors.log\n`
+      ));
+      onProgress({ type: 'saveFailed', message: err.message });
+    }
   }
 
   // Final synthesis + narrator
