@@ -658,14 +658,41 @@ async function runOpenProfileFlow(profiles) {
   }]);
   if (slug === '__cancel__') return;
   const target = profiles.find(p => p.slug === slug);
-  const editor = process.env.VISUAL || process.env.EDITOR || (IS_WINDOWS ? 'notepad' : 'vi');
-  console.log(chalk.gray(`\nOpening ${target.path} in ${editor}...\n`));
+
+  // Resolve the requested editor from the environment, but never trust it
+  // verbatim: env vars can be set by any process that runs before Ghost, so a
+  // poisoned VISUAL/EDITOR would otherwise become arbitrary code execution.
+  // Strip any path components and validate against a whitelist of known editors.
+  const ALLOWED_EDITORS = new Set([
+    'vi', 'vim', 'nano', 'emacs', 'notepad', 'notepad++',
+    'code', 'subl', 'atom', 'gedit', 'kate',
+  ]);
+  const requested = process.env.VISUAL || process.env.EDITOR || (IS_WINDOWS ? 'notepad' : 'vi');
+  const editor = path.basename(requested.trim());
+  if (!ALLOWED_EDITORS.has(editor.toLowerCase().replace(/\.exe$/, ''))) {
+    console.log(chalk.red(`\nRefusing to launch unrecognized editor: ${requested}`));
+    console.log(chalk.gray(`Set VISUAL or EDITOR to one of: ${[...ALLOWED_EDITORS].join(', ')}`));
+    console.log(chalk.gray(`Or open the file manually: ${target.path}\n`));
+    return;
+  }
+
+  // Confirm the resolved profile path really lives inside the profiles
+  // directory before handing it to spawn, so a tampered profile entry cannot
+  // point the editor at an arbitrary file outside the profiles dir.
+  const profilesDir = path.resolve(getProfilesDir());
+  const resolvedTarget = path.resolve(target.path);
+  if (resolvedTarget !== profilesDir && !resolvedTarget.startsWith(profilesDir + path.sep)) {
+    console.log(chalk.red(`\nProfile path is outside the profiles directory; refusing to open: ${target.path}\n`));
+    return;
+  }
+
+  console.log(chalk.gray(`\nOpening ${resolvedTarget} in ${editor}...\n`));
   await new Promise((resolve) => {
-    const proc = spawn(editor, [target.path], { stdio: 'inherit' });
+    const proc = spawn(editor, [resolvedTarget], { stdio: 'inherit', shell: false });
     proc.on('exit', resolve);
     proc.on('error', (err) => {
       console.log(chalk.red(`\nCould not launch editor: ${err.message}`));
-      console.log(chalk.gray(`Open the file manually: ${target.path}\n`));
+      console.log(chalk.gray(`Open the file manually: ${resolvedTarget}\n`));
       resolve();
     });
   });
