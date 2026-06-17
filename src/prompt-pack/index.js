@@ -79,6 +79,36 @@ function maybeLogProgress(message) {
   }
 }
 
+// Sanitize a detector's crash message before it lands in a finding's
+// detail field. Findings flow into web portals and issue-tracker
+// exports (Jira), where a raw err.message could carry HTML or markup
+// that renders as live markup or injects content. We strip tags, escape
+// the HTML-significant characters, collapse whitespace, and truncate to
+// a fixed budget. The full unsanitized error is logged to stderr by the
+// caller for debugging; it never reaches the report.
+const ERROR_MESSAGE_MAX = 200;
+export function sanitizeErrorMessage(raw) {
+  let text = String(raw == null ? '' : raw);
+  // Drop anything that looks like an HTML/XML tag outright.
+  text = text.replace(/<[^>]*>/g, '');
+  // Collapse all whitespace (including newlines) to single spaces so a
+  // multi-line stack-ish message can't break report formatting.
+  text = text.replace(/\s+/g, ' ').trim();
+  // Truncate the plain text first, so the 200-char budget counts visible
+  // characters and escaping below can't split an entity (e.g. "&amp;").
+  if (text.length > ERROR_MESSAGE_MAX) {
+    text = text.slice(0, ERROR_MESSAGE_MAX) + '…';
+  }
+  // Escape the characters that are dangerous in HTML/attribute contexts.
+  text = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  return text;
+}
+
 const REGISTRY = [
   // Tier 1: no LLM judgment about prompt content. Includes pure-regex
   // detectors and token-counting detectors. May still require a target
@@ -180,6 +210,16 @@ export async function runAll(promptText, filePath, opts = {}) {
           + ' done (' + callMs + 'ms, ' + findCount + ' findings)');
       }
     } catch (err) {
+      // Log the FULL unsanitized error to stderr for debugging. This is
+      // the only place the raw message is allowed to surface. It must
+      // never be embedded in a finding, which can render in web portals
+      // or export to issue trackers (XSS / injection risk).
+      const rawMessage = err && err.message ? err.message : String(err);
+      process.stderr.write('[prompt-pack] detector "' + entry.id
+        + '" crashed: ' + rawMessage + '\n');
+      // Sanitized copy for the report: tags stripped, HTML-escaped,
+      // whitespace-collapsed, and truncated to a fixed character budget.
+      const safeMessage = sanitizeErrorMessage(rawMessage);
       allFindings.push({
         detector: entry.id + '/internal-error',
         severity: 'LOW',
@@ -187,7 +227,8 @@ export async function runAll(promptText, filePath, opts = {}) {
         file: filePath,
         location: null,
         detail: 'The ' + entry.id + ' detector threw an error and was skipped: '
-          + (err && err.message ? err.message : String(err)),
+          + safeMessage
+          + ' (error message sanitized; see stderr for the full unsanitized error).',
         remediation: 'Re-run the scan. If the error persists, the detector may have a bug.',
         confidence: 100,
       });
