@@ -1111,6 +1111,53 @@ export async function synthesizeFromSession(session, totalFiles, totalPasses, on
   });
 }
 
+// ── Pre-scan filesystem preflight ─────────────────────────────────────────────
+//
+// Checkpoint saves happen after every pass, but the user only discovers a
+// broken sessions directory (full disk, read-only mount, permission flip)
+// AFTER the first pass has already burned API quota. Probe the directory up
+// front by writing and deleting a tiny file, so we can warn before a single
+// token is spent. Returns { ok: true } on success, or { ok: false, error,
+// path } when the probe write fails. Never throws.
+function preflightSessionsWritable() {
+  const probePath = path.join(SESSIONS_DIR, `.ghost-write-probe-${process.pid}`);
+  try {
+    ensureSessionsDir();
+    fs.writeFileSync(probePath, 'ok');
+    fs.unlinkSync(probePath);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message, path: SESSIONS_DIR };
+  }
+}
+
+// Build the Error thrown when checkpoint persistence has failed badly enough
+// that the scan is no longer resumable. The message names the pass range that
+// can no longer be recovered and the approximate API cost already spent on it,
+// so the user understands exactly what aborting throws away. Cost uses the same
+// ~$0.25/pass figure the rest of this file estimates with (see getPassInfo).
+function makeUnresumableAbortError(cause, lastPersistedPass, currentPassNum) {
+  const firstLost  = lastPersistedPass + 1;
+  const lostCount  = Math.max(1, currentPassNum - lastPersistedPass);
+  const range      = lostCount === 1 ? `pass ${currentPassNum}` : `passes ${firstLost}–${currentPassNum}`;
+  const approxCost = (lostCount * 0.25).toFixed(2);
+
+  const err = new Error(
+    `Checkpoint persistence failed and the scan cannot be resumed. ` +
+    `Lost work: ${range} (~$${approxCost} in API usage). Original error: ${cause.message}`
+  );
+  err.code          = 'SESSION_SAVE_FAILED';
+  err.cause         = cause;
+  err.lostRange     = range;
+  err.approxCostUsd = approxCost;
+  err.userMessage =
+    `\n  ✗  Checkpoint persistence has failed and this scan cannot be resumed.\n` +
+    `     Aborting to avoid spending more API quota on unrecoverable work.\n` +
+    `     Lost: ${range} (~$${approxCost} in API usage already spent).\n` +
+    `     Free disk space or fix permissions on ${SESSIONS_DIR} and re-run.\n`;
+  return err;
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 /**
  * Run multi-pass POI scan.
@@ -1121,6 +1168,13 @@ export async function synthesizeFromSession(session, totalFiles, totalPasses, on
  *   onPassCapPrompt({ remaining, defaultCap }) → Promise<number>
  *   onSessionPrompt({ session, allPassCount }) → Promise<'continue'|'report'|'restart'>
  *   onCompletePrompt({ coverage, remaining }) → Promise<'report'|'save'>
+ *   onSaveFailurePrompt({ passNum, message, sessionsDir }) → Promise<'continue'|'abort'>
+ *     Called on the FIRST checkpoint-save failure so the user can make an
+ *     informed choice instead of the scan silently limping toward an abort two
+ *     passes later. 'continue' acknowledges the risk and suppresses the
+ *     consecutive-failure abort; 'abort' stops now. Optional: when not wired,
+ *     the legacy behavior applies (warn, continue, abort after 2 consecutive
+ *     failures).
  *
  * options:
  *   profile — Ghost Partner consultant profile object (or null). Injected into
@@ -1134,6 +1188,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     onPassCapPrompt  = async ({ defaultCap }) => defaultCap,
     onSessionPrompt  = async () => 'continue',
     onCompletePrompt = async () => 'report',
+    onSaveFailurePrompt = null,
   } = callbacks;
 
   const profile = options.profile || null;
@@ -1142,6 +1197,22 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
   const totalFiles = Object.keys(fileMap).length;
 
   if (allPasses.length === 1) return null;
+
+  // Preflight: confirm the sessions directory is writable BEFORE spending any
+  // API quota. Checkpoints save after each pass; a broken directory would
+  // otherwise only surface after pass 1 has already burned tokens. Warn now so
+  // the user can fix disk/permissions before a long, expensive scan.
+  const preflight = preflightSessionsWritable();
+  if (!preflight.ok) {
+    process.stdout.write(chalk.yellow(
+      `\n  ⚠  The sessions directory is not writable — resume checkpoints will fail:\n` +
+      `     ${preflight.path}\n` +
+      `     ${preflight.error}\n` +
+      `     The scan can still run, but it will NOT be resumable if interrupted.\n` +
+      `     Free disk space or fix permissions before starting a long scan.\n`
+    ));
+    onProgress({ type: 'preflightWarning', path: preflight.path, message: preflight.error });
+  }
 
   const topFiles = getTopFiles(fileMap, 5);
   onProgress({ type: 'topFiles', files: topFiles });
@@ -1206,6 +1277,17 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
   // API quota — abort instead.
   let consecutiveSaveFailures = 0;
 
+  // The newest pass number whose results are durably checkpointed on disk.
+  // Initialized to startFromPass: passes up to there came from a prior session
+  // that was already persisted. Used to report the lost (unresumable) pass
+  // range if we have to abort.
+  let lastPersistedPass = startFromPass;
+
+  // Set once the user explicitly accepts running without resume capability.
+  // While true, further save failures neither re-prompt nor trip the
+  // consecutive-failure abort — the user already acknowledged the risk.
+  let saveFailureAcknowledged = false;
+
   // Run passes
   for (let p = startFromPass; p < endPass; p++) {
     const pass      = allPasses[p];
@@ -1238,6 +1320,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     try {
       await persistSession(projectLabel, session);
       consecutiveSaveFailures = 0;
+      lastPersistedPass = passNum;
     } catch (err) {
       consecutiveSaveFailures++;
       process.stdout.write(chalk.yellow(
@@ -1246,16 +1329,37 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
         `     Details logged to ~/Ghost Architect Reports/.debug/session-save-errors.log\n`
       ));
       onProgress({ type: 'saveFailed', passNum, message: err.message });
-      if (consecutiveSaveFailures >= 2) {
-        process.stdout.write(chalk.red(
-          `\n  ✗  Checkpoint persistence has failed ${consecutiveSaveFailures} times in a row.\n` +
-          `     Aborting to avoid spending more API quota on a scan that cannot be resumed.\n` +
-          `     Free disk space or fix permissions on ~/Ghost Architect Reports/sessions and re-run.\n`
-        ));
-        throw err;
+
+      // First failure with an interactive host wired in: stop and let the user
+      // decide, rather than silently limping toward an abort two passes later.
+      // (Without a host wired in, onSaveFailurePrompt is null and we fall
+      // through to the legacy warn-and-continue / abort-on-second behavior.)
+      if (onSaveFailurePrompt && !saveFailureAcknowledged) {
+        let choice = 'abort';
+        try {
+          choice = await onSaveFailurePrompt({ passNum, message: err.message, sessionsDir: SESSIONS_DIR });
+        } catch { /* prompt itself failed — fall back to the safe choice (abort) */ }
+
+        if (choice === 'continue') {
+          // User accepted running without resume capability. Suppress the
+          // consecutive-failure abort so their acknowledgement holds for the
+          // rest of the scan.
+          saveFailureAcknowledged = true;
+        } else {
+          const abortErr = makeUnresumableAbortError(err, lastPersistedPass, passNum);
+          process.stdout.write(chalk.red(abortErr.userMessage));
+          throw abortErr;
+        }
       }
-      // Single failure — continue; the in-memory session still drives final
-      // synthesis, and the next pass's save may succeed.
+
+      // Legacy / unacknowledged path: a single failure is survivable (the
+      // in-memory session still drives final synthesis), but two in a row means
+      // the scan is unresumable and further passes only burn quota — abort.
+      if (!saveFailureAcknowledged && consecutiveSaveFailures >= 2) {
+        const abortErr = makeUnresumableAbortError(err, lastPersistedPass, passNum);
+        process.stdout.write(chalk.red(abortErr.userMessage));
+        throw abortErr;
+      }
     }
   }
 
