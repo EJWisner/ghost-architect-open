@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v8.1.0** — Ghost Brief™ dogfood complete. Zero critical findings remaining after two Claude Code passes.
+**v8.1.2** — Ghost Brief™ dogfood pass 4. Six security and reliability fixes.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
@@ -25,6 +25,12 @@ ghost
 That's it. On first run, Ghost walks you through a one-time setup wizard (API key, optional GitHub token, model preference, billing rates, context size). Your config is saved locally and every future run goes straight to the main menu.
 
 **Requirements:** Node.js 18 or higher, an Anthropic API key (pay-as-you-go, not the same as a Claude.ai subscription), and optionally a GitHub Personal Access Token for private repos.
+
+---
+
+## What's New in v8.1.2
+
+**Ghost Brief™ dogfood pass 4.** Six fixes: prompt injection via consultant profile fields (narrator.js), freemium quota bypass closed (tier-gates.js), seat registration verification race fixed (enterprise.js), silent Tier 2 detector failures now surface to stderr, GitHub Enterprise Server URL parsing fixed for team-sync, GitHub API rate limit retry with user-facing progress messages and continue/stop prompt.
 
 ---
 
