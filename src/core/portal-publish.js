@@ -76,11 +76,18 @@ async function upsertFile(octokit, owner, repo, filePath, content, message) {
   });
 }
 
+// Returns both the parsed JSON content and the blob sha. The sha is what
+// GitHub's contents API uses for conditional updates: pass it back on write
+// and GitHub rejects (409/422) if the file changed underneath us. Callers
+// that only want the content can read `.content`.
 async function getFileContent(octokit, owner, repo, filePath) {
   try {
     const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
-    return JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
-  } catch { return null; }
+    return {
+      content: JSON.parse(Buffer.from(data.content, 'base64').toString('utf8')),
+      sha:     data.sha,
+    };
+  } catch { return { content: null, sha: null }; }
 }
 
 // ── Findings sidecar ──────────────────────────────────────────────────────────
@@ -391,13 +398,23 @@ function buildManifestEntry({ mode, label, baseName, reportText, scanIso, findin
 
 // ── Manifest update ───────────────────────────────────────────────────────────
 //
-// Read the current manifest, add or replace the entry for this scan, recompute
-// mode summaries, and push the updated manifest back. Last-write-wins for
-// concurrent scans; this is fine because manual conflict resolution is rare
-// at this scale.
+// The manifest is a read-modify-write hotspot: every scan in a portfolio
+// rewrites the same manifest.json. In team environments concurrent pushes are
+// common (sprint reviews, incident response), and a naive last-write-wins
+// rewrite silently drops whichever entry landed first, breaking the portfolio
+// view. To prevent that we use GitHub's conditional update: read the manifest
+// WITH its blob sha, merge our entry, and write back passing that sha. If the
+// file changed underneath us GitHub rejects the write (409/422); we re-fetch,
+// re-apply our entry onto the now-current manifest, and retry. This preserves
+// every concurrently-pushed entry instead of clobbering them.
 
-async function updateManifest(octokit, owner, repo, newEntry) {
-  const existing = await getFileContent(octokit, owner, repo, 'manifest.json') || {
+const MANIFEST_RETRY_LIMIT = 3;
+
+// Pure merge step: take the existing manifest (or null) plus a new entry and
+// return the fully recomputed manifest object. Kept side-effect-free so the
+// retry loop can re-run it against freshly fetched content on each attempt.
+function mergeManifestEntry(existing, newEntry) {
+  const manifest = existing || {
     schema: 1,
     portal: getPortalConfig()?.slug || 'ejwisner',
     generatedAt: new Date().toISOString(),
@@ -407,21 +424,21 @@ async function updateManifest(octokit, owner, repo, newEntry) {
   };
 
   // Replace by id if present; otherwise prepend.
-  const idx = (existing.reports || []).findIndex(r => r.id === newEntry.id);
+  const idx = (manifest.reports || []).findIndex(r => r.id === newEntry.id);
   if (idx >= 0) {
-    existing.reports[idx] = newEntry;
+    manifest.reports[idx] = newEntry;
   } else {
-    existing.reports = [newEntry, ...(existing.reports || [])];
+    manifest.reports = [newEntry, ...(manifest.reports || [])];
   }
 
   // Sort: newest first by generatedIso.
-  existing.reports.sort((a, b) => new Date(b.generatedIso) - new Date(a.generatedIso));
+  manifest.reports.sort((a, b) => new Date(b.generatedIso) - new Date(a.generatedIso));
 
   // Recompute mode summary from the current reports list.
   const modeSummary = {};
   for (const [modeKey, info] of Object.entries(MODE_LABELS)) {
     if (modeKey === 'inheritance') continue;
-    const matching = existing.reports.filter(r => r.mode === modeKey);
+    const matching = manifest.reports.filter(r => r.mode === modeKey);
     modeSummary[modeKey] = {
       label:         info.label,
       order:         info.order,
@@ -430,16 +447,58 @@ async function updateManifest(octokit, owner, repo, newEntry) {
     };
   }
 
-  existing.generatedAt  = new Date().toISOString();
-  existing.totalReports = existing.reports.length;
-  existing.modeSummary  = modeSummary;
+  manifest.generatedAt  = new Date().toISOString();
+  manifest.totalReports = manifest.reports.length;
+  manifest.modeSummary  = modeSummary;
+  return manifest;
+}
 
-  await upsertFile(
-    octokit, owner, repo,
-    'manifest.json',
-    JSON.stringify(existing, null, 2),
-    `portal: update manifest (${newEntry.id})`,
-  );
+async function updateManifest(octokit, owner, repo, newEntry, { forcePush = false } = {}) {
+  // `forcePush` builds the merged manifest once from the first read and
+  // re-writes that same payload on each retry, intentionally overwriting any
+  // concurrent changes. Use only when overwriting is deliberate (e.g. resetting
+  // a manifest known to be stale). The default path re-merges on every retry so
+  // concurrent entries are preserved.
+  let forcedPayload = null;
+
+  for (let attempt = 0; attempt <= MANIFEST_RETRY_LIMIT; attempt++) {
+    const { content: existing, sha } = await getFileContent(octokit, owner, repo, 'manifest.json');
+
+    let payload;
+    if (forcePush) {
+      if (forcedPayload === null) forcedPayload = mergeManifestEntry(existing, newEntry);
+      payload = forcedPayload;
+    } else {
+      payload = mergeManifestEntry(existing, newEntry);
+    }
+
+    try {
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner, repo,
+        path: 'manifest.json',
+        message: `portal: update manifest (${newEntry.id})${forcePush ? ' [force]' : ''}`,
+        content: Buffer.from(JSON.stringify(payload, null, 2)).toString('base64'),
+        // Conditional update: GitHub rejects if the file changed since we read
+        // this sha. Omit only when the manifest does not exist yet.
+        ...(sha ? { sha } : {}),
+      });
+      return;
+    } catch (err) {
+      // 409 Conflict / 422 Unprocessable are GitHub's "sha is stale" responses.
+      // Anything else (auth, network, 404 on the repo) is not a concurrency
+      // problem and should surface immediately.
+      const isShaConflict = err?.status === 409 || err?.status === 422;
+      if (!isShaConflict || attempt === MANIFEST_RETRY_LIMIT) throw err;
+
+      // In force mode we keep the same payload and just grab a fresh sha to
+      // overwrite with; in the default path the next iteration re-merges.
+      console.warn(
+        `⚠ portal: manifest changed during push (concurrent push detected). ` +
+        `Re-fetching${forcePush ? '' : ' and re-merging'} and retrying ` +
+        `(attempt ${attempt + 1}/${MANIFEST_RETRY_LIMIT})...`,
+      );
+    }
+  }
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -462,11 +521,14 @@ async function updateManifest(octokit, owner, repo, newEntry) {
  * @param {string} args.findingsJsonPath  absolute path to findings.json sidecar
  * @param {string} args.reportText raw report content (used for manifest entry)
  * @param {string} args.scanIso    ISO timestamp of the scan
+ * @param {boolean} args.forcePush  overwrite the manifest instead of merging
+ *                                   concurrent entries (wire from --force-push)
  */
 export async function publishToPortal({
   baseName, mode, label,
   txtPath, mdPath, pdfPath, findingsJsonPath,
   reportText, scanIso = new Date().toISOString(),
+  forcePush = false,
 }) {
   if (!isPortalConfigured()) return { ok: false, reason: 'not_configured' };
 
@@ -530,7 +592,7 @@ export async function publishToPortal({
   const entry = buildManifestEntry({
     mode, label, baseName, reportText, scanIso, findingsSidecar,
   });
-  await updateManifest(octokit, owner, repo, entry);
+  await updateManifest(octokit, owner, repo, entry, { forcePush });
 
   return { ok: true, baseName, entry };
 }
@@ -616,9 +678,12 @@ export async function publishBriefToPortal(briefJsonPath) {
  * @param {string} args.dashboardJsonPath  absolute path to dashboard.json sidecar
  * @param {object} args.dashboardSidecar   in-memory copy of dashboard.json (for manifest counts)
  * @param {string} args.scanIso            ISO timestamp of the regeneration
+ * @param {boolean} args.forcePush         overwrite the manifest instead of merging
+ *                                          concurrent entries (wire from --force-push)
  */
 export async function publishDashboardToPortal({
   txtPath, mdPath, pdfPath, dashboardJsonPath, dashboardSidecar, scanIso,
+  forcePush = false,
 }) {
   if (!isPortalConfigured()) return { ok: false, reason: 'not_configured' };
 
@@ -715,7 +780,7 @@ export async function publishDashboardToPortal({
     },
   };
 
-  await updateManifest(octokit, owner, repo, entry);
+  await updateManifest(octokit, owner, repo, entry, { forcePush });
 
   return { ok: true, baseName, entry };
 }
