@@ -334,6 +334,30 @@ export async function removeSeat(targetSeatId, workspace) {
 
 // ── Audit log ─────────────────────────────────────────────────────────────────
 
+// Intentional fail-safe design: audit logging must NEVER break a scan.
+// appendAuditEvent() swallows all exceptions so that a sync-repo outage,
+// auth lapse, or rate-limit can't crash the user's run. The trade-off is
+// that a swallowed failure leaves a gap in the compliance audit trail with
+// no signal to the admin. To keep that gap observable without changing the
+// fail-safe contract:
+//   - When GHOST_DEBUG=1 is set, each failure writes a single-line warning
+//     to stderr so developers and smoke tests can see what went wrong.
+//   - A consecutive-failure counter (reset on every successful write) emits
+//     an unconditional stderr warning once 3 writes in a row have failed —
+//     enough to flag a sustained outage (expired token, deleted repo) that
+//     is silently dropping audit events, while staying quiet on transient
+//     one-off blips. The scan itself still succeeds in every case.
+let consecutiveAuditFailures = 0;
+
+function logAuditFailure(stage, err) {
+  if (process.env.GHOST_DEBUG === '1') {
+    process.stderr.write(
+      'Ghost audit log failure [' + stage + ']: '
+      + (err?.message || String(err)) + '\n'
+    );
+  }
+}
+
 /**
  * Append an audit event.
  * Called automatically after every scan push.
@@ -355,16 +379,35 @@ export async function appendAuditEvent(event, workspace) {
     const trimmed = events.slice(-1000);
     await upsertFile(octokit, owner, repo, 'org/audit.json', { events: trimmed }, 'enterprise: audit log');
 
+    // Audit event landed — reset the consecutive-failure streak.
+    consecutiveAuditFailures = 0;
+
     // Heartbeat — bump this seat's lastSeen on every audit event so the
     // Seat Management view reflects real activity rather than the original
     // registration timestamp. registerSeat() handles the existing-seat
     // update path internally (updates lastSeen if already registered, adds
     // as member otherwise). Failure is non-fatal — the audit event itself
-    // already landed.
+    // already landed, so this does NOT count toward the audit-failure
+    // streak; we only surface it under GHOST_DEBUG.
     try {
       await registerSeat(workspace);
-    } catch { /* Heartbeat is non-fatal */ }
-  } catch { /* Audit failure is non-fatal */ }
+    } catch (err) {
+      logAuditFailure('heartbeat', err);
+    }
+  } catch (err) {
+    // Audit failure is non-fatal — never break the scan. Surface it under
+    // GHOST_DEBUG, and warn unconditionally once a sustained outage has
+    // dropped 3 audit events in a row (see fail-safe note above).
+    logAuditFailure('audit-write', err);
+    consecutiveAuditFailures += 1;
+    if (consecutiveAuditFailures >= 3) {
+      process.stderr.write(
+        'Ghost: ' + consecutiveAuditFailures + ' consecutive audit-log '
+        + 'writes have failed. The compliance audit trail may be '
+        + 'incomplete. Set GHOST_DEBUG=1 for details.\n'
+      );
+    }
+  }
 }
 
 /**
