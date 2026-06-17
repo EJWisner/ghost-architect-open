@@ -60,6 +60,13 @@ checkParse('enterprise https', 'https://github.company.com/acme/team-sync', 'acm
 checkParse('enterprise https with .git', 'https://github.company.com/acme/team-sync.git', 'acme', 'team-sync');
 checkParse('enterprise deep subdomain', 'https://git.internal.corp.example/platform/reports', 'platform', 'reports');
 
+console.log('\nTest 2b: subpath-hosted Enterprise Server URLs parse');
+checkParse('https subpath', 'https://company.com/github/acme/team-sync', 'acme', 'team-sync');
+checkParse('https subpath with .git', 'https://company.com/github/acme/team-sync.git', 'acme', 'team-sync');
+checkParse('https deep subpath', 'https://company.com/scm/git/acme/team-sync', 'acme', 'team-sync');
+checkParse('https subpath trailing slash', 'https://company.com/github/acme/team-sync/', 'acme', 'team-sync');
+checkParse('ssh subpath', 'git@company.com:github/acme/team-sync', 'acme', 'team-sync');
+
 console.log('\nTest 3: SSH URLs parse');
 checkParse('ssh github.com', 'git@github.com:EJWisner/ghost-reports.git', 'EJWisner', 'ghost-reports');
 checkParse('ssh enterprise', 'git@github.company.com:acme/team-sync', 'acme', 'team-sync');
