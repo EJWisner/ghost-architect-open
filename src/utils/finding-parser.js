@@ -8,15 +8,21 @@
 
 // ── Shared regex patterns ─────────────────────────────────────────────────────
 //
-// These regexes assume the input line has been pre-stripped of `**` markdown
-// bold markers via stripBoldMarkdown(). Pre-stripping is critical because the
+// These regexes assume the field-LABEL portion of the input line (everything
+// before the first colon) has been pre-stripped of `**` markdown bold markers
+// via stripBoldFromLabel(). Pre-stripping the label is critical because the
 // model produces variants like `**Field:** value`, `**Field**: value`, and
 // `**Field:** **value**` — trying to encode all those positions inline with
 // optional asterisks is fragile (see git history for the bugs that caused).
 //
-// Pre-stripping reduces every variant to the canonical `Field: value` form,
-// and these regexes match only that form. FILES_RE is anchored with `^` so
-// body text containing the word "files" cannot hijack the file list.
+// Label-only stripping reduces every variant to the canonical `Field: value`
+// form for matching, while leaving the value (and detail body text) untouched
+// so that bold markers in code examples and remediation text are preserved in
+// the parsed output. The value-side bold that these regexes do encounter (e.g.
+// `**HIGH**`, `**3-5 hours**`) is absorbed by the existing `[^A-Za-z]*` /
+// `[^\d]*` lead-ins; FILES_RE's value is stripped of stray asterisks during
+// the file-list split. FILES_RE is anchored with `^` so body text containing
+// the word "files" cannot hijack the file list.
 
 export const FINDING_RE  = /^###\s+(?:\d+\.\s+)?(.+?)$/;
 export const SEVERITY_RE = /^[Ss]everity\s*:[^A-Za-z]*(CRITICAL|HIGH|MEDIUM|LOW)/;
@@ -44,6 +50,26 @@ export const EFFORT_INLINE_RE = /[Ee]ffort\s*:[^\d]*([\d.]+(?:[\u2013\-][\d.]+)?
  */
 export function stripBoldMarkdown(line) {
   return line.replace(/\*+/g, '');
+}
+
+/**
+ * Strip bold/italic markers from a line's field-LABEL only.
+ *
+ * Splits at the first colon: the label (before the colon) is reduced to its
+ * canonical un-bolded form so the field regexes can match `Field: value`,
+ * while the value (the colon and everything after it) is returned verbatim.
+ * This preserves bold markers inside field values and detail body text — code
+ * examples and remediation text keep their `**...**` emphasis intact rather
+ * than being silently flattened before they reach the JSON sidecar.
+ *
+ * Lines with no colon (section headers, prose, separators) have no field label
+ * to isolate, so they fall back to a full strip — clean titles, no behavior
+ * change from the previous whole-line approach.
+ */
+export function stripBoldFromLabel(line) {
+  const colonIdx = line.indexOf(':');
+  if (colonIdx === -1) return stripBoldMarkdown(line);
+  return stripBoldMarkdown(line.slice(0, colonIdx)) + line.slice(colonIdx);
 }
 
 // ── Deterministic finding ID ──────────────────────────────────────────────────
@@ -128,9 +154,10 @@ export function extractFindings(reportText, opts = {}) {
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
     const tRaw = line.trim();
-    // Pre-strip markdown bold so regex patterns can be simple. See header
-    // comments above the regex patterns for why.
-    const t = stripBoldMarkdown(tRaw);
+    // Pre-strip markdown bold from the field LABEL only so the regex patterns
+    // can be simple, while leaving values and detail body text untouched. See
+    // header comments above the regex patterns for why.
+    const t = stripBoldFromLabel(tRaw);
 
     // Code block detection uses the raw line (`***` is not a code fence).
     if (tRaw.startsWith('```')) {
@@ -264,7 +291,7 @@ export function extractFindings(reportText, opts = {}) {
         // entry and ship downstream to portal/mobile/Jira export. See
         // TODO-architect-extractfindings-severity-detection-v7.md.
         current.files = fim[1].split(/[,;]/)
-          .map(f => f.trim().replace(/`/g, '').replace(/^\(|\)$/g, '').trim())
+          .map(f => f.trim().replace(/`/g, '').replace(/\*+/g, '').replace(/^\(|\)$/g, '').trim())
           .filter(Boolean)
           .filter(f => !/^(none|n\/a|not\s+(specified|applicable))/i.test(f));
         continue;
@@ -293,7 +320,9 @@ export function extractFindings(reportText, opts = {}) {
       }
 
       if (t && t.length > 10 && !t.startsWith('---') && !t.startsWith('===') && !tRaw.startsWith('```') && !t.startsWith('|')) {
-        current.detail += (current.detail ? ' ' : '') + t;
+        // Append the raw line so bold markers in detail body text (code
+        // examples, remediation steps) are preserved in the parsed finding.
+        current.detail += (current.detail ? ' ' : '') + tRaw;
       }
     }
   }

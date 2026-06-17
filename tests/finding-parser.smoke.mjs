@@ -298,6 +298,39 @@ Edge case where filename and severity are both bolded.
 }
 console.log('');
 
+// Test 9: detail body text preserves bold markers (label-only stripping)
+console.log('Test 9: detail text preserves bold markers');
+{
+  // The label of each field line gets its bold stripped so the regexes match,
+  // but the surrounding detail/code-example text must keep its `**...**`
+  // emphasis intact so that what lands in findings.json (and downstream in
+  // portal/PDF/Jira) matches what the model actually wrote.
+  const text = `## \u{1F534} Critical
+
+### Misleading Code Example
+
+**Severity:** HIGH
+**Files:** \`src/pricing.js\`
+**Effort:** 1-2 hours
+
+The call to **calculateTax()** must pass the **net** amount, not the **gross**.
+Replace \`tax = price\` with the corrected **base** computation.
+`;
+  const findings = extractFindings(text);
+  check('finding extracted', findings.length, 1);
+  check('detail keeps **calculateTax()** bold',
+    findings[0]?.detail.includes('**calculateTax()**'), true);
+  check('detail keeps **net** bold',
+    findings[0]?.detail.includes('**net**'), true);
+  check('detail retains asterisks (JSON sidecar fidelity)',
+    /\*\*/.test(findings[0]?.detail), true);
+  // Field-level extraction must still be correct despite label bold.
+  check('severity still parsed', findings[0]?.severity, 'HIGH');
+  check('files still parsed',    findings[0]?.files,    ['src/pricing.js']);
+  check('effort still parsed',   findings[0]?.effortHours, 2);
+}
+console.log('');
+
 // Summary
 if (failures > 0) {
   console.log('FAILED — ' + failures + ' assertion(s) did not pass');
