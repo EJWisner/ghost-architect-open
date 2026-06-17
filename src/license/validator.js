@@ -107,9 +107,24 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   }
   const nowMs = clockResult.nowMs;
 
-  // (5) Persist updated last_seen_utc — monotonic ratchet
+  // (5) Persist updated last_seen_utc — monotonic ratchet.
+  //
+  // A failure here (disk full, read-only filesystem, EACCES) must NOT abort
+  // validation or be mistaken for tampering. The ratchet write is best-effort
+  // bookkeeping: skipping it only means the next run reads a slightly older
+  // last_seen_utc, which is harmless because a stale value is never NEWER than
+  // "now" and so can never trip the rollback check. Letting the write throw,
+  // by contrast, would propagate up and lock the user out of every gated mode
+  // with a confusing error after a single transient disk hiccup. Log to stderr
+  // and continue with the valid state already computed above.
   if (clockResult.newLastSeenMs) {
-    updateLastSeenUtc(isoNoMicro(clockResult.newLastSeenMs));
+    try {
+      updateLastSeenUtc(isoNoMicro(clockResult.newLastSeenMs));
+    } catch (e) {
+      process.stderr.write(
+        `ghost: warning: could not persist license last-seen timestamp (${e.message}). Continuing.\n`
+      );
+    }
   }
 
   // (6) Time-based state transition
