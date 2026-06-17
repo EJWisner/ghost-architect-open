@@ -11,6 +11,7 @@ import { isTeamConfigured } from './config.js';
 import { pushReport } from './core/team-sync.js';
 import { appendAuditEvent } from './core/enterprise.js';
 import { isPublishConfigured, publishProject } from './core/mobile-publish.js';
+import { sanitizeForDebugLog } from './core/agent/verifier.js';
 import { incrementScanCount } from './freemium.js';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
@@ -48,6 +49,29 @@ export function ensureReportsDir() {
 // a timestamp. The D4 architectural decision (Phase 2: gate at mode-file
 // level, not in saveReport) remains intact. Phase 3 owns defense-in-depth
 // gating per TODO-architect-savereport-defense-in-depth-tier-gating-phase3.md.
+
+// Append a paid-tier integration failure (team-sync, mobile-publish,
+// portal-publish) to the debug directory for post-mortem diagnosis. These
+// pushes race against a timeout and the loser's rejection used to be swallowed
+// in a bare catch — the user saw "Report saved" while the sync never happened.
+// The error is sanitized first so tokens, connection strings, and usernames
+// never reach disk (GB-007). Best-effort: if even the debug log can't be
+// written, there is nothing more we can do, so swallow that secondary failure.
+function logIntegrationFailure(integration, timeoutSeconds, err) {
+  try {
+    const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const logPath = path.join(debugDir, 'integration-failures.log');
+    const message = sanitizeForDebugLog(err && err.message ? err.message : String(err));
+    const stack = err && err.stack ? sanitizeForDebugLog(err.stack) : null;
+    fs.appendFileSync(
+      logPath,
+      `[${new Date().toISOString()}] ${integration} FAILED (timeout ${timeoutSeconds}s): ${message}\n` +
+      (stack ? `${stack}\n` : '')
+    );
+  } catch { /* debug logging is best-effort — never throw from here */ }
+}
+
 export async function saveReport(content, prefix, label, meta = {}) {
   const dir = ensureReportsDir();
 
@@ -204,6 +228,8 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // with first Enterprise customer). Both calls fail silently.
   if (label && isTeamConfigured()) {
     const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+    const SYNC_TIMEOUT_S = 60;
+    let syncFailed = false;
     try {
       const pushJobs = [
         pushReport(projectSlug, txtPath),
@@ -215,7 +241,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
       // to skip and let the user move on than to block forever on a
       // network/GitHub issue.
       const syncTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('team-sync push timeout after 60s')), 60000)
+        setTimeout(() => reject(new Error(`team-sync push timeout after ${SYNC_TIMEOUT_S}s`)), SYNC_TIMEOUT_S * 1000)
       );
       await Promise.race([Promise.all(pushJobs), syncTimeout]);
       await Promise.race([
@@ -228,8 +254,19 @@ export async function saveReport(content, prefix, label, meta = {}) {
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('audit log timeout after 30s')), 30000)),
       ]);
-    } catch {
-      // Sync failure is non-fatal
+    } catch (err) {
+      // Sync failure is non-fatal to the local save, but it must not be
+      // silent: the report is on disk yet other seats will never see it.
+      syncFailed = true;
+      logIntegrationFailure('team-sync', SYNC_TIMEOUT_S, err);
+    }
+    if (syncFailed) {
+      console.log(chalk.yellow(
+        `  ⚠  Team sync did not complete (timed out after ${SYNC_TIMEOUT_S}s or the push failed).\n` +
+        `     Your report is saved locally, but other seats won't see this scan yet.\n` +
+        `     Re-run the scan or check your GitHub token. Details logged to\n` +
+        `     ~/Ghost Architect Reports/.debug/integration-failures.log\n`
+      ));
     }
   }
 
@@ -237,6 +274,8 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // Build a structured JSON payload with current scan + baseline + history
   // and push to the ghost-reports GitHub repo. Mobile app reads from there.
   if (label && isPublishConfigured()) {
+    const PUBLISH_TIMEOUT_S = 90;
+    let mobileFailed = false;
     try {
       const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
 
@@ -285,11 +324,22 @@ export async function saveReport(content, prefix, label, meta = {}) {
       // than team-sync (loads + posts a richer payload), so allow more
       // time, but still bounded so the save doesn't hang the CLI forever.
       const publishTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('mobile-publish timeout after 90s')), 90000)
+        setTimeout(() => reject(new Error(`mobile-publish timeout after ${PUBLISH_TIMEOUT_S}s`)), PUBLISH_TIMEOUT_S * 1000)
       );
       await Promise.race([publishProject(projectMeta, scanRecord), publishTimeout]);
-    } catch {
-      // Publish failure is non-fatal
+    } catch (err) {
+      // Publish failure is non-fatal to the local save, but it must not be
+      // silent: the scan won't appear in Ghost Mobile until it's re-published.
+      mobileFailed = true;
+      logIntegrationFailure('mobile-publish', PUBLISH_TIMEOUT_S, err);
+    }
+    if (mobileFailed) {
+      console.log(chalk.yellow(
+        `  ⚠  Mobile publish did not complete (timed out after ${PUBLISH_TIMEOUT_S}s or the push failed).\n` +
+        `     Your report is saved locally, but this scan won't appear in Ghost Mobile yet.\n` +
+        `     Re-run the scan or check your GitHub token. Details logged to\n` +
+        `     ~/Ghost Architect Reports/.debug/integration-failures.log\n`
+      ));
     }
   }
 
@@ -307,9 +357,11 @@ export async function saveReport(content, prefix, label, meta = {}) {
   // (paid-tier integrations); portal is broadly available so should reach
   // every scan including Open tier where labels are never prompted.
   if (isPortalConfigured()) {
+    const PORTAL_TIMEOUT_S = 120;
+    let portalFailed = false;
     try {
       const portalTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('portal-publish timeout after 120s')), 120000)
+        setTimeout(() => reject(new Error(`portal-publish timeout after ${PORTAL_TIMEOUT_S}s`)), PORTAL_TIMEOUT_S * 1000)
       );
       await Promise.race([
         publishToPortal({
@@ -325,8 +377,19 @@ export async function saveReport(content, prefix, label, meta = {}) {
         }),
         portalTimeout,
       ]);
-    } catch {
-      // Portal failure is non-fatal — local save and other pushes succeeded.
+    } catch (err) {
+      // Portal failure is non-fatal to the local save, but it must not be
+      // silent: the scan won't appear on the web portal until it's re-published.
+      portalFailed = true;
+      logIntegrationFailure('portal-publish', PORTAL_TIMEOUT_S, err);
+    }
+    if (portalFailed) {
+      console.log(chalk.yellow(
+        `  ⚠  Portal publish did not complete (timed out after ${PORTAL_TIMEOUT_S}s or the push failed).\n` +
+        `     Your report is saved locally, but this scan won't appear on the portal yet.\n` +
+        `     Re-run the scan or check your GitHub token. Details logged to\n` +
+        `     ~/Ghost Architect Reports/.debug/integration-failures.log\n`
+      ));
     }
   }
 
