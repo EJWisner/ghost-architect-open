@@ -58,6 +58,20 @@ async function getFileContent(octokit, owner, repo, filePath) {
   } catch { return null; }
 }
 
+// Fetch parsed content and its SHA together in a single request. The SHA is
+// required for a compare-and-swap write: it must correspond to the exact
+// content we read, which a separate getFileContent + getFileSha pair cannot
+// guarantee. Returns { content: null, sha: null } when the file is absent.
+async function getFileWithSha(octokit, owner, repo, filePath) {
+  try {
+    const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
+    return {
+      content: JSON.parse(Buffer.from(data.content, 'base64').toString('utf8')),
+      sha: data.sha,
+    };
+  } catch { return { content: null, sha: null }; }
+}
+
 // ── Seat identity ─────────────────────────────────────────────────────────────
 
 function getSeatId() {
@@ -182,31 +196,71 @@ export async function getSeats(workspace) {
 
 /**
  * Register this machine as a seat.
- * First seat to register becomes admin.
+ *
+ * ADMIN SEMANTICS: the first seat to successfully WRITE seats.json becomes
+ * admin — it is the writer that observes an empty seat list, not merely the
+ * first to start. Concurrent first-time inits race on this write: two machines
+ * fetch the same empty state, both try to write, and GitHub rejects the loser
+ * with a 409 SHA mismatch. The loser refetches, sees the winner already present,
+ * and registers itself as a member. In the rare case a stale read produces two
+ * admins, resolve it manually with `ghost enterprise promote`.
+ *
+ * The write uses a compare-and-swap retry loop (fetch SHA, attempt write, on
+ * 409 refetch and retry up to 3 times) and verifies afterward that this seat
+ * actually landed in seats.json — guarding against a lost update silently
+ * clobbering our registration.
  */
 export async function registerSeat(workspace) {
   const entry = resolveSyncEntry(workspace);
   if (!entry) throw new Error('No team sync configured.');
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-
-  const existing = await getFileContent(octokit, owner, repo, 'org/seats.json');
-  const seats = existing?.seats || [];
   const seatId = getSeatId();
-  const now = new Date().toISOString();
 
-  const existingSeat = seats.find(s => s.seatId === seatId);
-  if (existingSeat) {
-    // Update lastSeen
-    existingSeat.lastSeen = now;
-  } else {
-    // First seat becomes admin
-    const role = seats.length === 0 ? 'admin' : 'member';
-    seats.push({ seatId, role, registeredAt: now, lastSeen: now });
+  const MAX_ATTEMPTS = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Read content and SHA together so the CAS write targets the exact
+    // revision we based our seat list on.
+    const { content: existing, sha } = await getFileWithSha(octokit, owner, repo, 'org/seats.json');
+    const seats = existing?.seats || [];
+    const now = new Date().toISOString();
+
+    const existingSeat = seats.find(s => s.seatId === seatId);
+    if (existingSeat) {
+      // Update lastSeen
+      existingSeat.lastSeen = now;
+    } else {
+      // First writer of an empty list becomes admin
+      const role = seats.length === 0 ? 'admin' : 'member';
+      seats.push({ seatId, role, registeredAt: now, lastSeen: now });
+    }
+
+    try {
+      const encoded = Buffer.from(JSON.stringify({ seats }, null, 2)).toString('base64');
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner, repo, path: 'org/seats.json', message: 'enterprise: register seat',
+        content: encoded, ...(sha ? { sha } : {}),
+      });
+    } catch (err) {
+      lastErr = err;
+      // 409 = SHA mismatch: another machine wrote first. Refetch and retry.
+      if (err.status === 409 && attempt < MAX_ATTEMPTS) continue;
+      throw err;
+    }
+
+    // Verify the write persisted: refetch and confirm this seat is present.
+    // A concurrent write landing immediately after ours could clobber it; if
+    // so, loop and re-register against the new state.
+    const after = await getSeats(workspace);
+    const confirmed = after.find(s => s.seatId === seatId);
+    if (confirmed) return confirmed;
+
+    lastErr = new Error('Seat registration did not persist; retrying.');
   }
 
-  await upsertFile(octokit, owner, repo, 'org/seats.json', { seats }, 'enterprise: register seat');
-  return seats.find(s => s.seatId === seatId);
+  throw lastErr || new Error('Failed to register seat after retries.');
 }
 
 /**
