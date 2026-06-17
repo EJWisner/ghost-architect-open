@@ -17,7 +17,7 @@ import { runAuditMode } from '../src/modes/audit/index.js';
 import { pingModeUsage } from '../src/telemetry/pulse.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
-import { loadProfile } from '../src/profile/index.js';
+import { loadProfile, cleanCache, getCacheSize } from '../src/profile/index.js';
 import { runProfileWizard } from '../src/profile/wizard.js';
 import { writeProfile, listProfiles, deleteProfile, profilePathFor, getProfilesDir } from '../src/profile/writer.js';
 import fs, { realpathSync } from 'fs';
@@ -107,6 +107,7 @@ function parseArgs(argv) {
     licenseStatus: false,
     licenseClear: false,
     licenseDebug: false,
+    cleanCache: false,
     help: false,
     version: false,
   };
@@ -161,6 +162,7 @@ function parseArgs(argv) {
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
     if (a === '--license-debug')    { out.licenseDebug = true; continue; }
+    if (a === '--clean-cache')      { out.cleanCache = true; continue; }
 
     // Commit Forecast non-interactive flags
     if (a === '--baseline')              { out.cfBaseline = argv[++i] || ''; continue; }
@@ -256,6 +258,7 @@ Ghost Brief™ (Pro Max and above):
                            (default: ghost-brief.json in current directory)
 
 Misc:
+  --clean-cache            Delete the profile extraction cache and exit.
   --version, -v            Print version and exit.
   --help, -h               Print this help and exit.
 
@@ -1229,6 +1232,15 @@ async function main() {
     process.exit(0);
   }
 
+  // Profile cache maintenance. Pure local housekeeping, available on every
+  // tier and before any other setup so it always works.
+  if (cliOpts.cleanCache) {
+    const { removed, bytesFreed } = cleanCache();
+    const freedKb = (bytesFreed / 1024).toFixed(1);
+    console.log(chalk.green(`\n${SYM.check} Cleared profile cache: ${removed} file(s) removed, ${freedKb} KB freed.\n`));
+    process.exit(0);
+  }
+
   // Ghost Partner profile flags are Pro+. On Open, exit early with a
   // friendly message before any flag-specific logic runs. --no-profile
   // is intentionally excluded (declarative "do not use a profile" is
@@ -1294,6 +1306,16 @@ async function main() {
     }
     await runCreateProfileFlow();
     process.exit(0);
+  }
+
+  // Soft warning when the profile extraction cache has grown past its ceiling.
+  // Non-blocking and stderr-only: it points the user at --clean-cache without
+  // interrupting the run.
+  const cacheSize = getCacheSize();
+  if (cacheSize.exceedsLimit) {
+    const usedMb = (cacheSize.bytes / (1024 * 1024)).toFixed(1);
+    const limitMb = (cacheSize.limit / (1024 * 1024)).toFixed(0);
+    console.warn(chalk.yellow(`! Profile cache is ${usedMb} MB (over ${limitMb} MB). Run \`ghost --clean-cache\` to clear it.`));
   }
 
   // Resolve which profile to load for this session.

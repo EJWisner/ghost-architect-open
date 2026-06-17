@@ -46,6 +46,14 @@ import { extractProfile } from './extractor.js';
 
 const CACHE_DIR = path.join(os.homedir(), '.ghost', 'profiles', '.cache');
 
+// Cache hygiene. The extraction cache writes one JSON file per source hash, so
+// it grows every time a prose profile's text changes and never shrinks on its
+// own. MAX_CACHE_FILES bounds it on an LRU basis (file mtime = last use; cache
+// hits touch the file). CACHE_SIZE_WARN_BYTES is a soft ceiling that only
+// drives a startup warning — we never auto-delete on size, count handles that.
+const MAX_CACHE_FILES = 20;
+const CACHE_SIZE_WARN_BYTES = 50 * 1024 * 1024; // 50 MB
+
 // Fields we expect from parsers/extractors. Unknown fields get preserved
 // under `extra` so authors can experiment without us silently dropping data.
 const KNOWN_SCALAR_FIELDS = new Set([
@@ -294,10 +302,13 @@ async function extractWithCache(text, absPath) {
   const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
   const cachePath = path.join(CACHE_DIR, `${hash}.json`);
 
-  // Hit: return cached extraction.
+  // Hit: return cached extraction. Touch the file first so a re-read counts as
+  // recent use for LRU eviction, not just recent creation.
   if (fs.existsSync(cachePath)) {
     try {
-      return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      touchCacheFile(cachePath);
+      return cached;
     } catch {
       // Corrupted cache — ignore and re-extract.
     }
@@ -309,9 +320,112 @@ async function extractWithCache(text, absPath) {
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
     fs.writeFileSync(cachePath, JSON.stringify(extracted, null, 2), 'utf8');
+    evictCache(); // keep only the MAX_CACHE_FILES most recently used entries
   } catch { /* non-fatal */ }
 
   return extracted;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cache maintenance — LRU eviction, manual purge, and a size warning
+//
+// One JSON file per source hash lives in CACHE_DIR. Left alone it grows every
+// time a prose profile's text changes, so extractWithCache() caps the count at
+// MAX_CACHE_FILES on an LRU basis after each write. cleanCache() lets a user
+// purge the whole cache by hand (wire to `ghost --clean-cache`); getCacheSize()
+// backs a soft startup warning when the dir crosses CACHE_SIZE_WARN_BYTES.
+//
+// Everything here is best-effort and silent: cache hygiene must never break or
+// slow a scan, so a missing dir or an unreadable/locked entry is swallowed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * List cache entries with their stats, most-recently-used first (mtime desc).
+ * Returns [] when the cache dir doesn't exist yet. Never throws.
+ *
+ * @returns {Array<{ path: string, mtimeMs: number, size: number }>}
+ */
+function listCacheFiles() {
+  let names;
+  try {
+    names = fs.readdirSync(CACHE_DIR);
+  } catch {
+    return []; // no cache dir yet, or unreadable
+  }
+  const entries = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const full = path.join(CACHE_DIR, name);
+    try {
+      const stat = fs.statSync(full);
+      if (stat.isFile()) entries.push({ path: full, mtimeMs: stat.mtimeMs, size: stat.size });
+    } catch { /* vanished or unreadable entry — skip it */ }
+  }
+  return entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/** Mark a cache file as freshly used so LRU eviction keeps it around. */
+function touchCacheFile(file) {
+  try {
+    const now = new Date();
+    fs.utimesSync(file, now, now);
+  } catch { /* non-fatal — eviction just falls back to creation order */ }
+}
+
+/**
+ * Evict all but the MAX_CACHE_FILES most-recently-used cache entries.
+ *
+ * @returns {number} count of files deleted
+ */
+function evictCache() {
+  const entries = listCacheFiles();
+  if (entries.length <= MAX_CACHE_FILES) return 0;
+  let removed = 0;
+  for (const entry of entries.slice(MAX_CACHE_FILES)) {
+    try {
+      fs.unlinkSync(entry.path);
+      removed++;
+    } catch { /* already gone or locked — leave it */ }
+  }
+  return removed;
+}
+
+/**
+ * Remove every extraction-cache file. Backs a manual `ghost --clean-cache`.
+ * Returns a summary so the caller can report what it freed.
+ *
+ * @returns {{ removed: number, bytesFreed: number }}
+ */
+export function cleanCache() {
+  const entries = listCacheFiles();
+  let removed = 0;
+  let bytesFreed = 0;
+  for (const entry of entries) {
+    try {
+      fs.unlinkSync(entry.path);
+      removed++;
+      bytesFreed += entry.size;
+    } catch { /* skip — already gone or locked */ }
+  }
+  return { removed, bytesFreed };
+}
+
+/**
+ * Total on-disk size of the extraction cache, with a flag for whether it has
+ * crossed the soft warning ceiling. Backs a one-line startup warning; the
+ * caller decides how (or whether) to surface it.
+ *
+ * @returns {{ bytes: number, files: number, limit: number, exceedsLimit: boolean }}
+ */
+export function getCacheSize() {
+  const entries = listCacheFiles();
+  const bytes = entries.reduce((sum, e) => sum + e.size, 0);
+  return {
+    bytes,
+    files: entries.length,
+    limit: CACHE_SIZE_WARN_BYTES,
+    exceedsLimit: bytes > CACHE_SIZE_WARN_BYTES,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
