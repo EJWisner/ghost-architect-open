@@ -31,6 +31,7 @@
 
 // ── Lazy SDK load ────────────────────────────────────────────────────────
 
+import chalk from 'chalk';
 import { getModel } from './models.js';
 import { resolveApiKey } from '../config.js';
 
@@ -74,8 +75,14 @@ function recordSessionUsage(usage) {
 // after via getTier2Failures() / formatTier2FailureWarning().
 let sessionTier2Failures = [];
 
+// Whether the aggregated warning has already been surfaced for the current
+// scan. Guards against a double print when both an explicit caller and the
+// process-exit safety net (registered below) fire within the same scan.
+let tier2WarningEmitted = false;
+
 function resetTier2Failures() {
   sessionTier2Failures = [];
+  tier2WarningEmitted = false;
 }
 
 /**
@@ -133,6 +140,37 @@ export function formatTier2FailureWarning() {
     + 'Re-run the scan, or set GHOST_DEBUG_TIER2=1 for failure details.'
   );
 }
+
+/**
+ * Surface the aggregated Tier 2 failure warning to the user, if any failures
+ * occurred this scan. Writes a single yellow line to STDERR (never stdout, so
+ * it can't contaminate piped report output) and returns the warning text, or
+ * null when there is nothing to report.
+ *
+ * Idempotent within a scan: a second call before the next resetTier2Failures()
+ * prints nothing and returns null, so an explicit caller and the process-exit
+ * safety net below do not double up. The mode file calls resetSessionUsage()
+ * before each scan, which clears the guard so the next scan can warn again.
+ */
+export function emitTier2FailureWarning() {
+  if (tier2WarningEmitted) return null;
+  const warning = formatTier2FailureWarning();
+  if (!warning) return null;
+  tier2WarningEmitted = true;
+  process.stderr.write(chalk.yellow(warning) + '\n');
+  return warning;
+}
+
+// Safety net. This module owns the failure tracker, but the fail-open path
+// returns zero findings silently and there is no post-scan call site in the
+// mode file to surface the result. Flush the aggregated warning at process
+// exit so a one-shot CLI run still tells the user a deep-analysis check was
+// skipped. emitTier2FailureWarning() is idempotent and a no-op when no
+// failures were recorded, so this never double-prints and never fires for
+// scans (or other modes) that had no Tier 2 failures.
+process.once('exit', () => {
+  emitTier2FailureWarning();
+});
 
 let anthropicClient = null;
 let anthropicClientLoadFailed = false;
