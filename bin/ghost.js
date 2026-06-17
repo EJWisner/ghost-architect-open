@@ -90,6 +90,8 @@ const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 //   --exclude-presets a,b       apply named exclusion preset(s), comma-separated
 //   --profile path              Ghost Partner — load consultant profile from
 //                               .yaml/.yml/.md/.txt file and inject into scans
+//   --skip-redaction            Pro+ only — continue past a redaction failure
+//                               instead of the fail-closed abort (secrets may leak)
 //   --help / -h                 print usage and exit
 //   --version / -v              print version and exit
 function parseArgs(argv) {
@@ -108,6 +110,7 @@ function parseArgs(argv) {
     licenseClear: false,
     licenseDebug: false,
     cleanCache: false,
+    skipRedaction: false,
     help: false,
     version: false,
   };
@@ -163,6 +166,9 @@ function parseArgs(argv) {
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
     if (a === '--license-debug')    { out.licenseDebug = true; continue; }
     if (a === '--clean-cache')      { out.cleanCache = true; continue; }
+    // Pro+ escape hatch: bypass the fail-closed redaction abort. Honored only
+    // on paid tiers by the loader; Open always fails closed regardless.
+    if (a === '--skip-redaction')   { out.skipRedaction = true; continue; }
 
     // Commit Forecast non-interactive flags
     if (a === '--baseline')              { out.cfBaseline = argv[++i] || ''; continue; }
@@ -259,6 +265,10 @@ Ghost Brief™ (Pro Max and above):
 
 Misc:
   --clean-cache            Delete the profile extraction cache and exit.
+  --skip-redaction         Pro+ only. If secret redaction fails on a file, continue
+                           the scan instead of aborting. WARNING: secrets in the
+                           affected files may be sent to the API unredacted. Open
+                           tier always fails closed and ignores this flag.
   --version, -v            Print version and exit.
   --help, -h               Print this help and exit.
 
@@ -1431,6 +1441,7 @@ async function main() {
       maxContextOverride: cliOpts.maxContext,
       excludePresets: cliOpts.presets,
       excludePatterns: cliOpts.excludes,
+      skipRedaction: cliOpts.skipRedaction,
     });
 
     // Fire promo fetch only when we'll actually render the no-license banner.

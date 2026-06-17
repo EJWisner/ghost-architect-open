@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { glob } from 'glob';
 import AdmZip from 'adm-zip';
 import { createOctokit } from '../utils/octokit-client.js';
@@ -19,6 +20,7 @@ let SCAN_OPTIONS = {
   maxContextOverride: null,   // number | null
   excludePresets: [],         // string[]
   excludePatterns: [],        // string[]
+  skipRedaction: false,       // boolean — Pro+ escape hatch for the fail-closed redaction abort
 };
 
 /**
@@ -31,7 +33,54 @@ export function setScanOptions(opts = {}) {
     maxContextOverride: opts.maxContextOverride ?? null,
     excludePresets: Array.isArray(opts.excludePresets) ? opts.excludePresets : [],
     excludePatterns: Array.isArray(opts.excludePatterns) ? opts.excludePatterns : [],
+    skipRedaction: opts.skipRedaction === true,
   };
+}
+
+// Tiers that may use --skip-redaction. The flag is a deliberate "expose secrets
+// to finish the scan" escape hatch, so it is gated to paid tiers only; Open
+// always fails closed. Trial mirrors Pro for feature access, so it is included.
+const SKIP_REDACTION_TIERS = new Set([
+  'trial', 'pro', 'pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max',
+]);
+function canSkipRedaction(tier) {
+  return SKIP_REDACTION_TIERS.has(tier);
+}
+
+// Write redaction-failure details to the debug directory for post-mortem
+// diagnosis. Mirrors the .debug convention used by src/core/multipass.js.
+// Never throws — diagnostics must never break (or block) the scan path.
+function writeRedactionFailureLog(failedRules, { continued }) {
+  try {
+    const debugDir = path.join(os.homedir(), 'Ghost Architect Reports', '.debug');
+    if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filepath = path.join(debugDir, `redaction-failure-${ts}.log`);
+    const lines = [];
+    lines.push('Redaction failure report');
+    lines.push(`Timestamp:    ${new Date().toISOString()}`);
+    lines.push(`Tier:         ${SCAN_OPTIONS.tier}`);
+    lines.push(`Outcome:      ${continued
+      ? 'scan CONTINUED via --skip-redaction (secrets may be exposed)'
+      : 'scan ABORTED (fail-closed — codebase NOT sent to API)'}`);
+    lines.push(`Failed rules: ${failedRules.length}`);
+    lines.push('');
+    for (const f of failedRules) {
+      lines.push(`• Rule:  ${f.rule}`);
+      if (f.file)      lines.push(`  File:  ${f.file}`);
+      if (f.errorType) lines.push(`  Type:  ${f.errorType}`);
+      lines.push(`  Error: ${f.error}`);
+      if (f.snippet != null) {
+        lines.push('  Snippet (first 200 chars of triggering content):');
+        lines.push(`    ${String(f.snippet).replace(/\n/g, '\\n')}`);
+      }
+      lines.push('');
+    }
+    fs.writeFileSync(filepath, lines.join('\n'), 'utf8');
+    return filepath;
+  } catch {
+    return null; // never let logging break the scan
+  }
 }
 
 export function getScanOptions() {
@@ -682,31 +731,76 @@ function buildContext(fileMap) {
   let   anyPartial      = false;
   for (const [filePath, content] of Object.entries(fileMap)) {
     try {
-      const { redacted, findings, failedRules, partialRedaction } = redactContent(content, customRules);
+      const { redacted, findings, failedRules, partialRedaction } = redactContent(content, customRules, filePath);
       redactedFileMap[filePath] = redacted;
       if (findings.length)    allFindings.push(...findings);
-      if (failedRules.length) allFailedRules.push(...failedRules);
+      // Tag each rule failure with the file it occurred on so the abort/skip
+      // message and debug log can name exactly which file tripped which rule.
+      if (failedRules.length) allFailedRules.push(...failedRules.map(f => ({ ...f, file: f.file || filePath })));
       if (partialRedaction)   anyPartial = true;
     } catch (err) {
       // redactContent has internal try/catches around each rule, so a thrown
       // exception here means something more fundamental failed (TypeError,
-      // OOM, etc.). Treat as a failed-rule entry so the user sees a polite
-      // abort message rather than a stack trace. Fail-closed contract requires
-      // the user understand WHY the scan aborted, not just that something broke.
-      allFailedRules.push({ rule: `<redactContent threw on ${filePath}>`, error: err.message });
+      // OOM, etc.). Capture the file path, the exception type, and the first
+      // 200 chars of the triggering content so the failure can be diagnosed
+      // without re-running under a debugger. Treat as a failed-rule entry so
+      // the user sees a polite, actionable abort message rather than a stack
+      // trace. Fail-closed contract requires the user understand WHY the scan
+      // aborted, not just that something broke.
+      allFailedRules.push({
+        rule: '<redactContent threw>',
+        file: filePath,
+        errorType: err?.constructor?.name || err?.name || 'Error',
+        error: err?.message || String(err),
+        snippet: typeof content === 'string' ? content.slice(0, 200) : String(content ?? '').slice(0, 200),
+      });
+      // Preserve the raw content so a Pro+ --skip-redaction run still includes
+      // this file. Only ever reached when the user has opted into exposure; the
+      // fail-closed path below returns null before this map is used.
+      redactedFileMap[filePath] = typeof content === 'string' ? content : '';
       anyPartial = true;
     }
   }
 
   if (anyPartial) {
-    // Fail-closed: if any redaction rule errored OR redactContent itself threw,
-    // halt before sending anything to Anthropic.
-    console.log(chalk.red('\n  ⚠  Redaction failed on one or more rules. Scan aborted to protect secrets.'));
+    // A --skip-redaction request is only honored on Pro+ tiers. Open always
+    // fails closed regardless of the flag.
+    const skipRequested = SCAN_OPTIONS.skipRedaction === true;
+    const skipAllowed   = skipRequested && canSkipRedaction(SCAN_OPTIONS.tier);
+
+    // Persist the full failure detail for post-mortem diagnosis whether we
+    // abort or continue. Path is surfaced to the user below.
+    const logPath = writeRedactionFailureLog(allFailedRules, { continued: skipAllowed });
+
+    // Structured, actionable per-rule error so users can debug without diving
+    // into the debug logs: which rule, on which file, and why.
+    console.log(chalk.red('\n  ⚠  Redaction failed on one or more rules.'));
     for (const f of allFailedRules) {
-      console.log(chalk.red(`      • ${f.rule}: ${f.error}`));
+      const where = f.file ? ` on ${f.file}` : '';
+      console.log(chalk.red(`      • Redaction rule '${f.rule}' failed${where}: ${f.error}`));
     }
-    console.log(chalk.gray('  Investigate the failing rule(s) before re-running. Your codebase was NOT sent to the API.\n'));
-    return null;
+    if (logPath) {
+      console.log(chalk.gray(`  Failure details written to ${logPath}`));
+    }
+
+    if (skipAllowed) {
+      // Pro+ escape hatch: bypass the fail-closed abort and continue with the
+      // best-effort redacted content. Warn prominently — secrets in the files
+      // above may reach the API unredacted.
+      console.log(chalk.yellow.bold('\n  ⚠  --skip-redaction is set: continuing WITHOUT complete redaction.'));
+      console.log(chalk.yellow.bold('     SECRETS MAY BE EXPOSED to the API in the files listed above.'));
+      console.log(chalk.yellow('     Proceed only if you trust this codebase. Fix the failing rule(s) to restore full protection.\n'));
+      // Fall through — buildContext continues using the best-effort redactedFileMap.
+    } else {
+      // Fail-closed: if any redaction rule errored OR redactContent itself
+      // threw, halt before sending anything to Anthropic.
+      if (skipRequested) {
+        // Requested but not allowed on this tier — say so explicitly.
+        console.log(chalk.gray('  --skip-redaction is a Pro+ feature and was not applied on the Open tier.'));
+      }
+      console.log(chalk.gray('  Scan aborted to protect secrets. Investigate the failing rule(s) before re-running. Your codebase was NOT sent to the API.\n'));
+      return null;
+    }
   }
 
   if (allFindings.length > 0) {
