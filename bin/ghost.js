@@ -106,6 +106,7 @@ function parseArgs(argv) {
     activate: null,
     licenseStatus: false,
     licenseClear: false,
+    licenseDebug: false,
     help: false,
     version: false,
   };
@@ -159,6 +160,7 @@ function parseArgs(argv) {
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
+    if (a === '--license-debug')    { out.licenseDebug = true; continue; }
 
     // Commit Forecast non-interactive flags
     if (a === '--baseline')              { out.cfBaseline = argv[++i] || ''; continue; }
@@ -222,6 +224,10 @@ Licensing:
   --license-clear          Remove the installed license from local storage.
                            Then exit. Useful for migrating to a new license.
   --deactivate             Alias for --license-clear.
+  --license-debug          Print the full error (with stack) if license
+                           validation hits an unexpected fault. Use this when
+                           contacting support@ghostarchitect.dev so we can see
+                           exactly what failed.
 
 Commit Forecast (non-interactive / CI mode):
   --baseline <path>        Path to the baseline codebase directory.
@@ -771,6 +777,41 @@ function renderPaywall(paywall, paywallPromo = '') {
 // ── License helpers ────────────────────────────────────────────────────────
 
 /**
+ * Report an UNEXPECTED license-validation fault to the user.
+ *
+ * Important distinction this enforces: `validateLicense()` returns a structured
+ * { state: 'missing' } result when no license is installed — that is the
+ * EXPECTED path (fall through to Open tier) and never reaches here. This helper
+ * fires only when validation itself THREW — a transient filesystem/network/
+ * decode fault — which previously failed silently and stripped a paying
+ * customer down to Open tier with no explanation.
+ *
+ * The message goes to stderr so it never corrupts stdout output for display
+ * surfaces (--help, --version) or scriptable flows. With --license-debug we
+ * also print the full stack so support can diagnose the fault.
+ *
+ * @param {Error}  err          The thrown error.
+ * @param {object} opts
+ * @param {boolean} opts.debug  Whether --license-debug was passed.
+ * @param {boolean} opts.degraded  True when we are continuing at Open tier
+ *                                  rather than blocking (early-resolve path).
+ */
+function reportLicenseValidationError(err, { debug = false, degraded = false } = {}) {
+  console.error(chalk.red(`\n${SYM.cross} License validation hit an unexpected error: ${err.message}`));
+  if (degraded) {
+    console.error(chalk.yellow('   Continuing at Open tier. If you have a paid license, this is likely a'));
+    console.error(chalk.yellow('   transient filesystem or network issue — re-run the command.'));
+  }
+  if (debug) {
+    console.error(chalk.gray('\n   --license-debug detail:'));
+    console.error(chalk.gray('   ' + (err.stack || String(err)).split('\n').join('\n   ')));
+  } else {
+    console.error(chalk.gray('   Re-run with --license-debug for full detail, or email support@ghostarchitect.dev.'));
+  }
+  console.error('');
+}
+
+/**
  * Handle `ghost --activate <input>`. The input is either:
  *   (a) A human-typeable key like GA-2026-PRO-X7K9-M2P4-Q8R3 — we POST it to
  *       the activation server, receive a signed token bound to this machine,
@@ -1158,8 +1199,15 @@ async function main() {
     const earlyLicenseResult = await validateLicense({ skipNetworkClock: true });
     setActiveLicense(earlyLicenseResult);
     TIER = getActiveTier() || 'open';
-  } catch (_) {
-    // Non-fatal: fall through with TIER='open'. Main-flow error rendering catches real issues.
+  } catch (err) {
+    // Reaching here means validateLicense() THREW — a transient fault, not the
+    // expected "no license" path (that returns { state: 'missing' } cleanly).
+    // We stay non-blocking so display surfaces (--help, --version) and the
+    // profile flags below still run, but we no longer fail silently: a paying
+    // customer needs to know their tier dropped to Open because of a fault, not
+    // a downgrade. Output goes to stderr so --version/--help stdout stays clean.
+    TIER = 'open';
+    reportLicenseValidationError(err, { debug: cliOpts.licenseDebug, degraded: true });
   }
 
   if (cliOpts.help)    { printUsage(); process.exit(0); }
@@ -1336,9 +1384,10 @@ async function main() {
       process.exit(1);
     }
   } catch (err) {
-    // Defense in depth: if validation itself crashes, fail closed.
-    console.error(chalk.red(`\n${SYM.cross} License validation failed unexpectedly: ${err.message}`));
-    console.error(chalk.gray('   Email support@ghostarchitect.dev with this error if it persists.\n'));
+    // Defense in depth: if validation itself crashes on the gated scan path, we
+    // fail closed (block the run) rather than degrade silently. Unlike the
+    // early-resolve path above, a scan must not proceed on an unverified tier.
+    reportLicenseValidationError(err, { debug: cliOpts.licenseDebug, degraded: false });
     process.exit(1);
   }
 
@@ -1749,10 +1798,18 @@ if (process.argv.includes('--brief')) {
   const { publishBriefToPortal, isPortalConfigured } = await import('../src/core/portal-publish.js');
   const { version } = _require('../package.json');
 
-  // Resolve license tier before doing anything else
-  const briefLicenseResult = await validateLicense({ skipNetworkClock: true });
-  setActiveLicense(briefLicenseResult);
-  const briefTier = getActiveTier() || 'open';
+  // Resolve license tier before doing anything else. Fail closed on an
+  // unexpected validation fault (Ghost Brief is a gated tier feature) rather
+  // than letting the crash surface as an opaque unhandled rejection.
+  let briefTier;
+  try {
+    const briefLicenseResult = await validateLicense({ skipNetworkClock: true });
+    setActiveLicense(briefLicenseResult);
+    briefTier = getActiveTier() || 'open';
+  } catch (err) {
+    reportLicenseValidationError(err, { debug: process.argv.includes('--license-debug'), degraded: false });
+    process.exit(1);
+  }
 
   const BRIEF_TIERS = ['pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
   if (!BRIEF_TIERS.includes(briefTier)) {
