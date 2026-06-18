@@ -160,6 +160,11 @@ export async function getOrgConfig(workspace) {
  * Save org config to sync repo. Admin only.
  */
 export async function saveOrgConfig(config, workspace) {
+  // TOCTOU prevention: re-check (and await) admin status as the very first
+  // operation, before any other async work. isAdmin() is async, so admin
+  // rights could be revoked during the await gap of any earlier call; gating
+  // here ensures the privilege is confirmed immediately prior to the write.
+  if (!await isAdmin(workspace)) throw new Error('Only admins can save org config.');
   const entry = resolveSyncEntry(workspace);
   if (!entry) throw new Error('No team sync configured.');
   const octokit = getOctokit(entry);
@@ -285,7 +290,13 @@ export async function registerSeat(workspace) {
     const confirmed = (after?.seats || []).find(s => s.seatId === seatId);
     const shaMatches = writeSha && afterSha && writeSha === afterSha;
     const nonceMatches = confirmed?.writeNonce === writeNonce;
-    if (confirmed && (shaMatches || nonceMatches)) return confirmed;
+    // BOTH checks must pass to confirm the write. A concurrent writer can
+    // preserve our seatId while clobbering our update: the nonce alone could
+    // coincide across blobs, and the SHA alone proves only that the blob we
+    // read back is the one we wrote (not that it still carries our record).
+    // Requiring shaMatches AND nonceMatches together is what proves the
+    // revision we read back is exactly the one we wrote, with our record intact.
+    if (confirmed && shaMatches && nonceMatches) return confirmed;
 
     lastErr = new Error('Seat registration did not persist (concurrent writer detected); retrying.');
   }
@@ -307,6 +318,10 @@ export async function isAdmin(workspace) {
  * Promote a seat to admin. Admin only.
  */
 export async function promoteSeat(targetSeatId, workspace) {
+  // TOCTOU prevention: await admin status as the very first operation, before
+  // any other async work. isAdmin() is async, and admin rights could be revoked
+  // during an unguarded await gap; confirming it here keeps the check and the
+  // privileged write tight against each other.
   if (!await isAdmin(workspace)) throw new Error('Only admins can promote seats.');
   const entry = resolveSyncEntry(workspace);
   const octokit = getOctokit(entry);
@@ -323,6 +338,10 @@ export async function promoteSeat(targetSeatId, workspace) {
  * Remove a seat. Admin only.
  */
 export async function removeSeat(targetSeatId, workspace) {
+  // TOCTOU prevention: await admin status as the very first operation, before
+  // any other async work. isAdmin() is async, and admin rights could be revoked
+  // during an unguarded await gap; confirming it here keeps the check and the
+  // privileged write tight against each other.
   if (!await isAdmin(workspace)) throw new Error('Only admins can remove seats.');
   const entry = resolveSyncEntry(workspace);
   const octokit = getOctokit(entry);
