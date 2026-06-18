@@ -1844,15 +1844,17 @@ async function main() {
             ghostVersion: briefVersion,
             scanFile:     inputFile,
             codemaseRoot: process.cwd(),
+            tier:         getActiveTier() || 'open',
           });
 
-          const outPath = writeBrief(brief, briefOutputFile);
-          console.log(chalk.green(`\n  ${SYM.check} Ghost Brief™ written to: ${outPath}`));
+          const { jsonPath, htmlPath } = writeBrief(brief, briefOutputFile);
+          console.log(chalk.green(`\n  ${SYM.check} Ghost Brief™ written to: ${jsonPath}`));
+          console.log(chalk.green(`  ${SYM.check} HTML report written to: ${htmlPath}`));
           console.log(chalk.gray(`    ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated\n`));
 
-          if (isPortalConfigured() && fs.existsSync(outPath)) {
+          if (isPortalConfigured() && fs.existsSync(jsonPath)) {
             try {
-              const result = await publishBriefToPortal(outPath);
+              const result = await publishBriefToPortal(jsonPath);
               if (result?.ok) console.log(chalk.gray('  ✓ Ghost Brief pushed to portal.\n'));
             } catch { /* non-fatal */ }
           }
@@ -1932,16 +1934,18 @@ if (process.argv.includes('--brief')) {
       findings,
       ghostVersion: version,
       scanFile: inputFile,
-      codemaseRoot: process.cwd()
+      codemaseRoot: process.cwd(),
+      tier: briefTier
     });
-    const outPath = writeBrief(brief, outputFile);
-    console.log(`Ghost Brief written to: ${outPath}`);
+    const { jsonPath, htmlPath } = writeBrief(brief, outputFile);
+    console.log(`Ghost Brief written to: ${jsonPath}`);
+    console.log(`HTML report written to: ${htmlPath}`);
     console.log(`  ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated`);
 
     // ── Portal Publish (non-fatal) ─────────────────────────────────────
-    if (isPortalConfigured() && fs.existsSync(outPath)) {
+    if (isPortalConfigured() && fs.existsSync(jsonPath)) {
       try {
-        const portalResult = await publishBriefToPortal(outPath);
+        const portalResult = await publishBriefToPortal(jsonPath);
         if (portalResult.ok) {
           console.log('  Ghost Brief pushed to portal.');
         } else {
