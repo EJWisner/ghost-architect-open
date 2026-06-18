@@ -362,11 +362,14 @@ export async function removeSeat(targetSeatId, workspace) {
 //   - When GHOST_DEBUG=1 is set, each failure writes a single-line warning
 //     to stderr so developers and smoke tests can see what went wrong.
 //   - A consecutive-failure counter (reset on every successful write) emits
-//     an unconditional stderr warning once 3 writes in a row have failed —
-//     enough to flag a sustained outage (expired token, deleted repo) that
-//     is silently dropping audit events, while staying quiet on transient
-//     one-off blips. The scan itself still succeeds in every case.
+//     an unconditional stderr warning on the FIRST failed write — a single
+//     dropped audit event is already a gap in the compliance trail, so we
+//     surface it immediately rather than waiting for a sustained outage. The
+//     warning includes the UTC timestamp of the failure so the admin can
+//     correlate it against the scan that was dropped. The scan itself still
+//     succeeds in every case.
 let consecutiveAuditFailures = 0;
+let lastAuditFailureUtc = null;
 
 function logAuditFailure(stage, err) {
   if (process.env.GHOST_DEBUG === '1') {
@@ -415,15 +418,18 @@ export async function appendAuditEvent(event, workspace) {
     }
   } catch (err) {
     // Audit failure is non-fatal — never break the scan. Surface it under
-    // GHOST_DEBUG, and warn unconditionally once a sustained outage has
-    // dropped 3 audit events in a row (see fail-safe note above).
+    // GHOST_DEBUG, and warn unconditionally on the first failed write so a
+    // single dropped audit event is observable right away (see fail-safe
+    // note above).
     logAuditFailure('audit-write', err);
     consecutiveAuditFailures += 1;
-    if (consecutiveAuditFailures >= 3) {
+    lastAuditFailureUtc = new Date().toISOString();
+    if (consecutiveAuditFailures >= 1) {
       process.stderr.write(
         'Ghost: ' + consecutiveAuditFailures + ' consecutive audit-log '
-        + 'writes have failed. The compliance audit trail may be '
-        + 'incomplete. Set GHOST_DEBUG=1 for details.\n'
+        + 'writes have failed (last failure ' + lastAuditFailureUtc + '). '
+        + 'The compliance audit trail may be incomplete. '
+        + 'Set GHOST_DEBUG=1 for details.\n'
       );
     }
   }

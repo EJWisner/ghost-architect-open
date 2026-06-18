@@ -407,8 +407,28 @@ function buildManifestEntry({ mode, label, baseName, reportText, scanIso, findin
 // file changed underneath us GitHub rejects the write (409/422); we re-fetch,
 // re-apply our entry onto the now-current manifest, and retry. This preserves
 // every concurrently-pushed entry instead of clobbering them.
+//
+// Race window: the conditional-update guard closes the read-modify-write gap
+// for writers that race through GitHub's contents API, but two windows remain.
+// (1) GitHub's contents API is eventually consistent — a concurrent writer can
+// have its commit accepted against the same sha we read, and the rejection may
+// not arrive as a clean 409/422 in every replica/timing combination. (2) After
+// a write GitHub reports as successful, the merged blob may not yet be the one
+// a subsequent reader sees. To shrink the second window we re-read the manifest
+// after a successful write and confirm our entry is actually present; if it is
+// not, we treat the write as lost and retry. Between every retry (both sha
+// conflicts and failed verifications) we wait with exponential backoff so racing
+// writers stagger rather than livelock retrying against each other in lockstep.
 
 const MANIFEST_RETRY_LIMIT = 3;
+
+// Exponential backoff base delay (ms) between manifest retries. Attempt N waits
+// MANIFEST_BACKOFF_BASE_MS * 2^N so concurrent writers desynchronize.
+const MANIFEST_BACKOFF_BASE_MS = 150;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // Pure merge step: take the existing manifest (or null) plus a new entry and
 // return the fully recomputed manifest object. Kept side-effect-free so the
@@ -482,7 +502,27 @@ async function updateManifest(octokit, owner, repo, newEntry, { forcePush = fals
         // this sha. Omit only when the manifest does not exist yet.
         ...(sha ? { sha } : {}),
       });
-      return;
+
+      // Post-write verification: re-read the manifest and confirm our entry
+      // actually landed. The contents API is eventually consistent, so a write
+      // GitHub accepted can still be superseded by a concurrent writer before
+      // it becomes visible. If our entry is missing, treat the write as lost and
+      // retry (backoff applied below) rather than reporting a false success.
+      const { content: verifyManifest } = await getFileContent(octokit, owner, repo, 'manifest.json');
+      const landed = (verifyManifest?.reports || []).some(r => r.id === newEntry.id);
+      if (landed) return;
+
+      if (attempt === MANIFEST_RETRY_LIMIT) {
+        throw new Error(
+          `portal: manifest entry ${newEntry.id} did not persist after ` +
+          `${MANIFEST_RETRY_LIMIT + 1} attempts (concurrent push race).`,
+        );
+      }
+      console.warn(
+        `⚠ portal: manifest write reported success but entry ${newEntry.id} ` +
+        `was not present on re-read (concurrent push race). Retrying ` +
+        `(attempt ${attempt + 1}/${MANIFEST_RETRY_LIMIT})...`,
+      );
     } catch (err) {
       // 409 Conflict / 422 Unprocessable are GitHub's "sha is stale" responses.
       // Anything else (auth, network, 404 on the repo) is not a concurrency
@@ -498,6 +538,9 @@ async function updateManifest(octokit, owner, repo, newEntry, { forcePush = fals
         `(attempt ${attempt + 1}/${MANIFEST_RETRY_LIMIT})...`,
       );
     }
+
+    // Exponential backoff before the next attempt so racing writers stagger.
+    await sleep(MANIFEST_BACKOFF_BASE_MS * Math.pow(2, attempt));
   }
 }
 
