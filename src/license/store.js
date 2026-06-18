@@ -89,21 +89,28 @@ const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 // offsets) that Date.parse happily coerces, writing a non-canonical value into
 // the monotonic clock ratchet that guards against license replay. Reject
 // anything that is not a canonical UTC instant and refuse to write it.
+//
+// Returns true when the input was a valid canonical timestamp (whether or not
+// the monotonic ratchet actually advanced — a valid-but-older value is still a
+// success, it simply does not regress the stored value). Returns false when the
+// input failed validation, so the caller can treat malformed input as a
+// distinct validation failure rather than a silent no-op.
 export function updateLastSeenUtc(newIso) {
   if (typeof newIso !== 'string' || !ISO_8601_UTC.test(newIso)) {
     process.stderr.write(
       `ghost: warning: refusing to persist malformed license last-seen timestamp (${JSON.stringify(newIso)}). Skipping.\n`
     );
-    return;
+    return false;
   }
   const r = read();
-  if (!r) return;
+  if (!r) return true;
   const newMs = Date.parse(newIso);
   const oldMs = r.last_seen_utc ? Date.parse(r.last_seen_utc) : 0;
   if (newMs > oldMs) {
     r.last_seen_utc = newIso;
     write(r);
   }
+  return true;
 }
 
 // Wipe the license. Used by tests and by `ghost license clear`.

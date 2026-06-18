@@ -121,7 +121,19 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   // and continue with the valid state already computed above.
   if (clockResult.newLastSeenMs) {
     try {
-      updateLastSeenUtc(isoNoMicro(clockResult.newLastSeenMs));
+      const persisted = updateLastSeenUtc(isoNoMicro(clockResult.newLastSeenMs));
+      if (!persisted) {
+        // updateLastSeenUtc returns false only when the timestamp it was handed
+        // failed canonical-UTC validation. That is not a transient disk hiccup;
+        // it means the value derived from the clock check is malformed, so the
+        // ratchet write was refused. updateLastSeenUtc already logged the
+        // specifics to stderr; note the validation failure here too and continue
+        // with the valid state computed above (a refused write is harmless to
+        // the rollback check, which a stale value can never trip).
+        process.stderr.write(
+          'ghost: warning: license last-seen timestamp failed validation and was not persisted. Continuing.\n'
+        );
+      }
     } catch (e) {
       process.stderr.write(
         `ghost: warning: could not persist license last-seen timestamp (${e.message}). Continuing.\n`

@@ -34,6 +34,16 @@ const NETWORK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;  // 5 minutes
 const NETWORK_FETCH_TIMEOUT_MS = 5000;
 const NETWORK_CACHE_TTL_MS = 60 * 60 * 1000;      // 1 hour
 
+// Retry backoff for the network time fetch. A single dropped packet or a brief
+// captive-portal redirect should not immediately burn an offline-grace slot, so
+// we retry the whole two-service sweep with exponentially growing, jittered
+// delays. Base delays double each round (1s, 2s, 4s); each is jittered ±20% so a
+// fleet of clients waking at once does not retry in lockstep. The cumulative
+// sleep across all rounds is capped so a sustained outage still fails fast
+// enough to keep the CLI responsive.
+const NETWORK_RETRY_BASE_DELAYS_MS = [1000, 2000, 4000];
+const NETWORK_RETRY_TOTAL_BUDGET_MS = 15 * 1000;  // 15 seconds
+
 // Fail-open grace window. The network fetch failing means we trust the local
 // clock (item 6) so an offline Pro customer is not locked out. But trusting
 // the local clock UNCONDITIONALLY and FOREVER is exactly the attack: block the
@@ -123,7 +133,20 @@ function fetchJson(url) {
   });
 }
 
-async function fetchNetworkTimeMs() {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Apply ±20% jitter to a base delay so concurrent clients do not retry in
+// lockstep.
+function jitterDelayMs(baseMs) {
+  const factor = 0.8 + Math.random() * 0.4;  // [0.8, 1.2)
+  return Math.round(baseMs * factor);
+}
+
+// One sweep across both time services. Returns { ms, source } on the first
+// service that answers with a parseable UTC instant, or null if neither does.
+async function fetchNetworkTimeOnce() {
   // Try worldtimeapi.org first.
   try {
     const body = await fetchJson('https://worldtimeapi.org/api/timezone/Etc/UTC');
@@ -143,6 +166,29 @@ async function fetchNetworkTimeMs() {
       if (Number.isFinite(ms)) return { ms, source: 'timeapi.io' };
     }
   } catch (e) { /* fall through */ }
+
+  return null;
+}
+
+async function fetchNetworkTimeMs() {
+  // First sweep is immediate. If both services fail, retry the whole sweep with
+  // exponential backoff (1s, 2s, 4s, each ±20% jittered), capped at a total of
+  // NETWORK_RETRY_TOTAL_BUDGET_MS of sleep. We only return null — which is what
+  // lets the caller advance the consecutive-offline counter — once every
+  // service has failed on every attempt across the whole backoff window.
+  const first = await fetchNetworkTimeOnce();
+  if (first) return first;
+
+  let remainingBudgetMs = NETWORK_RETRY_TOTAL_BUDGET_MS;
+  for (const baseDelay of NETWORK_RETRY_BASE_DELAYS_MS) {
+    if (remainingBudgetMs <= 0) break;
+    const delay = Math.min(jitterDelayMs(baseDelay), remainingBudgetMs);
+    await sleep(delay);
+    remainingBudgetMs -= delay;
+
+    const result = await fetchNetworkTimeOnce();
+    if (result) return result;
+  }
 
   return null;
 }
