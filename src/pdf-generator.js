@@ -140,9 +140,17 @@ function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
     doc.opacity(0.55);
     doc.fillColor([180, 0, 0]);
     doc.font('Helvetica-Bold').fontSize(7);
+    // Defensive against malformed license metadata: trialExpires should be an
+    // ISO date string, but if it is missing, empty, or a non-string (e.g. the
+    // license payload was truncated or hand-edited) we must not slice() a
+    // non-string or render "Expires: undefined". Fall back to "(unknown)".
+    const trialExpires =
+      (typeof trialInfo.trialExpires === 'string' && trialInfo.trialExpires)
+        ? trialInfo.trialExpires.slice(0, 10)
+        : '(unknown)';
     const stampLines = [
       'TRIAL OUTPUT — NOT FOR DISTRIBUTION',
-      `Lic: ${trialInfo.trialLicenseId || 'unknown'}  ·  Expires: ${(trialInfo.trialExpires || '').slice(0, 10)}`,
+      `Lic: ${trialInfo.trialLicenseId || 'unknown'}  ·  Expires: ${trialExpires}`,
     ];
     doc.text(stampLines.join('\n'), 0, HEADER_H + 2, {
       width: PW - 8,
