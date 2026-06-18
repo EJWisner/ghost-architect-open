@@ -74,10 +74,28 @@ export function saveActivation({ token, fingerprintHashes }) {
   });
 }
 
+// Strict ISO-8601 UTC instant, matching what saveActivation/the validator emit:
+//   YYYY-MM-DDTHH:MM:SSZ  (optional .mmm milliseconds before the Z)
+const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+
 // Persist updated last_seen_utc — called after every successful validation.
 // Only writes if the new value is strictly newer than what's stored, so this
 // is monotonic-ratchet-safe even if called repeatedly.
+//
+// The input is validated against a strict ISO-8601 UTC pattern BEFORE parsing.
+// Date.parse() returns NaN for malformed input, and `NaN > oldMs` is false, so
+// a bare comparison would silently skip the write for garbage. But it would
+// also accept lenient-but-non-canonical strings (e.g. "2026-01-01", local-time
+// offsets) that Date.parse happily coerces, writing a non-canonical value into
+// the monotonic clock ratchet that guards against license replay. Reject
+// anything that is not a canonical UTC instant and refuse to write it.
 export function updateLastSeenUtc(newIso) {
+  if (typeof newIso !== 'string' || !ISO_8601_UTC.test(newIso)) {
+    process.stderr.write(
+      `ghost: warning: refusing to persist malformed license last-seen timestamp (${JSON.stringify(newIso)}). Skipping.\n`
+    );
+    return;
+  }
   const r = read();
   if (!r) return;
   const newMs = Date.parse(newIso);
