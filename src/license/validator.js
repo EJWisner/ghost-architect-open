@@ -96,13 +96,15 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   } else {
     clockResult = await validateClock(lastSeen);
     if (!clockResult.ok) {
-      return {
-        state: 'tampered',
-        payload,
-        message: clockResult.reason === 'clock_rollback'
-          ? 'Local clock appears to be behind the last validated time. Please correct your clock and try again.'
-          : `Local clock differs significantly from network time. Please correct your clock and try again. (${clockResult.detail || ''})`,
-      };
+      let message;
+      if (clockResult.reason === 'clock_rollback') {
+        message = 'Local clock appears to be behind the last validated time. Please correct your clock and try again.';
+      } else if (clockResult.reason === 'clock_offline_grace_exceeded') {
+        message = `Ghost has been unable to reach a network time server for too many consecutive runs and can no longer verify your clock offline. Connect to the internet once and try again. (${clockResult.detail || ''})`;
+      } else {
+        message = `Local clock differs significantly from network time. Please correct your clock and try again. (${clockResult.detail || ''})`;
+      }
+      return { state: 'tampered', payload, message };
     }
   }
   const nowMs = clockResult.nowMs;

@@ -27,15 +27,76 @@
 // best estimate of "now" given available time sources.
 
 import https from 'https';
+import { getConfig } from '../config.js';
 
 const ROLLBACK_TOLERANCE_MS = 60 * 1000;          // 60 seconds
 const NETWORK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;  // 5 minutes
 const NETWORK_FETCH_TIMEOUT_MS = 5000;
 const NETWORK_CACHE_TTL_MS = 60 * 60 * 1000;      // 1 hour
 
+// Fail-open grace window. The network fetch failing means we trust the local
+// clock (item 6) so an offline Pro customer is not locked out. But trusting
+// the local clock UNCONDITIONALLY and FOREVER is exactly the attack: block the
+// network, then roll the clock back undetected. So we count consecutive
+// offline validations and, once they exceed this limit, stop failing open and
+// require a successful network check before any further gated run. The limit
+// is generous on purpose so legitimate offline stretches (a long flight, a
+// few days air-gapped) still work; it only bites sustained, deliberate
+// network denial. A single successful network check resets the counter.
+const MAX_CONSECUTIVE_OFFLINE = 10;
+
+// Persisted (cross-process) clock state, separate from the `license` record
+// owned by store.js. Shape: { offlineStreak, lastNetworkOkMs }.
+const CLOCK_STATE_KEY = 'clock';
+
 // In-memory cache so we don't hammer worldtimeapi within a single process.
 // Persists across multiple validator calls in one CLI run.
 let networkCache = null;  // { fetchedAtMs, networkMs }
+
+// Telemetry sink for the fail-open path. Default is best-effort and never
+// throws: it writes a structured diagnostic line to stderr under GHOST_DEBUG
+// so there is a local audit trail of every fail-open event. Tests (and any
+// future remote pipeline) override it via _setClockTelemetrySink to capture
+// the event object directly.
+let clockTelemetrySink = null;
+
+// Indirection so the network fetch can be stubbed deterministically in tests
+// (simulating an offline machine) without real network access.
+let networkTimeFetcher = fetchNetworkTimeMs;
+
+function readClockState() {
+  try {
+    const s = getConfig().get(CLOCK_STATE_KEY);
+    return (s && typeof s === 'object') ? s : {};
+  } catch (_) {
+    // Config unavailable (e.g. read-only/missing store): degrade to a fresh
+    // counter rather than blocking. Persistence is best-effort bookkeeping.
+    return {};
+  }
+}
+
+function writeClockState(state) {
+  try {
+    getConfig().set(CLOCK_STATE_KEY, state);
+  } catch (_) {
+    // Persistence failure must never block validation or be mistaken for
+    // tampering. Worst case the offline counter does not advance this run.
+  }
+}
+
+function emitClockTelemetry(event) {
+  try {
+    if (clockTelemetrySink) {
+      clockTelemetrySink(event);
+      return;
+    }
+    if (process.env.GHOST_DEBUG === '1') {
+      process.stderr.write('ghost: clock-telemetry ' + JSON.stringify(event) + '\n');
+    }
+  } catch (_) {
+    // Telemetry must never affect the validation result.
+  }
+}
 
 function fetchJson(url) {
   return new Promise((resolve, reject) => {
@@ -116,7 +177,7 @@ export async function validateClock(lastSeenIso) {
     networkMs = networkCache.networkMs + (nowLocalMs - networkCache.fetchedAtMs);
     networkSource = networkCache.source + ' (cached)';
   } else {
-    const result = await fetchNetworkTimeMs();
+    const result = await networkTimeFetcher();
     if (result) {
       networkOk = true;
       networkMs = result.ms;
@@ -147,7 +208,62 @@ export async function validateClock(lastSeenIso) {
     }
   }
 
-  // (4) New last_seen is the max of (local, network if available, prior).
+  // (4) Offline grace counter + fail-open telemetry.
+  //
+  // networkOk true  → a live or freshly-cached network check succeeded. Reset
+  //                   the consecutive-offline counter and record the last
+  //                   known-good network time.
+  // networkOk false → we are about to FAIL OPEN (trust the local clock). Emit
+  //                   telemetry so a sustained offline window is visible, warn
+  //                   the user, and advance the counter. Once it exceeds the
+  //                   grace window we stop failing open and demand a real
+  //                   network check, which is the rollback defense for an
+  //                   attacker who can deny network access indefinitely.
+  const clockState = readClockState();
+  let consecutiveOffline = 0;
+
+  if (networkOk) {
+    const lastNetworkOkMs = (networkMs !== null && networkMs !== undefined) ? networkMs : nowLocalMs;
+    if ((clockState.offlineStreak || 0) !== 0 || clockState.lastNetworkOkMs !== lastNetworkOkMs) {
+      writeClockState({ offlineStreak: 0, lastNetworkOkMs });
+    }
+  } else {
+    consecutiveOffline = (clockState.offlineStreak || 0) + 1;
+    const lastNetworkOkMs = (typeof clockState.lastNetworkOkMs === 'number')
+      ? clockState.lastNetworkOkMs
+      : (networkCache ? networkCache.networkMs : null);
+
+    emitClockTelemetry({
+      event: 'clock_fail_open',
+      failureMs: nowLocalMs,
+      failureIso: new Date(nowLocalMs).toISOString(),
+      lastNetworkOkMs,
+      lastNetworkOkIso: lastNetworkOkMs !== null ? new Date(lastNetworkOkMs).toISOString() : null,
+      trustedLocalMs: nowLocalMs,
+      consecutiveOffline,
+    });
+
+    writeClockState({ offlineStreak: consecutiveOffline, lastNetworkOkMs });
+
+    if (consecutiveOffline > MAX_CONSECUTIVE_OFFLINE) {
+      return {
+        ok: false,
+        reason: 'clock_offline_grace_exceeded',
+        nowMs: nowLocalMs,
+        lastSeenMs,
+        networkOk: false,
+        consecutiveOffline,
+        detail: `Offline for ${consecutiveOffline} consecutive runs (limit ${MAX_CONSECUTIVE_OFFLINE}); a successful network time check is now required. Connect to the internet and retry.`,
+      };
+    }
+
+    // Soft warning so the user knows expiration is riding on the local clock.
+    process.stderr.write(
+      'ghost: Network time check skipped (offline mode). License expiration is based on local clock.\n'
+    );
+  }
+
+  // (5) New last_seen is the max of (local, network if available, prior).
   const newLastSeenMs = Math.max(nowLocalMs, networkMs || 0, lastSeenMs);
 
   return {
@@ -159,10 +275,23 @@ export async function validateClock(lastSeenIso) {
     networkSource,
     newLastSeenMs,
     note: networkNote,
+    consecutiveOffline,
   };
 }
 
 // Resets the in-process network cache. Test-only.
 export function _resetNetworkCache() {
   networkCache = null;
+}
+
+// Overrides the fail-open telemetry sink. Pass a function to capture events,
+// or null to restore the default (GHOST_DEBUG stderr line). Test-only.
+export function _setClockTelemetrySink(fn) {
+  clockTelemetrySink = (typeof fn === 'function') ? fn : null;
+}
+
+// Overrides the network-time fetcher so tests can simulate an offline machine
+// deterministically. Pass null to restore the real fetcher. Test-only.
+export function _setNetworkTimeFetcher(fn) {
+  networkTimeFetcher = (typeof fn === 'function') ? fn : fetchNetworkTimeMs;
 }
