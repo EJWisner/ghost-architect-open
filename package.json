@@ -41,7 +41,7 @@
   "scripts": {
     "start": "node bin/ghost.js",
     "dev": "node bin/ghost.js",
-    "test": "node test/parser-fixtures.test.js && node test/ghostBrief.test.mjs && node tests/error-classification.smoke.mjs && node tests/setup-interrupt.smoke.mjs && node tests/prompt-pack-error-sanitize.smoke.mjs && node tests/tier2-failure-warning.smoke.mjs && node tests/team-sync-parse-repo.smoke.mjs && node tests/license-last-seen-write-failure.smoke.mjs && node tests/license-last-seen-validation.smoke.mjs && node tests/license-clock-fail-open-telemetry.smoke.mjs && node tests/verifier-debug-sanitize.smoke.mjs && node tests/reports-integration-failure-warning.smoke.mjs"
+    "test": "node test/parser-fixtures.test.js && node test/ghostBrief.test.mjs && node tests/error-classification.smoke.mjs && node tests/setup-interrupt.smoke.mjs && node tests/prompt-pack-error-sanitize.smoke.mjs && node tests/tier2-failure-warning.smoke.mjs && node tests/team-sync-parse-repo.smoke.mjs && node tests/license-last-seen-write-failure.smoke.mjs && node tests/license-last-seen-validation.smoke.mjs && node tests/license-clock-fail-open-telemetry.smoke.mjs && node tests/verifier-debug-sanitize.smoke.mjs && node tests/reports-integration-failure-warning.smoke.mjs && node tests/prioritizer-error-handling.smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

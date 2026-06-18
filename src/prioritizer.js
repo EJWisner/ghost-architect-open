@@ -28,44 +28,57 @@ const ARCHITECTURE_PATTERNS = [
 ];
 
 export function scoreFile(filePath, content) {
-  let score = 0;
-  const fileName = filePath.toLowerCase();
+  try {
+    // Guard against malformed entries — a null/non-string path or content used
+    // to throw on .toLowerCase()/.split() and abort the entire scan.
+    if (typeof filePath !== 'string' || typeof content !== 'string') {
+      throw new TypeError('scoreFile expects string filePath and content');
+    }
 
-  // High-risk patterns — highest weight
-  for (const pattern of HIGH_RISK_PATTERNS) {
-    if (pattern.test(fileName)) { score += 30; break; }
+    let score = 0;
+    const fileName = filePath.toLowerCase();
+
+    // High-risk patterns — highest weight
+    for (const pattern of HIGH_RISK_PATTERNS) {
+      if (pattern.test(fileName)) { score += 30; break; }
+    }
+
+    // Entry point patterns
+    for (const pattern of ENTRY_POINT_PATTERNS) {
+      if (pattern.test(fileName)) { score += 20; break; }
+    }
+
+    // Architecture patterns
+    for (const pattern of ARCHITECTURE_PATTERNS) {
+      if (pattern.test(fileName)) { score += 15; break; }
+    }
+
+    // Dependency count — files imported by many others score higher
+    const importCount = countImports(content);
+    score += Math.min(importCount * 2, 20);
+
+    // File size proxy — larger files tend to be more complex/important
+    const lines = content.split('\n').length;
+    if (lines > 500) score += 10;
+    if (lines > 200) score += 5;
+
+    // TODO/FIXME density — more TODOs = more technical debt = more interesting
+    const todos = (content.match(/TODO|FIXME|HACK|XXX|BUG/gi) || []).length;
+    score += Math.min(todos * 3, 15);
+
+    // Test files — lower priority (they describe behavior, not implement it)
+    if (/test|spec|__tests__|\.test\.|\.spec\./i.test(fileName)) score -= 20;
+
+    // Config/lock files — low priority
+    if (/package-lock|yarn\.lock|composer\.lock|\.env\.example/i.test(fileName)) score -= 30;
+
+    return Math.max(0, score);
+  } catch (err) {
+    // Never let one bad file abort the scan — score it 0 and warn.
+    const label = typeof filePath === 'string' ? filePath : String(filePath);
+    process.stderr.write(`ghost: skipping unscorable file ${label}: ${err.message}\n`);
+    return 0;
   }
-
-  // Entry point patterns
-  for (const pattern of ENTRY_POINT_PATTERNS) {
-    if (pattern.test(fileName)) { score += 20; break; }
-  }
-
-  // Architecture patterns
-  for (const pattern of ARCHITECTURE_PATTERNS) {
-    if (pattern.test(fileName)) { score += 15; break; }
-  }
-
-  // Dependency count — files imported by many others score higher
-  const importCount = countImports(content);
-  score += Math.min(importCount * 2, 20);
-
-  // File size proxy — larger files tend to be more complex/important
-  const lines = content.split('\n').length;
-  if (lines > 500) score += 10;
-  if (lines > 200) score += 5;
-
-  // TODO/FIXME density — more TODOs = more technical debt = more interesting
-  const todos = (content.match(/TODO|FIXME|HACK|XXX|BUG/gi) || []).length;
-  score += Math.min(todos * 3, 15);
-
-  // Test files — lower priority (they describe behavior, not implement it)
-  if (/test|spec|__tests__|\.test\.|\.spec\./i.test(fileName)) score -= 20;
-
-  // Config/lock files — low priority
-  if (/package-lock|yarn\.lock|composer\.lock|\.env\.example/i.test(fileName)) score -= 30;
-
-  return Math.max(0, score);
 }
 
 function countImports(content) {
@@ -83,11 +96,20 @@ function countImports(content) {
 }
 
 export function prioritizeFileMap(fileMap) {
-  const scored = Object.entries(fileMap).map(([filePath, content]) => ({
-    filePath,
-    content,
-    score: scoreFile(filePath, content),
-  }));
+  const scored = [];
+  for (const [filePath, content] of Object.entries(fileMap || {})) {
+    // Skip entries that can't be scored rather than letting one bad file
+    // (null content, non-string path) abort the whole prioritization pass.
+    if (typeof content !== 'string') {
+      process.stderr.write(`ghost: skipping unscorable file ${filePath}: content is not a string\n`);
+      continue;
+    }
+    try {
+      scored.push({ filePath, content, score: scoreFile(filePath, content) });
+    } catch (err) {
+      process.stderr.write(`ghost: skipping unscorable file ${filePath}: ${err.message}\n`);
+    }
+  }
 
   // Sort by score descending — highest priority files first
   scored.sort((a, b) => b.score - a.score);
