@@ -403,6 +403,13 @@ async function selectMode(codebaseContext, tier = 'open') {
       value: 'ghost-brief',
       disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
     },
+    {
+      name: IS_WINDOWS
+        ? '[EXB] Executive Brief  — One-page business intelligence report'
+        : '📊  Executive Brief  ' + chalk.gray('— One-page business intelligence report'),
+      value: 'executive-brief',
+      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
+    },
     { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
     { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
@@ -1860,6 +1867,99 @@ async function main() {
           }
         } catch (e) {
           console.error(chalk.red(`\n  Ghost Brief failed: ${e.message}\n`));
+        }
+        break;
+      }
+
+      case 'executive-brief': {
+        // ── Executive Brief — in-menu handler ─────────────────────────────
+        const REPORTS_DIR_EB = path.join(os.homedir(), 'Ghost Architect Reports');
+        let ebInputFile = null;
+
+        // Sort by mtime (most recently modified first)
+        if (fs.existsSync(REPORTS_DIR_EB)) {
+          const files = fs.readdirSync(REPORTS_DIR_EB)
+            .filter(f => f.endsWith('.findings.json'))
+            .map(f => ({
+              name: f,
+              mtime: fs.statSync(path.join(REPORTS_DIR_EB, f)).mtimeMs,
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+          const recentFile = files[0];
+          if (recentFile) ebInputFile = path.join(REPORTS_DIR_EB, recentFile.name);
+        }
+
+        if (!ebInputFile) {
+          console.log(chalk.yellow('\n  No findings file found in ~/Ghost Architect Reports/'));
+          console.log(chalk.gray('  Run a scan first, then select Executive Brief.\n'));
+          break;
+        }
+
+        console.log(chalk.gray(`\n  Using findings: ${path.basename(ebInputFile)}`));
+        const { ebConfirmed } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'ebConfirmed',
+          message: `Generate Executive Brief from ${path.basename(ebInputFile)}?`,
+          default: true,
+          theme: inquirerTheme,
+        }]);
+
+        // If user says No, offer file picker instead of bailing
+        if (!ebConfirmed) {
+          const allFiles = fs.readdirSync(REPORTS_DIR_EB)
+            .filter(f => f.endsWith('.findings.json'))
+            .map(f => ({
+              name: f,
+              mtime: fs.statSync(path.join(REPORTS_DIR_EB, f)).mtimeMs,
+            }))
+            .sort((a, b) => b.mtime - a.mtime)
+            .slice(0, 10);
+
+          if (allFiles.length === 0) {
+            console.log(chalk.yellow('\n  No findings files found. Run a scan first.\n'));
+            break;
+          }
+
+          const { chosenFile } = await inquirer.prompt([{
+            type: 'list',
+            name: 'chosenFile',
+            message: 'Choose a findings file:',
+            theme: inquirerTheme,
+            choices: [
+              ...allFiles.map(f => ({
+                name: f.name,
+                value: path.join(REPORTS_DIR_EB, f.name),
+              })),
+              { name: '← Back to menu', value: null },
+            ],
+          }]);
+
+          if (!chosenFile) break;
+          ebInputFile = chosenFile;
+        }
+
+        try {
+          const { runExecutiveBriefMode } = await import('../src/modes/executive-brief.js');
+
+          const raw = JSON.parse(fs.readFileSync(ebInputFile, 'utf8'));
+          const ebFindings = raw.findings || raw.prompts || [];
+          if (!Array.isArray(ebFindings) || ebFindings.length === 0) {
+            console.log(chalk.yellow('\n  Input file has no recognized findings structure.\n'));
+            break;
+          }
+
+          console.log(chalk.gray('  Generating Executive Brief (this calls the API once)...\n'));
+          const { pdfPath } = await runExecutiveBriefMode({
+            findings: ebFindings,
+            tier: getActiveTier() || 'open',
+            scanFile: ebInputFile,
+            codebaseRoot: raw.project || process.cwd(),
+            anthropicClient: null,
+          });
+
+          console.log(chalk.green(`\n  ${SYM.check} Executive Brief written to: ${pdfPath}\n`));
+        } catch (e) {
+          console.error(chalk.red(`\n  Executive Brief failed: ${e.message}\n`));
         }
         break;
       }
