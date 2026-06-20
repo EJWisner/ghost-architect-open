@@ -197,20 +197,20 @@ def paint_bg(canvas, doc):
     canvas.rect(0, 0, letter[0], letter[1], stroke=0, fill=1)
     canvas.setFillColor(MUTED)
     canvas.setFont('Helvetica', 8)
-    canvas.drawCentredString(letter[0] / 2.0, 0.45 * inch, 'ghostarchitect.dev')
+    canvas.drawCentredString(letter[0] / 2.0, 0.45 * inch, payload['footer_text'])
     canvas.setStrokeColor(ORANGE)
     canvas.setLineWidth(0.5)
     canvas.line(0.75 * inch, 0.65 * inch, letter[0] - 0.75 * inch, 0.65 * inch)
     canvas.restoreState()
 
 story = []
-story.append(Paragraph('GHOST ARCHITECT&#8482;', s_logo))
+story.append(Paragraph(payload['company_name'], s_logo))
 story.append(Paragraph('Executive Codebase Intelligence Brief', s_title))
 story.append(Spacer(1, 6))
 story.append(Paragraph('Codebase: %s' % payload['project'], s_meta))
 story.append(Paragraph('Path: %s' % payload['codebaseRoot'], s_meta))
 story.append(Paragraph('Date: %s' % payload['date'], s_meta))
-story.append(Paragraph('CONFIDENTIAL', s_conf))
+story.append(Paragraph(payload['confidentiality_text'], s_conf))
 story.append(Spacer(1, 14))
 
 # Health score + findings summary, side by side.
@@ -337,7 +337,7 @@ function renderPdf(payload) {
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
-export async function runExecutiveBriefMode({ findings, tier, scanFile, codebaseRoot, anthropicClient }) {
+export async function runExecutiveBriefMode({ findings, tier, scanFile, codebaseRoot, anthropicClient, branding }) {
   const data = buildBriefData(findings);
   const healthScore = computeHealthScore(data);
   const label = healthLabel(healthScore);
@@ -368,6 +368,9 @@ export async function runExecutiveBriefMode({ findings, tier, scanFile, codebase
     healthColor: healthColor(healthScore),
     data,
     narrative,
+    company_name:         branding ? branding.companyName    : 'GHOST ARCHITECT\u2122',
+    footer_text:          branding ? branding.footerText      : 'ghostarchitect.dev',
+    confidentiality_text: branding ? branding.confidentiality : 'CONFIDENTIAL',
   };
 
   const pdfPath = renderPdf(payload);

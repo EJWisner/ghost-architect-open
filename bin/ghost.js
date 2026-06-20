@@ -17,7 +17,7 @@ import { runAuditMode } from '../src/modes/audit/index.js';
 import { pingModeUsage } from '../src/telemetry/pulse.js';
 import { TIER_CAPS, getTierCap } from '../src/loader/tierCaps.js';
 import { listPresets } from '../src/loader/excludes.js';
-import { loadProfile, cleanCache, getCacheSize } from '../src/profile/index.js';
+import { loadProfile, cleanCache, getCacheSize, getBranding } from '../src/profile/index.js';
 import { runProfileWizard } from '../src/profile/wizard.js';
 import { writeProfile, listProfiles, deleteProfile, profilePathFor, getProfilesDir } from '../src/profile/writer.js';
 import fs, { realpathSync } from 'fs';
@@ -1854,7 +1854,7 @@ async function main() {
             tier:         getActiveTier() || 'open',
           });
 
-          const { jsonPath, htmlPath } = writeBrief(brief, briefOutputFile);
+          const { jsonPath, htmlPath } = writeBrief(brief, briefOutputFile, getBranding(profile));
           console.log(chalk.green(`\n  ${SYM.check} Ghost Brief™ written to: ${jsonPath}`));
           console.log(chalk.green(`  ${SYM.check} HTML report written to: ${htmlPath}`));
           console.log(chalk.gray(`    ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated\n`));
@@ -1955,6 +1955,7 @@ async function main() {
             scanFile: ebInputFile,
             codebaseRoot: raw.project || process.cwd(),
             anthropicClient: null,
+            branding: getBranding(profile),
           });
 
           console.log(chalk.green(`\n  ${SYM.check} Executive Brief written to: ${pdfPath}\n`));
@@ -2037,7 +2038,7 @@ if (process.argv.includes('--brief')) {
       codemaseRoot: process.cwd(),
       tier: briefTier
     });
-    const { jsonPath, htmlPath } = writeBrief(brief, outputFile);
+    const { jsonPath, htmlPath } = writeBrief(brief, outputFile, getBranding(profile));
     console.log(`Ghost Brief written to: ${jsonPath}`);
     console.log(`HTML report written to: ${htmlPath}`);
     console.log(`  ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated`);
