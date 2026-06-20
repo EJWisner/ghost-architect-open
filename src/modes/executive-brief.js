@@ -99,6 +99,7 @@ export function buildBriefData(findings) {
     totalEffortHours: Math.round(totalEffortHours * 10) / 10,
     estimatedManualCost: Math.round(totalEffortHours * 200),
     estimatedAiCost: Math.round(totalEffortHours * 0.15 * 100) / 100,
+    estimatedAiHours: Math.max(1, Math.ceil(totalEffortHours * 0.10)),
     blastProfile,
   };
 }
@@ -262,7 +263,7 @@ story.append(Paragraph('Remediation Cost Comparison', s_section))
 cost_rows = [
     ['Approach', 'Effort', 'Estimated Cost'],
     ['Manual remediation', '%s hrs' % sev['totalEffortHours'], '$%s' % format(sev['estimatedManualCost'], ',')],
-    ['AI-assisted remediation', '%s hrs' % sev['totalEffortHours'], '$%s' % format(sev['estimatedAiCost'], ',')],
+    ['AI-assisted with Ghost Brief', '~%s hrs' % sev['estimatedAiHours'], '~$%.2f in API costs' % sev['estimatedAiCost']],
 ]
 cost_tbl = Table(cost_rows, colWidths=[2.4 * inch, 1.1 * inch, 1.7 * inch])
 cost_tbl.setStyle(TableStyle([
