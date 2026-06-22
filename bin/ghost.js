@@ -344,7 +344,7 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
   ];
 
   if (profilesAllowed) {
-    choices.push({ name: (IS_WINDOWS ? '[GP]  Manage Ghost Partner Profiles  ' : '👤  Manage Ghost Partner Profiles  ') + (IS_WINDOWS ? '' : chalk.gray('— Create, edit, set default, delete')), value: 'profiles' });
+    // Profile management now included inline in choices above
   }
 
   if (!usingEnvKey()) {
@@ -409,6 +409,13 @@ async function selectMode(codebaseContext, tier = 'open') {
         : '📊  Executive Brief  ' + chalk.gray('— One-page business intelligence report'),
       value: 'executive-brief',
       disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
+    },
+    {
+      name: IS_WINDOWS
+        ? '[PRF] Ghost Partner Profile  — create or manage white-label consultant profiles'
+        : '👤  Ghost Partner Profile  ' + chalk.gray('— create or manage white-label consultant profiles'),
+      value: 'profiles',
+      disabled: TIER === 'open' ? chalk.gray('(Pro or higher)') : false,
     },
     { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
     { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
@@ -1962,6 +1969,108 @@ async function main() {
         } catch (e) {
           console.error(chalk.red(`\n  Executive Brief failed: ${e.message}\n`));
         }
+        break;
+      }
+
+      case 'profiles': {
+        const profilesDir = path.join(os.homedir(), '.ghost', 'profiles');
+        let availableProfiles = [];
+        if (fs.existsSync(profilesDir)) {
+          availableProfiles = fs.readdirSync(profilesDir)
+            .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
+            .map(f => ({
+              name: f.replace(/\.(yaml|yml)$/, ''),
+              value: path.join(profilesDir, f),
+            }));
+        }
+        const defaultSlug = getDefaultProfileSlug();
+        const { profileAction } = await inquirer.prompt([{
+          type: 'list',
+          name: 'profileAction',
+          message: chalk.cyan('Ghost Partner Profile'),
+          theme: inquirerTheme,
+          choices: [
+            { name: '✏️   Create new profile', value: 'create' },
+            ...(availableProfiles.length > 0 ? [{ name: '👤  Select and use a profile this session', value: 'select' }] : []),
+            ...(availableProfiles.length > 0 ? [{ name: '📋  List my profiles', value: 'list' }] : []),
+            ...(availableProfiles.length > 0 ? [{ name: '⭐  Set default profile', value: 'set-default' }] : []),
+            { name: '✖️   Clear default profile', value: 'clear-default' },
+            new inquirer.Separator(),
+            { name: '← Back', value: 'back' },
+          ],
+        }]);
+
+        if (profileAction === 'back') break;
+
+        if (profileAction === 'create') {
+          const { runProfileWizard } = await import('../src/profile/wizard.js');
+          const savedPath = await runProfileWizard();
+          if (savedPath) {
+            const { confirmed: useNow } = await inquirer.prompt([{
+              type: 'confirm',
+              name: 'confirmed',
+              message: chalk.cyan('Use this profile for this session?'),
+              default: true,
+              theme: inquirerTheme,
+            }]);
+            if (useNow) {
+              profile = await loadProfile(savedPath);
+              console.log(chalk.green(`\n  ✓ Profile active: ${path.basename(savedPath, '.yaml')}\n`));
+            }
+          }
+        }
+
+        if (profileAction === 'select') {
+          const defaultBadge = (p) => p.name === defaultSlug ? chalk.gray(' (default)') : '';
+          const { selected } = await inquirer.prompt([{
+            type: 'list',
+            name: 'selected',
+            message: chalk.cyan('Select profile to use this session:'),
+            theme: inquirerTheme,
+            choices: [
+              ...availableProfiles.map(p => ({ name: p.name + defaultBadge(p), value: p.value })),
+              new inquirer.Separator(),
+              { name: '← Cancel', value: null },
+            ],
+          }]);
+          if (selected) {
+            profile = await loadProfile(selected);
+            console.log(chalk.green(`\n  ✓ Profile active: ${path.basename(selected, '.yaml')}\n`));
+          }
+        }
+
+        if (profileAction === 'list') {
+          if (availableProfiles.length === 0) {
+            console.log(chalk.yellow('\n  No profiles found. Create one first.\n'));
+          } else {
+            console.log(chalk.cyan('\n  Your profiles:\n'));
+            availableProfiles.forEach(p => {
+              const isDefault = p.name === defaultSlug ? chalk.yellow(' ★ default') : '';
+              console.log(chalk.white(`  • ${p.name}`) + isDefault + chalk.gray(` — ${p.value}`));
+            });
+            console.log('');
+          }
+        }
+
+        if (profileAction === 'set-default') {
+          const { selected } = await inquirer.prompt([{
+            type: 'list',
+            name: 'selected',
+            message: chalk.cyan('Select profile to set as default:'),
+            theme: inquirerTheme,
+            choices: availableProfiles.map(p => ({ name: p.name, value: p.name })),
+          }]);
+          if (selected) {
+            setDefaultProfileSlug(selected);
+            console.log(chalk.green(`\n  ✓ Default profile set to: ${selected}\n`));
+          }
+        }
+
+        if (profileAction === 'clear-default') {
+          setDefaultProfileSlug(null);
+          console.log(chalk.green('\n  ✓ Default profile cleared.\n'));
+        }
+
         break;
       }
     }
