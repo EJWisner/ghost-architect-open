@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v8.2.5** — Ghost Partner Profiles in the top-level menu. Executive Brief. Ghost Brief. White-label across all seven report types.
+**v8.2.7** — Ghost Partner Profiles in the top-level menu. Executive Brief. Ghost Brief. White-label across all seven report types.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
