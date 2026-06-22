@@ -1589,7 +1589,8 @@ async function main() {
       }
 
       if (method === 'profiles-topLevel') {
-        if (!profilesAllowed) {
+        const profilesAllowedTopLevel = requireTier('feature:profiles', { tier: TIER }).allowed;
+        if (!profilesAllowedTopLevel) {
           console.log(chalk.yellow('\n  Ghost Partner Profile requires Ghost Pro or higher.'));
           console.log(chalk.gray('  You are currently on Ghost ' + TIER + '.'));
           console.log(chalk.cyan('  Upgrade at ghostarchitect.dev/pricing\n'));
