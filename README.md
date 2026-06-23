@@ -697,7 +697,7 @@ Ghost Architect™ is proprietary software. Unauthorized use, reproduction, or d
 
 *Not a code generator. A thinking accelerator.*
 
-## What's New in v9.0.0
+## What's New in v9.0.5
 
 ### 🔭 Ghost Watcher™ — Automatic commit monitoring
 
