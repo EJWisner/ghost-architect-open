@@ -1,0 +1,25 @@
+ghost_watcher:
+  version: "1.0"
+  enabled: true
+  trigger:
+    branches:
+      - feature/**
+      - v7-unified
+  scans:
+    blast_radius: true
+    conflict_detection: true
+    ghost_brief: true
+    conflict_verify: false
+  portal:
+    repo: ""
+    token_env: GHOST_PORTAL_TOKEN
+  notifications:
+    pr_comment: true
+    email:
+      - ejwisner@gmail.com
+  iterations:
+    max: 5
+    exit_threshold:
+      max_severity: medium
+  team:
+    config: team.yaml

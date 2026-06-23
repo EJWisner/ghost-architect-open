@@ -2139,7 +2139,7 @@ async function main() {
           validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
         }]);
 
-        const { branches } = await inquirer.prompt([{
+        const { branches: selectedBranches } = await inquirer.prompt([{
           type: 'checkbox', name: 'branches',
           message: chalk.cyan('Which branches to watch?'),
           choices: [
@@ -2151,6 +2151,17 @@ async function main() {
           ],
           validate: arr => arr.length > 0 ? true : 'Select at least one branch',
         }]);
+
+        const { customBranches } = await inquirer.prompt([{
+          type: 'input', name: 'customBranches',
+          message: chalk.cyan('Add custom branch names? (comma-separated, leave blank to skip):'),
+          default: '',
+        }]);
+
+        const extraBranches = customBranches
+          .split(',').map(s => s.trim()).filter(Boolean);
+
+        const branches = [...selectedBranches, ...extraBranches];
 
         const { scans } = await inquirer.prompt([{
           type: 'checkbox', name: 'scans',
@@ -2221,7 +2232,7 @@ async function main() {
           const watchResult = await enableWatch({
             repoUrl,
             token,
-            version,
+            version: VERSION,
             watchOptions: {
               branches,
               blastRadius:       scans.includes('blast'),
