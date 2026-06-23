@@ -131,10 +131,16 @@ export function resolveDeveloperIdentity() {
   try {
     const name  = execSync('git config user.name',  { encoding: 'utf8' }).trim();
     const email = execSync('git config user.email', { encoding: 'utf8' }).trim();
-    return { name, email };
-  } catch {
-    return { name: 'unknown', email: 'unknown' };
+    if (name && name !== 'unknown') return { name, email };
+  } catch { /* fall through to GitHub env */ }
+
+  // GitHub Actions fallback — git config not set on ephemeral runners
+  const actor = process.env.GITHUB_ACTOR;
+  if (actor) {
+    return { name: actor, email: `${actor}@users.noreply.github.com` };
   }
+
+  return { name: 'unknown', email: 'unknown' };
 }
 
 // ── Portal repo push ──────────────────────────────────────────────────────────
