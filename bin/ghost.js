@@ -111,6 +111,7 @@ function parseArgs(argv) {
     licenseDebug: false,
     cleanCache: false,
     skipRedaction: false,
+    watcherCommit: false,
     help: false,
     version: false,
   };
@@ -158,6 +159,7 @@ function parseArgs(argv) {
     if (a === '--set-default-profile')          { out.setDefaultProfile = argv[++i] || ''; continue; }
     if (a.startsWith('--set-default-profile=')) { out.setDefaultProfile = a.slice('--set-default-profile='.length); continue; }
     if (a === '--clear-default-profile')        { out.clearDefaultProfile = true; continue; }
+    if (a === '--watcher-commit')                 { out.watcherCommit = true; continue; }
     // License management flags.
     if (a === '--activate')         { out.activate = argv[++i] || ''; continue; }
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
@@ -374,6 +376,7 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
 
 async function selectMode(codebaseContext, tier = 'open') {
   const BRIEF_TIERS = ['pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+  const WATCH_TIERS = ['team', 'team-max', 'enterprise', 'enterprise-max'];
 
   console.log('\n' + boxen(
     chalk.green.bold(SYM.check + ' Project processed') + '\n' +
@@ -412,6 +415,43 @@ async function selectMode(codebaseContext, tier = 'open') {
       value: 'executive-brief',
       disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
     },
+    new inquirer.Separator(IS_WINDOWS ? '── Ghost Watcher ──' : '─── Ghost Watcher™ ─────────────────────────────────'),
+    {
+      name: IS_WINDOWS
+        ? '[WEN] Enable Watch     — monitor commits on this repo'
+        : '🔭  Enable Watch     ' + chalk.gray('— monitor commits on this repo'),
+      value: 'watch-enable',
+      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
+    },
+    {
+      name: IS_WINDOWS
+        ? '[WST] Watch Status     — view active Watch configuration'
+        : '📋  Watch Status     ' + chalk.gray('— view active Watch configuration'),
+      value: 'watch-status',
+      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
+    },
+    {
+      name: IS_WINDOWS
+        ? '[WCF] Configure Watch  — change branches, modes, notifications'
+        : '⚙   Configure Watch  ' + chalk.gray('— change branches, modes, notifications'),
+      value: 'watch-configure',
+      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
+    },
+    {
+      name: IS_WINDOWS
+        ? '[WDS] Disable Watch    — remove Watch from this repo'
+        : '🚫  Disable Watch    ' + chalk.gray('— remove Watch from this repo'),
+      value: 'watch-disable',
+      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
+    },
+    {
+      name: IS_WINDOWS
+        ? '[WTM] Manage Team      — add, reassign, or deactivate members'
+        : '👥  Manage Team      ' + chalk.gray('— add, reassign, or deactivate members'),
+      value: 'watch-team',
+      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
+    },
+    new inquirer.Separator(IS_WINDOWS ? '── Other ──' : '─── Other ───────────────────────────────────────'),
     {
       name: IS_WINDOWS
         ? '[PRF] Ghost Partner Profile  — create or manage white-label consultant profiles'
@@ -2083,6 +2123,204 @@ async function main() {
         break;
       }
 
+      case 'watch-enable': {
+        const { enableWatch, buildWatchConfig } = await import('../src/watch/index.js');
+        console.log('\n' + boxen(
+          chalk.cyan.bold('🔭 ENABLE GHOST WATCH™') + '\n' +
+          chalk.gray('Monitor commits automatically. Findings delivered to Ghost Portal on every push.'),
+          { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+        ));
+        console.log('');
+
+        const { repoUrl } = await inquirer.prompt([{
+          type: 'input', name: 'repoUrl',
+          message: chalk.cyan('GitHub repo URL to watch:'),
+          default: '',
+          validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
+        }]);
+
+        const { branches } = await inquirer.prompt([{
+          type: 'checkbox', name: 'branches',
+          message: chalk.cyan('Which branches to watch?'),
+          choices: [
+            { name: 'main',          value: 'main',          checked: true },
+            { name: 'develop',       value: 'develop',       checked: true },
+            { name: 'feature/**',    value: 'feature/**',    checked: true },
+            { name: 'bugfix/**',     value: 'bugfix/**',     checked: false },
+            { name: 'release/**',    value: 'release/**',    checked: false },
+          ],
+          validate: arr => arr.length > 0 ? true : 'Select at least one branch',
+        }]);
+
+        const { scans } = await inquirer.prompt([{
+          type: 'checkbox', name: 'scans',
+          message: chalk.cyan('Which scans to run on each commit?'),
+          choices: [
+            { name: 'Blast Radius',       value: 'blast',    checked: true },
+            { name: 'Conflict Detection', value: 'conflict', checked: true },
+            { name: 'Ghost Brief',        value: 'brief',    checked: true },
+          ],
+          validate: arr => arr.length > 0 ? true : 'Select at least one scan',
+        }]);
+
+        const { prComment } = await inquirer.prompt([{
+          type: 'confirm', name: 'prComment',
+          message: chalk.cyan('Post PR comment with findings summary?'),
+          default: true,
+        }]);
+
+        const { emailInput } = await inquirer.prompt([{
+          type: 'input', name: 'emailInput',
+          message: chalk.cyan('Email notifications? (comma-separated, leave blank to skip):'),
+          default: '',
+        }]);
+        const emailRecipients = emailInput
+          .split(',').map(s => s.trim()).filter(Boolean);
+
+        const { token } = await inquirer.prompt([{
+          type: 'password', name: 'token',
+          message: chalk.cyan('GitHub Personal Access Token (repo write scope):'),
+          validate: v => v.trim().length > 0 ? true : 'Token is required',
+        }]);
+
+        const { commitsPerDay } = await inquirer.prompt([{
+          type: 'input', name: 'commitsPerDay',
+          message: chalk.cyan('Estimated commits per day across your team:'),
+          default: '10',
+          validate: v => Number.isFinite(parseInt(v, 10)) && parseInt(v, 10) > 0 ? true : 'Enter a positive number',
+        }]);
+
+        // Show cost estimate before final confirmation
+        const { estimateWatcherCost } = await import('../src/watch/index.js');
+        const estimate = estimateWatcherCost({
+          commitsPerDay:     parseInt(commitsPerDay, 10),
+          blastRadius:       scans.includes('blast'),
+          conflictDetection: scans.includes('conflict'),
+        });
+
+        console.log('\n' + boxen(
+          chalk.cyan.bold('💰 ESTIMATED API COST') + '\n' +
+          chalk.gray('Charged to your Anthropic API key. Ghost does not charge for API usage.\n') +
+          chalk.white(`Per commit:     `) + chalk.yellow(`$${estimate.perRun.low.toFixed(2)} – $${estimate.perRun.high.toFixed(2)}`) + '\n' +
+          chalk.white(`Daily (~${commitsPerDay} commits): `) + chalk.yellow(`$${estimate.daily.low.toFixed(2)} – $${estimate.daily.high.toFixed(2)}`) + '\n' +
+          chalk.white(`Monthly est.:   `) + chalk.yellow(`$${estimate.monthly.low.toFixed(2)} – $${estimate.monthly.high.toFixed(2)}`),
+          { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+        ));
+        console.log('');
+
+        const { confirm } = await inquirer.prompt([{
+          type: 'confirm', name: 'confirm',
+          message: chalk.cyan(`Push ghost-watcher.yaml and GitHub Actions workflow to ${repoUrl}?`),
+          default: true,
+        }]);
+
+        if (!confirm) { console.log(chalk.gray('\nCancelled.\n')); break; }
+
+        try {
+          const spinner = ora({ text: chalk.gray('Pushing Watch configuration to repo...'), color: 'cyan' }).start();
+          await enableWatch({
+            repoUrl,
+            token,
+            watchOptions: {
+              branches,
+              blastRadius:       scans.includes('blast'),
+              conflictDetection: scans.includes('conflict'),
+              ghostBrief:        scans.includes('brief'),
+              prComment,
+              emailRecipients,
+            },
+          });
+          spinner.succeed(chalk.green('Ghost Watcher enabled'));
+          console.log('');
+          console.log(chalk.cyan('  Next steps:'));
+          console.log(chalk.gray('  1. Add these secrets to your GitHub repo:'));
+          console.log(chalk.gray('     ANTHROPIC_API_KEY — your Anthropic API key'));
+          console.log(chalk.gray('     GHOST_LICENSE_KEY — your Ghost Team license key'));
+          console.log(chalk.gray('     GHOST_PORTAL_REPO — your ghost-reports repo URL'));
+          console.log(chalk.gray('     GHOST_PORTAL_TOKEN — GitHub PAT with repo write scope'));
+          console.log('');
+        } catch (err) {
+          console.error(chalk.red(`\n  Enable Watch failed: ${err.message}\n`));
+        }
+        break;
+      }
+
+      case 'watch-status': {
+        const { getWatchStatus } = await import('../src/watch/index.js');
+        const { repoUrl } = await inquirer.prompt([{
+          type: 'input', name: 'repoUrl',
+          message: chalk.cyan('GitHub repo URL:'),
+          validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
+        }]);
+        const { token } = await inquirer.prompt([{
+          type: 'password', name: 'token',
+          message: chalk.cyan('GitHub Personal Access Token:'),
+          validate: v => v.trim().length > 0 ? true : 'Token is required',
+        }]);
+        try {
+          const status = await getWatchStatus({ repoUrl, token });
+          if (!status) {
+            console.log(chalk.yellow('\n  Ghost Watcher is not configured for this repo.\n'));
+            console.log(chalk.gray('  Select "Enable Watch" to set it up.\n'));
+          } else {
+            console.log('\n' + boxen(
+              chalk.cyan.bold('📋 WATCH STATUS') + '\n\n' +
+              chalk.gray('Enabled:    ') + chalk.bold(status.enabled ? chalk.green('Yes') : chalk.red('No')) + '\n' +
+              chalk.gray('Branches:   ') + chalk.white((status.trigger?.branches || []).join(', ')) + '\n' +
+              chalk.gray('Blast:      ') + chalk.white(status.scans?.blast_radius ? 'On' : 'Off') + '\n' +
+              chalk.gray('Conflict:   ') + chalk.white(status.scans?.conflict_detection ? 'On' : 'Off') + '\n' +
+              chalk.gray('Ghost Brief:') + chalk.white(status.scans?.ghost_brief ? 'On' : 'Off') + '\n' +
+              chalk.gray('PR Comment: ') + chalk.white(status.notifications?.pr_comment ? 'On' : 'Off'),
+              { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+            ));
+            console.log('');
+          }
+        } catch (err) {
+          console.error(chalk.red(`\n  Watch Status failed: ${err.message}\n`));
+        }
+        break;
+      }
+
+      case 'watch-configure': {
+        console.log(chalk.cyan('\n  Configure Watch — coming in Ghost Watcher v9.0.1\n'));
+        console.log(chalk.gray('  For now, edit ghost-watcher.yaml directly in your repo.\n'));
+        break;
+      }
+
+      case 'watch-disable': {
+        const { disableWatch } = await import('../src/watch/index.js');
+        const { repoUrl } = await inquirer.prompt([{
+          type: 'input', name: 'repoUrl',
+          message: chalk.cyan('GitHub repo URL:'),
+          validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
+        }]);
+        const { token } = await inquirer.prompt([{
+          type: 'password', name: 'token',
+          message: chalk.cyan('GitHub Personal Access Token:'),
+          validate: v => v.trim().length > 0 ? true : 'Token is required',
+        }]);
+        const { confirm } = await inquirer.prompt([{
+          type: 'confirm', name: 'confirm',
+          message: chalk.yellow(`Disable Ghost Watcher on ${repoUrl}?`),
+          default: false,
+        }]);
+        if (!confirm) { console.log(chalk.gray('\nCancelled.\n')); break; }
+        try {
+          await disableWatch({ repoUrl, token });
+          console.log(chalk.green('\n  Ghost Watcher disabled.\n'));
+          console.log(chalk.gray('  The workflow file is still in your repo — re-enable anytime.\n'));
+        } catch (err) {
+          console.error(chalk.red(`\n  Disable Watch failed: ${err.message}\n`));
+        }
+        break;
+      }
+
+      case 'watch-team': {
+        console.log(chalk.cyan('\n  Manage Team — coming in Ghost Watcher v9.0.1\n'));
+        console.log(chalk.gray('  Team management will be available in the next release.\n'));
+        break;
+      }
+
       case 'profiles': {
         const profilesDir = path.join(os.homedir(), '.ghost', 'profiles');
         let availableProfiles = [];
@@ -2186,6 +2424,32 @@ async function main() {
       }
     }
   }
+}
+
+// ── Ghost Watcher — headless CI mode ───────────────────────────────────────
+if (process.argv.includes('--watcher-commit')) {
+  const { runWatchCommit } = await import('../src/modes/watcher-commit.js');
+  const { version } = _require('../package.json');
+
+  let watchTier;
+  try {
+    const watchLicenseResult = await validateLicense({ skipNetworkClock: true });
+    setActiveLicense(watchLicenseResult);
+    watchTier = getActiveTier() || 'open';
+  } catch (err) {
+    reportLicenseValidationError(err, { debug: process.argv.includes('--license-debug'), degraded: false });
+    process.exit(0); // advisory — never block a commit
+  }
+
+  const WATCH_TIERS = ['team', 'team-max', 'enterprise', 'enterprise-max'];
+  if (!WATCH_TIERS.includes(watchTier)) {
+    console.error('👻 Ghost Watcher requires Ghost Team or higher.');
+    console.error('   Upgrade at: https://ghostarchitect.dev/upgrade');
+    process.exit(0); // advisory — never block a commit
+  }
+
+  await runWatchCommit({ tier: watchTier, version });
+  process.exit(0);
 }
 
 // ── Ghost Brief ───────────────────────────────────────────────────────────
