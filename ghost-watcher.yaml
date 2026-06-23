@@ -11,15 +11,13 @@ ghost_watcher:
     ghost_brief: true
     conflict_verify: false
   portal:
-    repo: ""
+    repo: https://github.com/EJWisner/ghost-reports-portal-test
     token_env: GHOST_PORTAL_TOKEN
   notifications:
     pr_comment: true
     email:
       - ejwisner@gmail.com
   iterations:
-    max: 5
-    exit_threshold:
-      max_severity: medium
+    max: 50
   team:
     config: team.yaml
