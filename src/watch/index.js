@@ -147,9 +147,16 @@ export async function enableWatch({ repoUrl, token, watchOptions = {}, version =
   // Build ghost-watcher.yaml
   const watchConfigContent = buildWatchConfig(watchOptions);
 
-  // Read the workflow template and pin the current Ghost version
+  // Read the workflow template, pin the current Ghost version, and inject branches
+  const branches = watchOptions.branches || ['main', 'develop', 'feature/**', 'bugfix/**'];
+  const branchYaml = branches.map(b => `      - '${b}'`).join('\n');
+
   const workflowContent = fs.readFileSync(WORKFLOW_TEMPLATE_PATH, 'utf8')
-    .replace('ghost-architect-open@latest', `ghost-architect-open@${version}`);
+    .replace('ghost-architect-open@latest', `ghost-architect-open@${version}`)
+    .replace(
+      /on:\n  push:\n    branches:\n(      - .+\n)+/,
+      `on:\n  push:\n    branches:\n${branchYaml}\n`
+    );
 
   // Push ghost-watcher.yaml (requires repo scope only)
   await upsertRepoFile(

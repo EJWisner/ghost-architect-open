@@ -12,6 +12,7 @@ on:
       - develop
       - 'feature/**'
       - 'bugfix/**'
+      - 'v7-unified'
   pull_request:
     types: [opened, synchronize]
 
