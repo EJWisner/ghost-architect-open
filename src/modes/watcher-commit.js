@@ -22,7 +22,7 @@ import { createOctokit } from '../utils/octokit-client.js';
 import { getPortalConfig, isPortalConfigured } from '../core/portal-publish.js';
 import { loadProfile, getBranding } from '../profile/index.js';
 import { getDefaultProfileSlug } from '../config.js';
-import { loadFromPath } from '../loader/index.js';
+import { loadFromPath, setScanOptions } from '../loader/index.js';
 import { runBlastRadius } from '../analyst/index.js';
 import { runConflictScan } from '../core/conflict.js';
 import { extractFindings } from '../utils/finding-parser.js';
@@ -386,6 +386,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
 
   // ── Step 4: Load codebase ────────────────────────────────────────────────
   console.log('Ghost Watcher: loading codebase context...');
+  setScanOptions({ tier });
   let codebaseContext;
   try {
     codebaseContext = await loadFromPath(repoRoot);
