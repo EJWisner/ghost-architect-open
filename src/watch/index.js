@@ -140,17 +140,18 @@ export function buildWatchConfig({
  * @param {string} args.token          GitHub PAT with repo write scope
  * @param {object} args.watchOptions   Options from the wizard (passed to buildWatchConfig)
  */
-export async function enableWatch({ repoUrl, token, watchOptions = {} }) {
+export async function enableWatch({ repoUrl, token, watchOptions = {}, version = 'latest' }) {
   const octokit         = createOctokit({ auth: token });
   const { owner, repo } = parseRepo(repoUrl);
 
   // Build ghost-watcher.yaml
   const watchConfigContent = buildWatchConfig(watchOptions);
 
-  // Read the workflow template
-  const workflowContent = fs.readFileSync(WORKFLOW_TEMPLATE_PATH, 'utf8');
+  // Read the workflow template and pin the current Ghost version
+  const workflowContent = fs.readFileSync(WORKFLOW_TEMPLATE_PATH, 'utf8')
+    .replace('ghost-architect-open@latest', `ghost-architect-open@${version}`);
 
-  // Push both files
+  // Push ghost-watcher.yaml (requires repo scope only)
   await upsertRepoFile(
     octokit, owner, repo,
     WATCH_CONFIG_PATH,
@@ -158,14 +159,23 @@ export async function enableWatch({ repoUrl, token, watchOptions = {} }) {
     'ghost-watcher: enable Ghost Watcher™'
   );
 
-  await upsertRepoFile(
-    octokit, owner, repo,
-    WORKFLOW_DEST_PATH,
-    workflowContent,
-    'ghost-watcher: add GitHub Actions workflow'
-  );
+  // Push GitHub Actions workflow (requires workflow scope)
+  // If token lacks workflow scope, return workflow content for manual setup
+  let workflowPushed = false;
+  try {
+    await upsertRepoFile(
+      octokit, owner, repo,
+      WORKFLOW_DEST_PATH,
+      workflowContent,
+      'ghost-watcher: add GitHub Actions workflow'
+    );
+    workflowPushed = true;
+  } catch (err) {
+    // workflow scope not available — customer must add manually
+    workflowPushed = false;
+  }
 
-  return { ok: true, owner, repo };
+  return { ok: true, owner, repo, workflowPushed, workflowContent };
 }
 
 // ── Disable Watch ─────────────────────────────────────────────────────────────

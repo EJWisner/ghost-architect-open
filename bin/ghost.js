@@ -2126,7 +2126,7 @@ async function main() {
       case 'watch-enable': {
         const { enableWatch, buildWatchConfig } = await import('../src/watch/index.js');
         console.log('\n' + boxen(
-          chalk.cyan.bold('🔭 ENABLE GHOST WATCH™') + '\n' +
+          chalk.cyan.bold('🔭 ENABLE GHOST WATCHER™') + '\n' +
           chalk.gray('Monitor commits automatically. Findings delivered to Ghost Portal on every push.'),
           { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
         ));
@@ -2217,10 +2217,11 @@ async function main() {
         if (!confirm) { console.log(chalk.gray('\nCancelled.\n')); break; }
 
         try {
-          const spinner = ora({ text: chalk.gray('Pushing Watch configuration to repo...'), color: 'cyan' }).start();
-          await enableWatch({
+          console.log(chalk.gray('\n  Pushing Ghost Watcher configuration to repo...'));
+          const watchResult = await enableWatch({
             repoUrl,
             token,
+            version,
             watchOptions: {
               branches,
               blastRadius:       scans.includes('blast'),
@@ -2230,10 +2231,27 @@ async function main() {
               emailRecipients,
             },
           });
-          spinner.succeed(chalk.green('Ghost Watcher enabled'));
+          console.log(chalk.green('\n  ✓ Ghost Watcher configuration pushed'));
           console.log('');
-          console.log(chalk.cyan('  Next steps:'));
-          console.log(chalk.gray('  1. Add these secrets to your GitHub repo:'));
+
+          if (!watchResult.workflowPushed) {
+            console.log(chalk.yellow('  ⚠  GitHub Actions workflow requires additional setup.'));
+            console.log(chalk.gray('  Your token needs "workflow" scope to push workflow files.'));
+            console.log('');
+            console.log(chalk.cyan('  Manual step — create this file in your repo:'));
+            console.log(chalk.white('  .github/workflows/ghost-watcher.yml'));
+            console.log('');
+            console.log(chalk.gray('  With this content:'));
+            console.log(chalk.gray('  ─────────────────────────────────────────'));
+            console.log(watchResult.workflowContent);
+            console.log(chalk.gray('  ─────────────────────────────────────────'));
+            console.log('');
+          } else {
+            console.log(chalk.green('  ✓ GitHub Actions workflow pushed'));
+            console.log('');
+          }
+
+          console.log(chalk.cyan('  Next steps — add these secrets to your GitHub repo:'));
           console.log(chalk.gray('     ANTHROPIC_API_KEY — your Anthropic API key'));
           console.log(chalk.gray('     GHOST_LICENSE_KEY — your Ghost Team license key'));
           console.log(chalk.gray('     GHOST_PORTAL_REPO — your ghost-reports repo URL'));
@@ -2249,9 +2267,10 @@ async function main() {
         const { getWatchStatus } = await import('../src/watch/index.js');
         const { repoUrl } = await inquirer.prompt([{
           type: 'input', name: 'repoUrl',
-          message: chalk.cyan('GitHub repo URL:'),
-          validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
+          message: chalk.cyan('GitHub repo URL (or \'back\' to cancel):'),
+          validate: v => isBackKeyword(v) || v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
         }]);
+        if (isBack(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
         const { token } = await inquirer.prompt([{
           type: 'password', name: 'token',
           message: chalk.cyan('GitHub Personal Access Token:'),
@@ -2291,9 +2310,10 @@ async function main() {
         const { disableWatch } = await import('../src/watch/index.js');
         const { repoUrl } = await inquirer.prompt([{
           type: 'input', name: 'repoUrl',
-          message: chalk.cyan('GitHub repo URL:'),
-          validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
+          message: chalk.cyan('GitHub repo URL (or \'back\' to cancel):'),
+          validate: v => isBackKeyword(v) || v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
         }]);
+        if (isBack(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
         const { token } = await inquirer.prompt([{
           type: 'password', name: 'token',
           message: chalk.cyan('GitHub Personal Access Token:'),

@@ -1,0 +1,22 @@
+ghost_watcher:
+  version: 1.0
+  enabled: true
+
+  trigger:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'bugfix/**'
+
+  scans:
+    blast_radius: true
+    conflict_detection: true
+    ghost_brief: true
+
+  portal:
+    repo: ""
+    token_env: GHOST_PORTAL_TOKEN
+
+  notifications:
+    pr_comment: true
