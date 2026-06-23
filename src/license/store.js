@@ -39,11 +39,13 @@ export function getLicenseRecord() {
 }
 
 export function hasLicense() {
+  if (process.env.GHOST_LICENSE_KEY) return true;  // CI env var fallback
   const r = read();
   return !!(r && r.token);
 }
 
 export function getToken() {
+  if (process.env.GHOST_LICENSE_KEY) return process.env.GHOST_LICENSE_KEY;  // CI env var fallback
   const r = read();
   return r ? r.token || null : null;
 }
