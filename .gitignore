@@ -13,3 +13,9 @@ Ghost Architect Reports/
 # files belong outside the repo, not in customer-shipped source.
 CLAUDE.md
 .claude/
+# Local scratch files — not part of the package
+ghost-brief.html
+ghost-brief.json
+ghost-watcher.yaml
+paywall-promo-status.py
+pulse-optin-test.py
