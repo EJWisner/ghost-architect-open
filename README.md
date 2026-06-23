@@ -697,9 +697,16 @@ Ghost Architect™ is proprietary software. Unauthorized use, reproduction, or d
 
 *Not a code generator. A thinking accelerator.*
 
-## What's New in v9.0.5
+## What's New in v9.0.8
 
 ### 🔭 Ghost Watcher™ — Automatic commit monitoring
+
+**Fixes in v9.0.8:**
+- Team and Enterprise tier now correctly applies 150,000 token context cap in CI
+- License validation works on ephemeral GitHub Actions runners (fingerprint bypass in CI)
+- Custom branches added in Enable Watch wizard now correctly appear in GitHub Actions workflow trigger
+- PR comment portal link now uses correct lowercase slug
+- Enable Watch wizard version-pins the workflow to the installed Ghost version
 
 Ghost Watcher™ monitors every commit automatically. When a developer pushes to GitHub, Ghost fires — analyzing changed files against the full codebase, surfacing findings, and generating a Ghost Brief™ prompt pack. Results land in Ghost Portal before the PR reviewer opens the tab.
 
