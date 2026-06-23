@@ -696,3 +696,148 @@ See [LICENSE](./LICENSE) for full terms.
 Ghost Architect™ is proprietary software. Unauthorized use, reproduction, or distribution is strictly prohibited.
 
 *Not a code generator. A thinking accelerator.*
+
+## What's New in v9.0.0
+
+### 🔭 Ghost Watcher™ — Automatic commit monitoring
+
+Ghost Watcher™ monitors every commit automatically. When a developer pushes to GitHub, Ghost fires — analyzing changed files against the full codebase, surfacing findings, and generating a Ghost Brief™ prompt pack. Results land in Ghost Portal before the PR reviewer opens the tab.
+
+**Available on Ghost Team and Ghost Enterprise memberships.**
+
+---
+
+## 🔭 Ghost Watcher™
+
+Ghost Watcher™ is a headless CI pipeline that runs inside GitHub Actions. Every commit your team pushes triggers a full Ghost Architect™ scan automatically — no manual runs, no forgotten reviews.
+
+### The loop
+Developer commits → GitHub Actions fires → Ghost Watcher™ runs
+
+→ Blast Radius + Conflict Detection on changed files
+
+→ Ghost Brief™ generates AI remediation prompts
+
+→ Results pushed to Ghost Portal
+
+→ PR comment posted with findings summary
+
+→ Developer copies prompts into Claude Code, Cursor, or any AI tool
+
+→ AI executes fixes → developer commits fixes → Ghost Watcher™ fires again
+
+→ Loop continues until findings reach zero
+
+### Requirements
+
+- Ghost Team or Ghost Enterprise membership
+- GitHub repository (public or private)
+- Anthropic API key (BYOK — charged to your own account)
+- Ghost Portal configured
+
+### Setup
+
+Run Ghost and select **Ghost Watcher™ → Enable Watch** from the menu:
+
+```bash
+ghost
+```
+
+The wizard will ask:
+1. Which GitHub repo to watch
+2. Which branches to monitor
+3. Which scans to run (Blast Radius, Conflict Detection, Ghost Brief)
+4. Whether to post PR comments
+5. Email notification addresses
+6. Your GitHub Personal Access Token (repo + workflow scope)
+7. Estimated commits per day (for cost estimation)
+
+Ghost pushes `ghost-watcher.yaml` and `.github/workflows/ghost-watcher.yml` to your repo automatically.
+
+### GitHub Secrets
+
+After running the wizard, add these four secrets to your GitHub repo under **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|--------|-------------|
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `GHOST_LICENSE_KEY` | Your Ghost Team or Enterprise license key |
+| `GHOST_PORTAL_REPO` | Your ghost-reports repo URL |
+| `GHOST_PORTAL_TOKEN` | GitHub PAT with repo write scope |
+
+### Monitoring runs
+
+Every commit triggers a GitHub Actions job. To watch it:
+
+1. Go to your GitHub repo
+2. Click the **Actions** tab
+3. Click the **Ghost Watcher™** workflow
+4. Click any run to see the live log
+5. Green checkmark = scan complete, results in Ghost Portal
+
+### Viewing results in Ghost Portal
+
+After each run completes, open Ghost Portal and click **Ghost Watcher™** to see:
+
+- **Commits tab** — every watched commit with severity chips. Click any commit to expand findings and prompts.
+- **Findings tab** — all findings aggregated across all commits, sorted by severity
+- **Prompts tab** — all Ghost Brief™ prompts ready to copy into your AI coding tool
+
+### PR comments
+
+When a commit is part of a pull request, Ghost Watcher™ posts a comment directly on the PR with:
+
+- Findings count and severity breakdown
+- Phase 1 findings (Critical + High — fix first)
+- Phase 2 findings (Medium + Low — fix second)
+- Link to Ghost Portal to copy prompts
+
+### Cost expectations
+
+Ghost Watcher™ uses your own Anthropic API key. Estimated cost per commit:
+
+| Scans enabled | Est. cost per commit |
+|---------------|---------------------|
+| Blast Radius only | $0.15 – $0.30 |
+| Blast Radius + Conflict Detection | $0.95 – $1.80 |
+
+The Enable Watch wizard shows a cost estimate before you confirm setup.
+
+### Skipping a scan
+
+Add `[ghost-skip]` to any commit message to bypass Ghost Watcher™ for that commit:
+
+```bash
+git commit -m "docs: fix typo in README [ghost-skip]"
+```
+
+### Disabling Watch
+
+Run Ghost and select **Ghost Watcher™ → Disable Watch** from the menu. This sets `enabled: false` in `ghost-watcher.yaml` without removing the workflow file — re-enable anytime.
+
+### Configuration file
+
+`ghost-watcher.yaml` in your repo root controls Ghost Watcher™ behavior:
+
+```yaml
+ghost_watcher:
+  version: 1.0
+  enabled: true
+  trigger:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+  scans:
+    blast_radius: true
+    conflict_detection: true
+    ghost_brief: true
+  notifications:
+    pr_comment: true
+  iterations:
+    max: 10
+```
+
+### Ghost Watcher™ never blocks a commit
+
+Ghost Watcher™ is advisory only. Findings are surfaced for remediation — they never prevent a commit from going through. Exit code is always 0.
