@@ -570,7 +570,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
       }
 
       // Build portal URL for PR comment
-      const portalSlug = process.env.GHOST_PORTAL_SLUG || portalOwner;
+      const portalSlug = (process.env.GHOST_PORTAL_SLUG || portalOwner).toLowerCase();
       portalUrl = `https://ghostarchitect.dev/portal-${portalSlug}`;
 
     } catch (err) {

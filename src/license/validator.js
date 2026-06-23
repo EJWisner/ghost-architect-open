@@ -66,7 +66,9 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   const payload = decoded.payload;
 
   // (3) Fingerprint check — if the token has one
-  if (payload.fingerprint) {
+  // Skip fingerprint check in CI environments — ephemeral runners have different hardware
+  const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  if (payload.fingerprint && !isCI) {
     const currentHashes = currentFingerprintHashes();
     const match = matchesFingerprint(currentHashes, payload.fingerprint);
     if (!match.match) {
