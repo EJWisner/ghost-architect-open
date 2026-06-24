@@ -35,7 +35,7 @@ jobs:
           node-version: '22'
 
       - name: Install Ghost Architect
-        run: npm install -g ghost-architect-open@latest
+        run: npm install -g ghost-architect-open@latest --force
 
       - name: Run Ghost Watcher
         run: ghost --watcher-commit
