@@ -119,3 +119,81 @@ export function pingModeUsage(version, tier, mode) {
     req.end();
   });
 }
+
+/**
+ * Fire an anonymous Ghost Watcher™ run telemetry ping.
+ * Sent after every successful Watch run to /watcher-ping on the signup worker.
+ *
+ * @param {string} version          CLI version e.g. '9.0.9'
+ * @param {string} tier             'team' | 'enterprise' | 'team-max' | 'enterprise-max'
+ * @param {object} opts
+ * @param {number} opts.findings    total finding count
+ * @param {object} opts.severity    { critical, high, medium, low }
+ * @param {number} opts.prompts     Ghost Brief™ prompt count
+ * @param {object} opts.scans       { blast, conflict, brief }
+ * @param {string} opts.commit      raw GITHUB_SHA (will be hashed before sending)
+ * @param {string} opts.repo        GITHUB_REPOSITORY env var (will be hashed)
+ * @returns {Promise<void>}         never throws
+ */
+export function pingWatcherRun(version, tier, opts = {}) {
+  return new Promise((resolve) => {
+    if (pingDisabled()) { resolve(); return; }
+
+    const { findings = 0, severity = {}, prompts = 0, scans = {}, commit = '', repo = '' } = opts;
+
+    // Hash commit SHA and repo name — never send raw identifiers
+    const hashVal = (val) => val
+      ? crypto.createHash('sha256').update(val).digest('hex').slice(0, 16)
+      : '';
+
+    let body;
+    try {
+      body = JSON.stringify({
+        userId:    getOrCreateUserId(),
+        version,
+        tier,
+        timestamp: new Date().toISOString(),
+        findings,
+        severity: {
+          critical: severity.critical || 0,
+          high:     severity.high     || 0,
+          medium:   severity.medium   || 0,
+          low:      severity.low      || 0,
+        },
+        prompts,
+        scans: {
+          blast:    scans.blast    || false,
+          conflict: scans.conflict || false,
+          brief:    scans.brief    || false,
+        },
+        commitHash: hashVal(commit),
+        repoHash:   hashVal(repo),
+      });
+    } catch (_) { resolve(); return; }
+
+    const WATCHER_ENDPOINT = 'https://signup.ghostarchitect.dev/watcher-ping';
+    let url;
+    try { url = new URL(WATCHER_ENDPOINT); } catch (_) { resolve(); return; }
+
+    const req = https.request(
+      {
+        method:   'POST',
+        hostname: url.hostname,
+        path:     url.pathname,
+        port:     443,
+        headers: {
+          'Content-Type':   'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'X-Ghost-Client': `ghost-architect-${tier}`,
+        },
+        timeout: POST_TIMEOUT_MS,
+      },
+      (res) => { res.on('data', () => {}); res.on('end', () => resolve()); }
+    );
+
+    req.on('error',   () => resolve());
+    req.on('timeout', () => { req.destroy(); resolve(); });
+    req.write(body);
+    req.end();
+  });
+}

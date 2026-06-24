@@ -590,6 +590,27 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   console.log(`👻 Ghost Watcher™ complete.`);
   console.log(`   Findings: ${allFindings.length} | Brief prompts: ${briefPromptCount} | Exit: 0\n`);
 
+  // ── Telemetry ping ────────────────────────────────────────────────────────
+  try {
+    await pingWatcherRun(version, tier, {
+      findings:  allFindings.length,
+      severity: {
+        critical: allFindings.filter(f => f.severity === 'CRITICAL').length,
+        high:     allFindings.filter(f => f.severity === 'HIGH').length,
+        medium:   allFindings.filter(f => f.severity === 'MEDIUM').length,
+        low:      allFindings.filter(f => f.severity === 'LOW').length,
+      },
+      prompts:   briefPromptCount,
+      scans: {
+        blast:    watchConfig.scans?.blast_radius    !== false,
+        conflict: watchConfig.scans?.conflict_detection !== false,
+        brief:    watchConfig.scans?.ghost_brief     !== false,
+      },
+      commit: process.env.GITHUB_SHA || '',
+      repo:   process.env.GITHUB_REPOSITORY || '',
+    });
+  } catch (_) { /* telemetry never blocks */ }
+
   // Always exit 0 — Ghost Watcher never blocks a commit
   process.exit(0);
 }
