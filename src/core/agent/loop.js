@@ -11,8 +11,16 @@ import Anthropic        from '@anthropic-ai/sdk';
 import { getConfig, resolveApiKey } from '../../config.js';
 import { buildToolDescriptions }    from './tools.js';
 
-function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
+// Client factory is overridable so tests can inject a fake client (e.g. one
+// whose messages.create() throws) without making real API calls.
+let clientFactory = () => new Anthropic({ apiKey: resolveApiKey() });
+function getClient() { return clientFactory(); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
+
+/** Test seam — override the Anthropic client factory. Pass null to reset. */
+export function __setClientFactoryForTest(factory) {
+  clientFactory = factory || (() => new Anthropic({ apiKey: resolveApiKey() }));
+}
 
 function buildAgentSystemPrompt(tools, context = '') {
   return `You are Ghost Architect's autonomous analysis agent — a senior software architect AI.
@@ -116,6 +124,7 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
   let   lastResult   = null;
   let   finished     = false;
   let   parseErrors  = 0;      // track parse failures across whole run
+  let   apiError     = null;   // set to the API error message if the loop aborts on an API failure
   const MAX_PARSE_RETRIES = 2; // per step
 
   for (let step = 1; step <= maxSteps && !finished; step++) {
@@ -151,7 +160,10 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
           );
         }
       } catch (err) {
-        // API error — record and break out of step loop entirely
+        // API error — record and break out of step loop entirely.
+        // Capture the message so callers can detect the abort (result.ok === false)
+        // and surface it without parsing the memory/audit trail.
+        apiError = err.message;
         memory.record('api_error', { step, attempt }, { error: err.message }, 'API call failed');
         onWarning({ message: `API error at step ${step}: ${err.message}` });
         finished = true;
@@ -221,7 +233,12 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
   // Attach warning metadata to result
   const result = memory.synthesize();
   result.parseErrors   = parseErrors;
-  result.hasWarnings   = parseErrors > 0;
+  // ok is false when the loop aborted on an API error — callers should check
+  // result.ok and handle the failure (warn / prompt retry) rather than treating
+  // a truncated, API-error result as a complete analysis.
+  result.ok            = apiError === null;
+  result.apiError      = apiError;                       // null when no API error occurred
+  result.hasWarnings   = parseErrors > 0 || apiError !== null;
   return result;
 }
 

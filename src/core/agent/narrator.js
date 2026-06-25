@@ -49,40 +49,77 @@ function sortByseverity(findings) {
 
 // ── Consultant profile sanitization (prompt-injection defense) ───────────────
 //
+// PROFILE SCHEMA — SANITIZATION & VALIDATION CONTRACT
+//
 // Consultant profile fields (author, organization, name, description,
 // priorities, anti_patterns, red_flags, prose) are user-supplied and flow
 // directly into the LLM prompt via buildConsultantLens. Without sanitization a
 // crafted profile could inject instructions that override the grounding rules,
-// suppress findings, or attempt to exfiltrate data through the report text.
+// suppress findings, smuggle invisible directives, or attempt to exfiltrate
+// data through the report text.
 //
-// Defense is layered:
-//   1. Character allowlist — strip anything outside a conservative set of
-//      letters, digits, whitespace, and ordinary prose punctuation. This
+// Defense is layered. What each layer filters, and WHY, so operators
+// (and profile authors) know what gets touched:
+//
+//   1. Unicode normalization (NFC) — sanitizeProfileField normalizes every
+//      field to canonical composed form BEFORE the allowlist runs. This
+//      collapses decomposed sequences (a base letter + a combining mark) and
+//      other compatibility-equivalent forms into their single canonical
+//      codepoint, so an attacker cannot smuggle a banned character past the
+//      allowlist by encoding it as a base + combining mark, and so visually
+//      identical homoglyph variants reduce to one form before filtering.
+//   2. Character allowlist — strip anything outside a conservative set of
+//      ASCII letters, digits, whitespace, and ordinary prose punctuation. This
 //      removes the angle brackets, braces, and backticks an attacker would use
-//      to fake XML delimiters or markdown/code structure, and collapses
-//      newlines so a field can't open a new instruction-shaped line.
-//   2. Structured XML delimiters — the sanitized values are wrapped in a
+//      to fake XML delimiters or markdown/code structure, drops every
+//      non-ASCII codepoint (so homoglyphs and invisible characters that
+//      survived normalization cannot reach the prompt), and collapses newlines
+//      so a field can't open a new instruction-shaped line.
+//   3. Structured XML delimiters — the sanitized values are wrapped in a
 //      <consultant_profile> block with a note telling the model the contents
 //      are reference vocabulary, not instructions.
-//   3. Suspicious-pattern logging — detectSuspiciousProfileContent warns (once
-//      per profile object) when a field still reads like an injection attempt
-//      after the allowlist pass, so operators can spot a hostile profile. This
-//      is the closest analogue to "validation in the profile loader" reachable
-//      from here: buildConsultantLens is the narrator's single entry point for
-//      profile text, so the check runs wherever a profile is consumed.
+//   4. Obfuscation-character REJECTION (validateProfileSafety) — a profile
+//      whose RAW fields contain zero-width characters, bidirectional
+//      override/isolate marks, or other Unicode control characters is rejected
+//      OUTRIGHT. These characters have no legitimate use in a consultant
+//      profile; their only purpose is to hide instructions from a human
+//      reviewer while the model still reads them. The profile loader should
+//      call validateProfileSafety() and refuse such a profile before it ever
+//      reaches the narrator; buildConsultantLens enforces the same rule as a
+//      backstop and drops the lens entirely if it fires.
+//   5. Instruction-shaped ADVISORY logging — detectSuspiciousProfileContent
+//      warns (once per profile object) when a field still reads like an
+//      injection attempt ("ignore previous", "override", a fake "system:"
+//      role line). This stays advisory rather than a hard reject because the
+//      same words appear in legitimate consultant vocabulary (a red flag like
+//      "code that overrides core methods" or "suppresses exceptions"). The
+//      sanitized, delimited embedding is what neutralizes these; the warning
+//      just lets operators eyeball a borderline profile.
 
 // Allowed: ASCII letters/digits, whitespace, and the prose punctuation a
 // legitimate consultant voice needs — periods, commas, hyphens, parentheses,
 // plus a few common ones (colon, semicolon, slash, apostrophe, quote,
 // ampersand, percent, plus, hash, question/exclamation, dollar). Everything
-// else (notably < > { } [ ] | ` \ * and control characters) is stripped.
+// else (notably < > { } [ ] | ` \ * , every non-ASCII codepoint, and control
+// characters) is stripped.
 const PROFILE_FIELD_DISALLOWED = /[^A-Za-z0-9\s.,\-():;\/'"&%+#?!$]/g;
 
 function sanitizeProfileField(value) {
   if (value === null || value === undefined) return '';
-  // Collapse newlines/tabs to single spaces first so a multi-line field can't
+  // Normalize to canonical composed form FIRST so a banned character can't
+  // sneak through the allowlist disguised as a base letter plus a combining
+  // mark, and so compatibility-equivalent variants collapse to one form.
+  let normalized;
+  try {
+    normalized = String(value).normalize('NFC');
+  } catch {
+    // Defensive: normalize only throws on a bad form argument, but never let a
+    // pathological input abort sanitization — fall back to the raw string.
+    normalized = String(value);
+  }
+  // Collapse newlines/tabs to single spaces next so a multi-line field can't
   // open what looks like a fresh instruction line inside the prompt.
-  const oneLine = String(value).replace(/[\r\n\t]+/g, ' ');
+  const oneLine = normalized.replace(/[\r\n\t]+/g, ' ');
   return oneLine.replace(PROFILE_FIELD_DISALLOWED, '').replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -91,10 +128,72 @@ function sanitizeProfileList(arr) {
   return arr.map(sanitizeProfileField).filter(s => s.length);
 }
 
+// The text fields a consultant profile can carry. Shared by the obfuscation
+// validator and the instruction-shaped detector so they scan the same surface.
+function profileTextFields(profile) {
+  return {
+    author:        profile.author,
+    organization:  profile.organization,
+    name:          profile.name,
+    description:   profile.description,
+    prose:         profile.prose,
+    priorities:    profile.priorities,
+    anti_patterns: profile.anti_patterns,
+    red_flags:     profile.red_flags,
+  };
+}
+
+// Obfuscation character classes (layer 4). These are invisible or
+// direction-altering codepoints with no legitimate use in a consultant
+// profile — their only purpose is to hide content from a human reviewer while
+// the model still reads it. Presence of ANY of these is a hard reject, not a
+// warning, because (unlike instruction-shaped words) there is no benign
+// consultant-vocabulary reason for them to appear.
+const OBFUSCATION_CHAR_CLASSES = [
+  // ZWSP, ZWNJ, ZWJ, word joiner, invisible math operators, BOM/ZWNBSP.
+  { kind: 'zero-width character',                 re: /[\u200B-\u200D\u2060-\u2064\uFEFF]/ },
+  // LRM/RLM, bidi embeddings/overrides (LRE/RLE/PDF/LRO/RLO), bidi isolates.
+  { kind: 'bidirectional override/control mark',  re: /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/ },
+  // C0 controls (excluding tab/LF/CR), DEL, C1 controls, and soft hyphen.
+  { kind: 'Unicode control character',            re: /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD]/ },
+];
+
+/**
+ * Validate that a profile is free of obfuscation/control characters.
+ *
+ * This is the hard-reject layer (layer 4). The profile loader should call it
+ * BEFORE handing a profile to the narrator and refuse any profile that comes
+ * back unsafe, rather than relying on downstream sanitization. The narrator
+ * calls it too (in buildConsultantLens) as a backstop, so a profile that
+ * bypasses the loader still cannot smuggle invisible directives into a prompt.
+ *
+ * @param {object|null|undefined} profile
+ * @returns {{ safe: boolean, violations: Array<{ field: string, kind: string }> }}
+ */
+export function validateProfileSafety(profile) {
+  const violations = [];
+  if (!profile || typeof profile !== 'object') return { safe: true, violations };
+  for (const [key, val] of Object.entries(profileTextFields(profile))) {
+    const values = Array.isArray(val) ? val : [val];
+    for (const v of values) {
+      if (v === null || v === undefined) continue;
+      const s = String(v);
+      for (const cls of OBFUSCATION_CHAR_CLASSES) {
+        if (cls.re.test(s)) {
+          violations.push({ field: key, kind: cls.kind });
+          break; // one violation per field value is enough to reject
+        }
+      }
+    }
+  }
+  return { safe: violations.length === 0, violations };
+}
+
 // Instruction-shaped text survives the character allowlist (it keeps letters),
 // so we separately scan the RAW field values for injection tells and log a
 // warning. Detection is advisory only — the sanitized, delimited embedding is
-// what actually contains the content.
+// what actually contains the content, and these patterns deliberately overlap
+// with benign consultant vocabulary, so we do NOT hard-reject on them.
 const SUSPICIOUS_PROFILE_PATTERNS = [
   /ignore\s+(?:all|the|previous|above|prior|these)/i,
   /disregard\s+(?:all|the|previous|above|prior|your|these)/i,
@@ -119,16 +218,7 @@ function detectSuspiciousProfileContent(profile) {
   if (_warnedProfiles.has(profile)) return;
   _warnedProfiles.add(profile);
 
-  const fields = {
-    author:        profile.author,
-    organization:  profile.organization,
-    name:          profile.name,
-    description:   profile.description,
-    prose:         profile.prose,
-    priorities:    profile.priorities,
-    anti_patterns: profile.anti_patterns,
-    red_flags:     profile.red_flags,
-  };
+  const fields = profileTextFields(profile);
   const flagged = [];
   for (const [key, val] of Object.entries(fields)) {
     const values = Array.isArray(val) ? val : [val];
@@ -153,8 +243,26 @@ function detectSuspiciousProfileContent(profile) {
 function buildConsultantLens(profile) {
   if (!profile) return '';
 
+  // Hard-reject backstop (layer 4): a profile carrying invisible obfuscation
+  // characters (zero-width, bidi override, control chars) is dropped outright —
+  // no lens is embedded. The profile loader should already have rejected it via
+  // validateProfileSafety(); this guards the path where a profile reaches the
+  // narrator without passing through that loader-side check.
+  const safety = validateProfileSafety(profile);
+  if (!safety.safe) {
+    try {
+      const detail = safety.violations.map(v => v.field + ': ' + v.kind).join('; ');
+      console.error(
+        '  (Narrator: consultant profile REJECTED — fields [' + detail +
+        '] contain obfuscation/control characters; proceeding without the consultant lens.)'
+      );
+    } catch { /* logging is best-effort */ }
+    return '';
+  }
+
   // Validate against the RAW values (before the allowlist pass could mask an
-  // injection attempt), then embed only the sanitized values.
+  // injection attempt), then embed only the sanitized values. This is advisory
+  // logging only — see detectSuspiciousProfileContent.
   detectSuspiciousProfileContent(profile);
 
   const author       = sanitizeProfileField(profile.author);
@@ -323,6 +431,26 @@ function getCapDisclosure(originalCount, cap) {
     + (originalCount - cap) + ' lower-priority findings are available in the raw scan output._';
 }
 
+/**
+ * Build a disclosure note listing the findings the planner dropped as
+ * non-actionable (plan.skipped_findings), so the saved report tells the reader
+ * exactly what was omitted and why. Returns null when nothing was skipped.
+ * Like the cap disclosure, it is spliced in immediately after the report H1.
+ */
+function getSkippedDisclosure(skippedFindings, findingById) {
+  if (!Array.isArray(skippedFindings) || skippedFindings.length === 0) return null;
+  const items = skippedFindings.map(function (entry) {
+    const f = findingById && findingById.get(entry.id);
+    const label = (f && f.title) ? f.title : ('finding #' + entry.id);
+    const reason = (entry.reason || '').trim() || 'assessed as non-actionable';
+    return label + ' (' + reason + ')';
+  });
+  const n = skippedFindings.length;
+  return '_Note: ' + n + ' finding' + (n === 1 ? ' was' : 's were')
+    + ' assessed as non-actionable and omitted from this report: '
+    + items.join('; ') + '._';
+}
+
 async function planReportStructure(memoryResult, context = {}) {
   // Mode router: blast reports need different category structure (Direct
   // Dependencies / Ripple Effects / Danger Zones / Safe Zones) and a
@@ -378,7 +506,7 @@ async function planReportStructure(memoryResult, context = {}) {
     + 'YOUR JOB:\n'
     + '1. Choose 3–6 category headers that fit these findings. Use Ghost\'s four canonical categories (🔴 Red Flags, 🏛️ Landmarks, ⚰️ Dead Zones, ⚡ Fault Lines) as the default. If a consultant lens is present, you may replace or rename categories to match their methodology — but only create a category if at least one finding belongs in it.\n'
     + '2. Assign every ACTIONABLE finding to exactly one category. Do NOT create a category that has zero findings. Every finding id from the input MUST appear in exactly one category UNLESS the finding is non-actionable (see rule 2a below).\n'
-    + '2a. Skip non-actionable findings entirely. A finding is non-actionable when it is purely an architectural observation, a discussion of design tradeoffs, a description of how a system works, or anything that does not name a specific code change with measurable effort. These findings have no place in a remediation report. Do not assign them to a category, do not include them in any finding_ids array. They simply disappear from the plan. Symptoms that a finding is non-actionable: detail text uses words like "observation", "awareness", "document this", "this is by design", or "single point of failure" without a concrete code change; or no specific files, methods, or fixes are cited.\n'
+    + '2a. Skip non-actionable findings entirely. A finding is non-actionable when it is purely an architectural observation, a discussion of design tradeoffs, a description of how a system works, or anything that does not name a specific code change with measurable effort. These findings have no place in a remediation report. Do not assign them to a category, do not include them in any finding_ids array. Symptoms that a finding is non-actionable: detail text uses words like "observation", "awareness", "document this", "this is by design", or "single point of failure" without a concrete code change; or no specific files, methods, or fixes are cited. Every finding you skip this way MUST be recorded in the skipped_findings array (see schema) with its id and a one-sentence reason. A finding that is neither assigned to a category nor listed in skipped_findings is a validation error: every input id must be accounted for exactly once, either in a category or in skipped_findings.\n'
     + '3. For each category, compute the subtotal dollar range by summing the cost_range of every finding assigned to it. If a finding has no cost_range, estimate one based on severity + complexity using the billing rates above. Estimates must be REAL ranges (e.g. ' + DOLLAR + '400–' + DOLLAR + '600), never ' + DOLLAR + '0 and never N/A.\n'
     + '4. Compute the grand total as the sum of all category subtotals.\n'
     + '5. Draft a 3–6 sentence executive summary that names the top 1–2 findings by impact and quantifies total remediation cost. Use the grand total dollar range verbatim — do NOT compute a separate subtotal in the summary unless you are restating a category subtotal from step 3.\n\n'
@@ -395,12 +523,16 @@ async function planReportStructure(memoryResult, context = {}) {
     + '      "subtotal_high": 3170\n'
     + '    }\n'
     + '  ],\n'
+    + '  "skipped_findings": [\n'
+    + '    { "id": 7, "reason": "one-sentence explanation of why this finding is non-actionable" }\n'
+    + '  ],\n'
     + '  "grand_total_low": 3704,\n'
     + '  "grand_total_high": 5710\n'
     + '}\n\n'
     + 'CRITICAL VALIDATION:\n'
-    + '- Every finding id from the input MUST appear in exactly one category\'s finding_ids array.\n'
+    + '- Every finding id from the input MUST be accounted for EXACTLY ONCE: either in exactly one category\'s finding_ids array, or in skipped_findings. The count of all finding_ids plus the count of skipped_findings MUST equal the total number of input findings.\n'
     + '- No category may have an empty finding_ids array.\n'
+    + '- skipped_findings is an array (use [] if you skipped nothing). Each entry has a numeric id and a non-empty one-sentence reason. No id may appear in both a category and skipped_findings.\n'
     + '- Subtotals must be numeric (no dollar signs, no commas in JSON numbers).\n'
     + '- The grand total must equal the sum of all category subtotals.\n'
     + '- The executive summary must be a single string with no markdown section headers.\n'
@@ -501,7 +633,7 @@ async function planBlastReport(memoryResult, context = {}) {
     + '   \u2022 \u26a0\ufe0f Before You Touch It \u2014 specific warnings, preconditions, things to verify first\n'
     + '   Use these categories. Do NOT use the POI categories (Red Flags / Landmarks / Dead Zones / Fault Lines) \u2014 they are for a different report type. If a consultant lens is present, you may rename categories to match their methodology vocabulary, but the underlying intent (direct deps, ripples, dangers, safe zones, preconditions) must stay.\n'
     + '2. Assign every ACTIONABLE finding to exactly one category. Do NOT create a category that has zero findings. Every finding id from the input MUST appear in exactly one category UNLESS the finding is non-actionable (rule 2a).\n'
-    + '2a. Skip non-actionable findings entirely. A finding is non-actionable when it is purely an architectural observation, a discussion of design tradeoffs, or anything that does not name a specific code change with measurable effort. These do not appear in any category and disappear from the plan.\n'
+    + '2a. Skip non-actionable findings entirely. A finding is non-actionable when it is purely an architectural observation, a discussion of design tradeoffs, or anything that does not name a specific code change with measurable effort. These do not appear in any category. Every finding you skip this way MUST be recorded in the skipped_findings array (see schema) with its id and a one-sentence reason. Every input id must be accounted for exactly once, either in a category or in skipped_findings.\n'
     + '3. For each category, compute the subtotal dollar range by summing the cost_range of every finding assigned to it. If a finding has no cost_range, estimate one based on severity + complexity using the billing rates above. Estimates must be REAL ranges (e.g. ' + DOLLAR + '400\u2013' + DOLLAR + '600), never ' + DOLLAR + '0 and never N/A.\n'
     + '4. Compute the grand total as the sum of all category subtotals.\n'
     + '5. Draft a 3\u20136 sentence executive summary that frames the change set\u2019s impact (not POI-style debt language). Name the top 1\u20132 dangers and quantify total remediation cost using the grand total dollar range verbatim.\n'
@@ -518,6 +650,9 @@ async function planBlastReport(memoryResult, context = {}) {
     + '      "subtotal_low": 1985,\n'
     + '      "subtotal_high": 3170\n'
     + '    }\n'
+    + '  ],\n'
+    + '  "skipped_findings": [\n'
+    + '    { "id": 7, "reason": "one-sentence explanation of why this finding is non-actionable" }\n'
     + '  ],\n'
     + '  "grand_total_low": 3704,\n'
     + '  "grand_total_high": 5710,\n'
@@ -547,8 +682,9 @@ async function planBlastReport(memoryResult, context = {}) {
     + '  }\n'
     + '}\n\n'
     + 'CRITICAL VALIDATION:\n'
-    + '- Every finding id from the input MUST appear in exactly one category\u2019s finding_ids array unless skipped under rule 2a.\n'
+    + '- Every finding id from the input MUST be accounted for EXACTLY ONCE: either in exactly one category\u2019s finding_ids array, or in skipped_findings. The count of all finding_ids plus the count of skipped_findings MUST equal the total number of input findings.\n'
     + '- No category may have an empty finding_ids array.\n'
+    + '- skipped_findings is an array (use [] if you skipped nothing). Each entry has a numeric id and a non-empty one-sentence reason. No id may appear in both a category and skipped_findings.\n'
     + '- Subtotals must be numeric (no dollar signs, no commas in JSON numbers).\n'
     + '- The grand total must equal the sum of all category subtotals.\n'
     + '- The executive summary must be a single string with no markdown section headers.\n'
@@ -580,6 +716,38 @@ async function planBlastReport(memoryResult, context = {}) {
   } catch {
     return null;
   }
+}
+
+// Shared finding-accounting check used by both validators. Every input finding
+// id must be accounted for EXACTLY ONCE: either assigned to a category (already
+// collected in seenIds) or explicitly listed in plan.skipped_findings with a
+// reason. This closes the silent-drop hole where the planner could omit a
+// finding from every category and have nothing flag it.
+//
+// Returns true only when seenIds.size + skipped_findings.length === totalFindings
+// and every skipped entry is a well-formed { id, reason } that does not collide
+// with an assigned id or another skipped id.
+function validateFindingAccounting(plan, seenIds, totalFindings) {
+  const skipped = plan.skipped_findings;
+  // Absent/null skipped_findings is only valid when every finding was assigned
+  // to a category — otherwise unaccounted findings were silently dropped.
+  if (skipped === undefined || skipped === null) {
+    return seenIds.size === totalFindings;
+  }
+  if (!Array.isArray(skipped)) return false;
+
+  const skippedIds = new Set();
+  for (const entry of skipped) {
+    if (!entry || typeof entry !== 'object') return false;
+    const id = entry.id;
+    if (!Number.isInteger(id) || id < 1 || id > totalFindings) return false;
+    if (typeof entry.reason !== 'string' || !entry.reason.trim()) return false;
+    if (seenIds.has(id)) return false;     // an id cannot be both assigned and skipped
+    if (skippedIds.has(id)) return false;  // no duplicate skips
+    skippedIds.add(id);
+  }
+
+  return seenIds.size + skippedIds.size === totalFindings;
 }
 
 // validateBlastPlan extends validatePlan with rollback_plan structural checks.
@@ -616,6 +784,10 @@ function validateBlastPlan(plan, totalFindings) {
   if (Math.abs(plan.grand_total_high - subtotalSumHigh) > slack) return false;
 
   if (seenIds.size === 0) return false;
+
+  // Every input finding must be accounted for: assigned or explicitly skipped
+  // with a reason. Without this, the planner could silently drop findings.
+  if (!validateFindingAccounting(plan, seenIds, totalFindings)) return false;
 
   // Rollback plan validation: required for blast mode. Each subsection must
   // have real content. We tolerate small variations (string vs object steps,
@@ -669,11 +841,12 @@ function validatePlan(plan, totalFindings) {
   if (Math.abs(plan.grand_total_low  - subtotalSumLow)  > slack) return false;
   if (Math.abs(plan.grand_total_high - subtotalSumHigh) > slack) return false;
 
-  // The planner can now legitimately drop non-actionable findings (rule 2a),
-  // so seenIds.size may be less than totalFindings. We only require that no
-  // SAME finding id appear twice (already enforced above) and that at least
-  // one finding survives.
+  // The planner can legitimately drop non-actionable findings (rule 2a), so
+  // seenIds.size may be less than totalFindings. But it may not drop them
+  // SILENTLY: every dropped finding must be listed in plan.skipped_findings
+  // with a reason, and assigned + skipped must add up to the full input set.
   if (seenIds.size === 0) return false;
+  if (!validateFindingAccounting(plan, seenIds, totalFindings)) return false;
 
   return true;
 }
@@ -1118,6 +1291,23 @@ async function validateAndPatchProse(report, plan, memoryResult, context) {
         // No H1 found (unusual). Prepend the disclosure so it still appears.
         workingReport = capDisclosure + '\n\n' + workingReport;
       }
+    }
+  }
+
+  // Skipped-findings disclosure: when the planner dropped any findings as
+  // non-actionable (rule 2a), the reader must be told which ones and why.
+  // The renderer is never asked to produce this note, so we always splice it
+  // in here (guarded against double-insertion on re-runs).
+  const skippedDisclosure = getSkippedDisclosure(plan.skipped_findings, findingById);
+  if (skippedDisclosure && !workingReport.includes('assessed as non-actionable and omitted')) {
+    const h1Match = workingReport.match(/^#\s+.+$/m);
+    if (h1Match) {
+      const h1End = workingReport.indexOf('\n', h1Match.index) + 1;
+      const before = workingReport.slice(0, h1End);
+      const after  = workingReport.slice(h1End);
+      workingReport = before + '\n' + skippedDisclosure + '\n' + after;
+    } else {
+      workingReport = skippedDisclosure + '\n\n' + workingReport;
     }
   }
 

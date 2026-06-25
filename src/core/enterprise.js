@@ -14,6 +14,8 @@
 import { createOctokit } from '../utils/octokit-client.js';
 import { getDefaultTeamSync, resolveTeamSync } from '../config.js';
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
 import { randomUUID } from 'crypto';
 
 // ── Octokit helpers ───────────────────────────────────────────────────────────
@@ -368,8 +370,18 @@ export async function removeSeat(targetSeatId, workspace) {
 //     warning includes the UTC timestamp of the failure so the admin can
 //     correlate it against the scan that was dropped. The scan itself still
 //     succeeds in every case.
+//   - The in-memory counter resets every CLI invocation, so a failure on the
+//     last scan of a run would otherwise leave no trace. To keep the signal
+//     durable, the first failure also drops a .audit-failure marker file on
+//     disk (cleared on the next successful write). Both the file write and the
+//     removal are best-effort and swallow their own errors so the fail-safe
+//     contract holds even if the reports directory is read-only.
 let consecutiveAuditFailures = 0;
 let lastAuditFailureUtc = null;
+
+const AUDIT_FAILURE_MARKER = path.join(
+  os.homedir(), 'Ghost Architect Reports', '.audit-failure'
+);
 
 function logAuditFailure(stage, err) {
   if (process.env.GHOST_DEBUG === '1') {
@@ -377,6 +389,30 @@ function logAuditFailure(stage, err) {
       'Ghost audit log failure [' + stage + ']: '
       + (err?.message || String(err)) + '\n'
     );
+  }
+}
+
+// Persist the audit-failure signal across CLI invocations. Best-effort: any
+// error here is swallowed so a disk problem can never break the scan.
+function writeAuditFailureMarker(utc) {
+  try {
+    fs.mkdirSync(path.dirname(AUDIT_FAILURE_MARKER), { recursive: true });
+    fs.writeFileSync(
+      AUDIT_FAILURE_MARKER,
+      JSON.stringify({ lastAuditFailureUtc: utc, seatId: getSeatId() }) + '\n'
+    );
+  } catch (err) {
+    logAuditFailure('marker-write', err);
+  }
+}
+
+// Clear the marker after a successful write. Best-effort; a missing file is
+// the normal case and is not an error.
+function clearAuditFailureMarker() {
+  try {
+    fs.rmSync(AUDIT_FAILURE_MARKER, { force: true });
+  } catch (err) {
+    logAuditFailure('marker-clear', err);
   }
 }
 
@@ -401,8 +437,10 @@ export async function appendAuditEvent(event, workspace) {
     const trimmed = events.slice(-1000);
     await upsertFile(octokit, owner, repo, 'org/audit.json', { events: trimmed }, 'enterprise: audit log');
 
-    // Audit event landed — reset the consecutive-failure streak.
+    // Audit event landed — reset the consecutive-failure streak and clear the
+    // on-disk marker so a future invocation doesn't re-surface a stale outage.
     consecutiveAuditFailures = 0;
+    clearAuditFailureMarker();
 
     // Heartbeat — bump this seat's lastSeen on every audit event so the
     // Seat Management view reflects real activity rather than the original
@@ -424,6 +462,11 @@ export async function appendAuditEvent(event, workspace) {
     logAuditFailure('audit-write', err);
     consecutiveAuditFailures += 1;
     lastAuditFailureUtc = new Date().toISOString();
+    // First failure of this run — persist the signal so it survives the
+    // process exit and an admin sees it even if this is the last scan.
+    if (consecutiveAuditFailures === 1) {
+      writeAuditFailureMarker(lastAuditFailureUtc);
+    }
     if (consecutiveAuditFailures >= 1) {
       process.stderr.write(
         'Ghost: ' + consecutiveAuditFailures + ' consecutive audit-log '

@@ -414,11 +414,14 @@ function buildManifestEntry({ mode, label, baseName, reportText, scanIso, findin
 // have its commit accepted against the same sha we read, and the rejection may
 // not arrive as a clean 409/422 in every replica/timing combination. (2) After
 // a write GitHub reports as successful, the merged blob may not yet be the one
-// a subsequent reader sees. To shrink the second window we re-read the manifest
-// after a successful write and confirm our entry is actually present; if it is
-// not, we treat the write as lost and retry. Between every retry (both sha
-// conflicts and failed verifications) we wait with exponential backoff so racing
-// writers stagger rather than livelock retrying against each other in lockstep.
+// a subsequent reader sees, OR a concurrent writer may overwrite our entry with
+// a same-id-but-stale version. To shrink the second window we re-read the
+// manifest after a successful write and confirm our entry is present AND
+// byte-for-byte the content we wrote (not merely that some entry with our id
+// exists); if it is missing or differs, we treat the write as lost and retry the
+// full read-merge-write cycle. Between every retry (both sha conflicts and failed
+// verifications) we wait with exponential backoff so racing writers stagger
+// rather than livelock retrying against each other in lockstep.
 
 const MANIFEST_RETRY_LIMIT = 3;
 
@@ -504,12 +507,20 @@ async function updateManifest(octokit, owner, repo, newEntry, { forcePush = fals
       });
 
       // Post-write verification: re-read the manifest and confirm our entry
-      // actually landed. The contents API is eventually consistent, so a write
-      // GitHub accepted can still be superseded by a concurrent writer before
-      // it becomes visible. If our entry is missing, treat the write as lost and
-      // retry (backoff applied below) rather than reporting a false success.
+      // actually landed WITH the content we wrote. The contents API is eventually
+      // consistent, so a write GitHub accepted can still be superseded by a
+      // concurrent writer before it becomes visible. Checking id presence alone
+      // is not enough: a racing writer can land an entry that shares our id but
+      // carries stale content (e.g. an older scan of the same report re-pushed),
+      // which would pass a presence-only check as a false positive. We deep-
+      // compare the serialized entry against what we intended to write; if it is
+      // missing OR differs, we treat the write as lost and retry the whole
+      // read-merge-write cycle (backoff applied below) rather than reporting a
+      // false success.
       const { content: verifyManifest } = await getFileContent(octokit, owner, repo, 'manifest.json');
-      const landed = (verifyManifest?.reports || []).some(r => r.id === newEntry.id);
+      const landedEntry = (verifyManifest?.reports || []).find(r => r.id === newEntry.id);
+      const landed = !!landedEntry &&
+        JSON.stringify(landedEntry) === JSON.stringify(newEntry);
       if (landed) return;
 
       if (attempt === MANIFEST_RETRY_LIMIT) {
@@ -520,8 +531,8 @@ async function updateManifest(octokit, owner, repo, newEntry, { forcePush = fals
       }
       console.warn(
         `⚠ portal: manifest write reported success but entry ${newEntry.id} ` +
-        `was not present on re-read (concurrent push race). Retrying ` +
-        `(attempt ${attempt + 1}/${MANIFEST_RETRY_LIMIT})...`,
+        `was missing or carried unexpected content on re-read (concurrent push ` +
+        `race). Retrying (attempt ${attempt + 1}/${MANIFEST_RETRY_LIMIT})...`,
       );
     } catch (err) {
       // 409 Conflict / 422 Unprocessable are GitHub's "sha is stale" responses.

@@ -456,72 +456,80 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const { surface, baseRoot } = await selectForecastSurface(codebaseContext);
 
   let proposedDir;
-
-  if (surface === 'precommit') {
-    console.log(chalk.gray(`\n  Discovering working-tree changes in ${baseRoot}...\n`));
-
-    const changedPaths = discoverWorkingTreeChanges(baseRoot);
-    if (changedPaths.length === 0) {
-      console.log(chalk.yellow(
-        '  No working-tree changes detected (nothing differs from HEAD, no untracked code files).\n' +
-        '  Stage some changes or switch to "Offline / received files" mode.\n'
-      ));
-      return;
-    }
-    console.log(chalk.gray(`  Found ${changedPaths.length} changed/new file(s) in working tree.\n`));
-
-    // Build a temp directory mirroring only the changed files so buildForecastOverlay
-    // sees just the proposed set, not the entire working tree. Without this,
-    // passing baseRoot as proposedDir causes collectFiles() to walk all 185 files
-    // and treat every one as a proposed change.
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-precommit-'));
-    try {
-      for (const absPath of changedPaths) {
-        const rel    = path.relative(baseRoot, absPath);
-        const dest   = path.join(tmpDir, rel);
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        if (fs.existsSync(absPath)) {
-          fs.copyFileSync(absPath, dest);
-        }
-      }
-      proposedDir = tmpDir;
-    } catch (err) {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      console.log(chalk.red(`\n  Failed to stage working-tree files: ${err.message}\n`));
-      return;
-    }
-  } else {
-    // Offline/folder surface: user points Ghost at an explicit folder.
-    proposedDir = await promptProposedFolder();
-    console.log('');
-  }
+  // Temp dir we stage working-tree files into (pre-commit surface only). Kept at
+  // function scope and torn down in the finally below, so it is removed on every
+  // return/throw path through staging + overlay build. Stays null in folder mode,
+  // so the user's own --proposed folder is never touched by the cleanup.
+  let stagingTmpDir = null;
 
   // ── Build overlay ───────────────────────────────────────────────────────
-  // Track whether proposedDir is a temp dir we created (pre-commit surface)
-  // so we can clean it up after the overlay is built.
-  const isTempDir = surface === 'precommit';
-
-  const overlaySpinner = ora({
-    text: chalk.gray('Building forecast overlay...'),
-    color: 'cyan',
-  }).start();
-
+  // Stage proposed files (pre-commit surface only) and build the overlay inside
+  // one try/finally so the staged temp dir is always cleaned up. The temp dir is
+  // only needed until the overlay is built — its contents end up in memory.
   let patchedContext, changedFiles;
   try {
-    ({ patchedContext, changedFiles } = await buildForecastOverlay(
-      codebaseContext,
-      proposedDir,
-      { tier, profile, verbose: false }
-    ));
-    overlaySpinner.stop();
-  } catch (err) {
-    overlaySpinner.stop();
-    if (isTempDir) fs.rmSync(proposedDir, { recursive: true, force: true });
-    console.log(chalk.red(`\n  Forecast overlay failed: ${err.message}\n`));
-    return;
+    if (surface === 'precommit') {
+      console.log(chalk.gray(`\n  Discovering working-tree changes in ${baseRoot}...\n`));
+
+      const changedPaths = discoverWorkingTreeChanges(baseRoot);
+      if (changedPaths.length === 0) {
+        console.log(chalk.yellow(
+          '  No working-tree changes detected (nothing differs from HEAD, no untracked code files).\n' +
+          '  Stage some changes or switch to "Offline / received files" mode.\n'
+        ));
+        return;
+      }
+      console.log(chalk.gray(`  Found ${changedPaths.length} changed/new file(s) in working tree.\n`));
+
+      // Build a temp directory mirroring only the changed files so buildForecastOverlay
+      // sees just the proposed set, not the entire working tree. Without this,
+      // passing baseRoot as proposedDir causes collectFiles() to walk all 185 files
+      // and treat every one as a proposed change.
+      stagingTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-precommit-'));
+      try {
+        for (const absPath of changedPaths) {
+          const rel    = path.relative(baseRoot, absPath);
+          const dest   = path.join(stagingTmpDir, rel);
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          if (fs.existsSync(absPath)) {
+            fs.copyFileSync(absPath, dest);
+          }
+        }
+        proposedDir = stagingTmpDir;
+      } catch (err) {
+        console.log(chalk.red(`\n  Failed to stage working-tree files: ${err.message}\n`));
+        return;
+      }
+    } else {
+      // Offline/folder surface: user points Ghost at an explicit folder.
+      proposedDir = await promptProposedFolder();
+      console.log('');
+    }
+
+    const overlaySpinner = ora({
+      text: chalk.gray('Building forecast overlay...'),
+      color: 'cyan',
+    }).start();
+
+    try {
+      ({ patchedContext, changedFiles } = await buildForecastOverlay(
+        codebaseContext,
+        proposedDir,
+        { tier, profile, verbose: false }
+      ));
+      overlaySpinner.stop();
+    } catch (err) {
+      overlaySpinner.stop();
+      console.log(chalk.red(`\n  Forecast overlay failed: ${err.message}\n`));
+      return;
+    }
+  } finally {
+    // Always remove the staged temp dir — its contents are now in the overlay
+    // (in memory), or staging/overlay failed. Never leaks regardless of path.
+    if (stagingTmpDir && fs.existsSync(stagingTmpDir)) {
+      fs.rmSync(stagingTmpDir, { recursive: true, force: true });
+    }
   }
-  // Clean up temp dir now that overlay is built — contents are in memory.
-  if (isTempDir) fs.rmSync(proposedDir, { recursive: true, force: true });
 
   // ── Diff display ────────────────────────────────────────────────────────
   const hasChanges = renderChangedFilesBox(changedFiles, surface);

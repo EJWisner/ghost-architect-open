@@ -591,6 +591,32 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   console.log(`   Findings: ${allFindings.length} | Brief prompts: ${briefPromptCount} | Exit: 0\n`);
 
   // ── Telemetry ping ────────────────────────────────────────────────────────
+  // Write telemetry to temp file for CI curl step to read
+  const telemetryPayload = {
+    userId:    'ci',
+    version,
+    tier,
+    timestamp: new Date().toISOString(),
+    findings:  allFindings.length,
+    severity: {
+      critical: allFindings.filter(f => f.severity === 'CRITICAL').length,
+      high:     allFindings.filter(f => f.severity === 'HIGH').length,
+      medium:   allFindings.filter(f => f.severity === 'MEDIUM').length,
+      low:      allFindings.filter(f => f.severity === 'LOW').length,
+    },
+    prompts:   briefPromptCount,
+    scans: {
+      blast:    watchConfig.scans?.blast_radius    !== false,
+      conflict: watchConfig.scans?.conflict_detection !== false,
+      brief:    watchConfig.scans?.ghost_brief     !== false,
+    },
+    commitHash: (process.env.GITHUB_SHA || '').slice(0, 16),
+    repoHash:   process.env.GITHUB_REPOSITORY || '',
+  };
+  try {
+    const { writeFileSync } = await import('fs');
+    writeFileSync('/tmp/ghost-watcher-telemetry.json', JSON.stringify(telemetryPayload));
+  } catch (_) { /* non-fatal */ }
   try {
     await pingWatcherRun(version, tier, {
       findings:  allFindings.length,
