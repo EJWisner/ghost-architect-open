@@ -18,6 +18,7 @@ import { isBackKeyword } from '../cli/prompt-helpers.js';
 let SCAN_OPTIONS = {
   tier: 'open',
   maxContextOverride: null,   // number | null
+  ignoreSavedContext: false,  // boolean — when true, buildContext ignores the saved configstore maxTokensContext and falls back to the full tier cap (set by the CI guard)
   excludePresets: [],         // string[]
   excludePatterns: [],        // string[]
   skipRedaction: false,       // boolean — Pro+ escape hatch for the fail-closed redaction abort
@@ -31,6 +32,7 @@ export function setScanOptions(opts = {}) {
   SCAN_OPTIONS = {
     tier: opts.tier || SCAN_OPTIONS.tier || 'open',
     maxContextOverride: opts.maxContextOverride ?? null,
+    ignoreSavedContext: opts.ignoreSavedContext === true,
     excludePresets: Array.isArray(opts.excludePresets) ? opts.excludePresets : [],
     excludePatterns: Array.isArray(opts.excludePatterns) ? opts.excludePatterns : [],
     skipRedaction: opts.skipRedaction === true,
@@ -748,19 +750,30 @@ function loadCustomPatterns({ tier, profile }) {
 
 function buildContext(fileMap) {
   const config = getConfig();
-  const configuredMax = config.get('maxTokensContext') || 50000;
+  // A saved `ghost reconfigure` preference, if any. Treated as "present" only
+  // when it is a real positive number; an absent/blank/zero value must fall
+  // through to the full tier cap, NOT a hardcoded 50K. The old `|| 50000`
+  // collapsed "no saved preference" into Open's ceiling, so Pro/Team/Enterprise
+  // with no saved value (e.g. a fresh CI runner) were silently clamped to 50K
+  // even though resolveContextCap would have granted the full tier cap for a
+  // null request. ignoreSavedContext (set by the CI guard) forces that null
+  // path regardless of any value the runner's configstore happens to hold.
+  const savedMax = config.get('maxTokensContext');
+  const hasSavedMax = !SCAN_OPTIONS.ignoreSavedContext
+    && typeof savedMax === 'number' && Number.isFinite(savedMax) && savedMax > 0;
 
-  // Resolve the effective cap: tier ceiling vs. user's CLI override vs. config default.
-  // Precedence: CLI --max-context (if provided) > config.maxTokensContext > 50000 default.
+  // Resolve the effective cap: tier ceiling vs. user's CLI override vs. saved config.
+  // Precedence: CLI --max-context (if provided) > config.maxTokensContext > full tier cap.
+  // A null userRequested makes resolveContextCap return the tier ceiling outright.
   // Tier cap always clamps the final value.
-  const userRequested = SCAN_OPTIONS.maxContextOverride ?? configuredMax;
+  const userRequested = SCAN_OPTIONS.maxContextOverride ?? (hasSavedMax ? savedMax : null);
   // Source distinction so the clamp warning names the actual provenance.
   // CLI: user passed --max-context. Config: value came from configstore (often
-  // a prior `ghost reconfigure` from a different tier). Default: hardcoded 50K.
-  // See TODO-architect-open-clamp-message-misleading.md.
+  // a prior `ghost reconfigure` from a different tier). Default: no saved value,
+  // resolving to the full tier cap. See TODO-architect-open-clamp-message-misleading.md.
   const source = SCAN_OPTIONS.maxContextOverride != null
     ? 'cli'
-    : (configuredMax !== 50000 ? 'config' : 'default');
+    : (hasSavedMax ? 'config' : 'default');
   const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested, source);
 
   // ── Redaction ──────────────────────────────────────────────────────────────

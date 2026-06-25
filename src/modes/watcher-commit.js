@@ -387,16 +387,19 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   // ── Step 4: Load codebase ────────────────────────────────────────────────
   console.log('Ghost Watcher: loading codebase context...');
 
-  // In CI, clear any saved maxTokensContext override so the context cap falls
-  // back to the full tier ceiling. A developer's local `ghost reconfigure`
-  // session can persist a 50K value into the configstore; without this, that
-  // stale local value would override the tier cap on the ephemeral runner.
+  // In CI, ignore any saved maxTokensContext value so the context cap falls back
+  // to the full tier ceiling. A developer's local `ghost reconfigure` session can
+  // persist a sub-tier value (e.g. 50K) into the configstore; clearing only the
+  // override is not enough, because buildContext otherwise reads that saved value
+  // (or the hardcoded default) directly. ignoreSavedContext routes resolution to
+  // the full tier cap on the ephemeral runner. Set in the same call as tier so
+  // the flag is not clobbered by a subsequent setScanOptions.
   if (process.env.CI) {
-    setScanOptions({ tier, maxContextOverride: null });
-    console.log('Ghost Watcher: CI detected — cleared saved context override, using full tier cap.');
+    setScanOptions({ tier, maxContextOverride: null, ignoreSavedContext: true });
+    console.log('Ghost Watcher: CI detected — ignoring saved context override, using full tier cap.');
+  } else {
+    setScanOptions({ tier });
   }
-
-  setScanOptions({ tier });
   let codebaseContext;
   try {
     codebaseContext = await loadFromPath(repoRoot, { tier });
