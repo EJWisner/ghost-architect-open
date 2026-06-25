@@ -38,6 +38,30 @@ jobs:
       - name: Install Ghost Architect
         run: npm install -g ghost-architect-open@latest --force
 
+      - name: "Debug: Test Batches API connectivity"
+        run: |
+          echo "Testing Anthropic Batches API endpoint..."
+          curl -v --max-time 10 \
+            -X POST \
+            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d '{"requests":[{"custom_id":"test","params":{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}}]}' \
+            https://api.anthropic.com/v1/messages/batches 2>&1 | head -60
+          echo "Exit code: $?"
+
+      - name: "Debug: Test Messages API connectivity"
+        run: |
+          echo "Testing Anthropic Messages API endpoint..."
+          curl -v --max-time 10 \
+            -X POST \
+            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d '{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+            https://api.anthropic.com/v1/messages 2>&1 | head -60
+          echo "Exit code: $?"
+
       - name: Run Ghost Watcher
         run: ghost --watcher-commit
         env:
