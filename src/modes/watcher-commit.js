@@ -386,6 +386,16 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
 
   // ── Step 4: Load codebase ────────────────────────────────────────────────
   console.log('Ghost Watcher: loading codebase context...');
+
+  // In CI, clear any saved maxTokensContext override so the context cap falls
+  // back to the full tier ceiling. A developer's local `ghost reconfigure`
+  // session can persist a 50K value into the configstore; without this, that
+  // stale local value would override the tier cap on the ephemeral runner.
+  if (process.env.CI) {
+    setScanOptions({ tier, maxContextOverride: null });
+    console.log('Ghost Watcher: CI detected — cleared saved context override, using full tier cap.');
+  }
+
   setScanOptions({ tier });
   let codebaseContext;
   try {
