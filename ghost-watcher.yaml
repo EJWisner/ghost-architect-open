@@ -13,6 +13,17 @@ ghost_watcher:
   portal:
     repo: https://github.com/EJWisner/ghost-reports-portal-test
     token_env: GHOST_PORTAL_TOKEN
+  exclude:
+    - "test/**"
+    - "tests/**"
+    - "test-*.js"
+    - "prompts/**"
+    - "prompts-extracted/**"
+    - "scripts/**"
+    - "audit-reports/**"
+    - "*.png"
+    - "*.jpg"
+    - "*.pdf"
   notifications:
     pr_comment: true
     email:
