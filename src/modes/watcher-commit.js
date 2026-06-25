@@ -27,6 +27,7 @@ import { getDefaultProfileSlug, getConfig, resolveApiKey } from '../config.js';
 import { loadFromPath, setScanOptions } from '../loader/index.js';
 import { extractFindings } from '../utils/finding-parser.js';
 import { normalizeCandidateToFinding, extractCandidates } from '../core/conflict.js';
+import { narrateReport } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
 import { pingWatcherRun } from '../telemetry/pulse.js';
 import { buildSystemBlast } from '../../prompts/index.js';
@@ -414,6 +415,55 @@ function buildConflictPrompts(fileMap, profile) {
     forecastContext: null,
   });
   return { systemPrompt, userMessage };
+}
+
+/**
+ * Turn the raw Blast Radius batch output into findings, replicating Step 2 of
+ * runBlastRadius() (src/analyst/index.js).
+ *
+ * The raw model output is in the blast system-prompt format (the 💥/🌊/🧨/✅/⚠️
+ * sections, then REMEDIATION / ROLLBACK plans) — it has NO per-finding `Files:`
+ * lines. Parsing it directly yields findings whose `files` arrays are empty,
+ * which the Ghost Brief adapter's `files.primary.length > 0` filter then
+ * discards (the "findings array is empty" failure). The narrator rewrites that
+ * raw output into the canonical Ghost report — `### Finding` headers with
+ * `Severity:` and `Files:` lines — which is exactly what the old streaming path
+ * captured via its onChunk buffer and what extractFindings + the Brief expect.
+ * So we narrate first, then parse the narrated report.
+ *
+ * The narrator's own LLM calls operate on the small findings/report payload (not
+ * the full codebase), so they are not the large-context calls that prompted the
+ * batch migration. If narration fails for any reason we fall back to the raw
+ * findings so a narrator hiccup never drops the run.
+ */
+async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, codebaseContext }) {
+  const rawFindings = extractFindings(rawBlastOutput, 'blast');
+  if (rawFindings.length === 0) return [];
+
+  try {
+    const rates = mergeRates(getRates(), profile);
+    const projectLabel = changedFiles.length === 1
+      ? changedFiles[0]
+      : `change set of ${changedFiles.length} files`;
+
+    const narratedReport = await narrateReport(
+      {
+        findings:      rawFindings,
+        findingCount:  rawFindings.length,
+        filesAnalyzed: codebaseContext?.loadedFiles || 0,
+        stepCount:     1,
+        auditTrail:    [],
+      },
+      { projectLabel, mode: 'blast', rates, profile },
+      // Headless — we use the returned narrated text, not the stream.
+      () => {},
+    );
+
+    return extractFindings(narratedReport || rawBlastOutput);
+  } catch (err) {
+    console.error(`Ghost Watcher: Blast narrator failed (non-fatal), using raw findings — ${err.message}`);
+    return rawFindings;
+  }
 }
 
 // A batch custom_id must match ^[a-zA-Z0-9_-]{1,64}$. Short commit SHAs are hex,
@@ -969,7 +1019,11 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
           onProgress: (p) => console.log(`Ghost Watcher: Blast Radius — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
         });
         const rawBlastOutput = blastResults[0]?.text || '';
-        blastFindings  = extractFindings(rawBlastOutput);
+        // Narrate the raw batch output before parsing — see blastFindingsFromRaw.
+        // This restores the per-finding `Files:` lines the Ghost Brief needs;
+        // parsing the raw output directly leaves files empty and the Brief drops
+        // every finding. blastFileCount is computed from the narrated findings.
+        blastFindings  = await blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, codebaseContext });
         blastFileCount = blastFindings.reduce((acc, f) => acc + (f.files?.length || 0), 0);
         if (blastResults[0]?.usage) {
           const u = blastResults[0].usage;
