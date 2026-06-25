@@ -23,7 +23,7 @@ permissions:
 jobs:
   ghost-watcher:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4

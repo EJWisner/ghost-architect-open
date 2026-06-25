@@ -10,9 +10,18 @@ ghost_watcher:
     conflict_detection: true
     ghost_brief: true
     conflict_verify: false
+  batch:
+    poll_interval_seconds: 30
+    timeout_minutes: 90
   portal:
     repo: https://github.com/EJWisner/ghost-reports-portal-test
     token_env: GHOST_PORTAL_TOKEN
+  notifications:
+    pr_comment: true
+    email:
+      - ejwisner@gmail.com
+  iterations:
+    max: 50
   exclude:
     - "test/**"
     - "tests/**"
@@ -24,11 +33,5 @@ ghost_watcher:
     - "*.png"
     - "*.jpg"
     - "*.pdf"
-  notifications:
-    pr_comment: true
-    email:
-      - ejwisner@gmail.com
-  iterations:
-    max: 50
   team:
     config: team.yaml
