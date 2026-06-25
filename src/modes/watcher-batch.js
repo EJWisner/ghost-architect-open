@@ -129,27 +129,116 @@ function normalizeResultItem(item) {
 
 // ── Public: submission / polling / cancel ──────────────────────────────────────
 
+// Classify an error as a transient network/connection failure (worth retrying)
+// vs a deterministic API rejection (4xx — retrying is pointless). "Premature
+// close" / ECONNRESET / socket hang up are the connection drops seen on
+// GitHub Actions runners; the SDK surfaces them as APIConnectionError.
+function isTransientNetworkError(err) {
+  const name = err?.name || '';
+  if (name === 'APIConnectionError' || name === 'APIConnectionTimeoutError') return true;
+  // A 4xx that carries a status is deterministic — do not retry.
+  const status = err?.status;
+  if (typeof status === 'number' && status >= 400 && status < 500) return false;
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('premature close') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket hang up') ||
+    msg.includes('econnrefused') ||
+    msg.includes('etimedout') ||
+    msg.includes('eai_again') ||
+    msg.includes('enotfound') ||
+    msg.includes('network') ||
+    msg.includes('connection error') ||
+    msg.includes('terminated') ||
+    msg.includes('fetch failed')
+  );
+}
+
 /**
- * Submit an array of requests to the Batches API.
+ * Cheap reachability probe for the Batches POST path. Submits a minimal 1-token
+ * batch BEFORE we attempt to upload the full ~600KB codebase context, so we can
+ * tell a network/auth failure (tiny POST also fails) apart from a payload-size
+ * failure (tiny POST succeeds, full POST drops). Never throws.
+ *
+ * @returns {Promise<{ok: boolean, batchId?: string, error?: string, transient?: boolean}>}
+ */
+export async function preflightBatchCheck(anthropic, model) {
+  const requests = [{
+    custom_id: `preflight-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64),
+    params: {
+      model: model || 'claude-sonnet-4-6',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: 'ping' }],
+    },
+  }];
+  try {
+    const batch = await anthropic.messages.batches.create({ requests });
+    const batchId = batch?.id;
+    if (!batchId) return { ok: false, error: 'Batches API returned no batch id for preflight.' };
+    // Best-effort cleanup — don't leave a stray tiny batch behind. Don't await.
+    Promise.resolve(cancelBatch(anthropic, batchId)).catch(() => {});
+    return { ok: true, batchId };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), transient: isTransientNetworkError(err) };
+  }
+}
+
+/**
+ * Submit an array of requests to the Batches API, with retry-and-backoff on
+ * transient connection failures (the "Premature close" / ECONNRESET drops seen
+ * on CI runners). Deterministic 4xx rejections fail immediately.
+ *
  * Each request: { custom_id, params: { model, max_tokens, system, messages } }.
  * custom_id must match ^[a-zA-Z0-9_-]{1,64}$ (caller's responsibility to build).
  *
+ * @param {object} anthropic
+ * @param {Array}  requests
+ * @param {object} [opts]
+ * @param {number} [opts.maxAttempts=4]
+ * @param {number} [opts.baseBackoffMs=2000]  attempt N waits baseBackoffMs * 2^(N-1)
  * @returns {Promise<string>} the batch id
- * @throws if submission fails
+ * @throws if submission ultimately fails
  */
-export async function submitBatch(anthropic, requests) {
-  let batch;
-  try {
-    batch = await anthropic.messages.batches.create({ requests });
-  } catch (err) {
-    throw new Error(`Ghost Watcher™ batch submission failed — ${err.message}`);
+export async function submitBatch(anthropic, requests, opts = {}) {
+  const { maxAttempts = 4, baseBackoffMs = 2000 } = opts;
+
+  // Report the on-the-wire body size. A large POST body is a known trigger for
+  // mid-upload connection drops on constrained CI networks; logging it gives us
+  // the real number from each run instead of an estimate.
+  let bodyBytes = 0;
+  try { bodyBytes = Buffer.byteLength(JSON.stringify({ requests }), 'utf8'); } catch { /* size logging is best-effort */ }
+  if (bodyBytes) {
+    const mb = (bodyBytes / 1024 / 1024).toFixed(2);
+    console.log(`Ghost Watcher: submitting batch — request body ${bodyBytes.toLocaleString()} bytes (${mb} MB)`);
+    if (bodyBytes > 1024 * 1024) {
+      console.warn(`Ghost Watcher: batch request body exceeds 1 MB (${mb} MB) — large POST bodies can drop mid-upload on CI networks.`);
+    }
   }
-  const batchId = batch?.id;
-  if (!batchId) {
-    throw new Error('Ghost Watcher™ batch submission failed — Batches API returned no batch id.');
+
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const batch = await anthropic.messages.batches.create({ requests });
+      const batchId = batch?.id;
+      if (!batchId) throw new Error('Batches API returned no batch id.');
+      console.log(`Ghost Watcher: batch submitted — ${batchId}`);
+      return batchId;
+    } catch (err) {
+      lastErr = err;
+      const transient = isTransientNetworkError(err);
+      if (!transient || attempt === maxAttempts) {
+        throw new Error(
+          `Ghost Watcher™ batch submission failed` +
+          `${transient ? ` after ${attempt} attempt${attempt === 1 ? '' : 's'}` : ''} — ${err?.message || String(err)}`
+        );
+      }
+      const backoff = baseBackoffMs * Math.pow(2, attempt - 1);
+      console.warn(`Ghost Watcher: batch submission attempt ${attempt}/${maxAttempts} failed (${err?.message || err}); retrying in ${Math.round(backoff / 1000)}s...`);
+      await sleep(backoff);
+    }
   }
-  console.log(`Ghost Watcher: batch submitted — ${batchId}`);
-  return batchId;
+  throw new Error(`Ghost Watcher™ batch submission failed — ${lastErr?.message || 'unknown error'}`);
 }
 
 /**

@@ -15,6 +15,7 @@
 
 import {
   submitBatch,
+  preflightBatchCheck,
   pollBatch,
   storePendingBatch,
   retrievePendingBatches,
@@ -282,6 +283,45 @@ async function run() {
     assert(e.batchId === 'msgbatch_fail', 'batchId property');
     assert(e.counts && e.counts.errored === 3, 'counts property');
     assert(e.message.includes('msgbatch_fail'), 'message names the batch id');
+  }
+
+  // 11) submitBatch retries transient connection errors, fails fast on 4xx
+  console.log('\nTest 11: submitBatch retries "Premature close" then succeeds, but fails fast on 4xx');
+  {
+    let n = 0;
+    const flaky = { messages: { batches: { create: async () => { n++; if (n < 3) throw new Error('Premature close'); return { id: 'msgbatch_retry_ok' }; } } } };
+    const id = await submitBatch(flaky, [{ custom_id: 'blast-x', params: { model: 'm', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] } }], { maxAttempts: 4, baseBackoffMs: 2 });
+    assert(id === 'msgbatch_retry_ok' && n === 3, 'retried transient drops and returned the id', `id=${id} attempts=${n}`);
+
+    let m = 0; let threw = false;
+    const badreq = { messages: { batches: { create: async () => { m++; const e = new Error('invalid_request_error'); e.status = 400; throw e; } } } };
+    try { await submitBatch(badreq, [{ custom_id: 'c', params: {} }], { maxAttempts: 4, baseBackoffMs: 2 }); } catch { threw = true; }
+    assert(threw && m === 1, 'a 4xx fails fast without retrying', `threw=${threw} attempts=${m}`);
+  }
+
+  // 12) submitBatch gives up after maxAttempts on persistent transient errors
+  console.log('\nTest 12: submitBatch throws after exhausting retries on persistent drops');
+  {
+    let n = 0; let caught = null;
+    const dead = { messages: { batches: { create: async () => { n++; throw new Error('Premature close'); } } } };
+    try { await submitBatch(dead, [{ custom_id: 'z', params: {} }], { maxAttempts: 3, baseBackoffMs: 2 }); } catch (e) { caught = e; }
+    assert(caught instanceof Error && n === 3, 'attempted maxAttempts times then threw', `attempts=${n}`);
+    assert(caught && caught.message.includes('after 3 attempts'), 'error message reports the attempt count', caught?.message);
+  }
+
+  // 13) preflightBatchCheck — reachable (ok) vs unreachable (transient fail)
+  console.log('\nTest 13: preflightBatchCheck reports ok on a tiny submit, and a transient failure on a drop');
+  {
+    let created = null;
+    const okClient = { messages: { batches: { create: async (b) => { created = b; return { id: 'msgbatch_pre' }; }, cancel: async () => {} } } };
+    const r1 = await preflightBatchCheck(okClient, 'claude-sonnet-4-6');
+    assert(r1.ok === true && r1.batchId === 'msgbatch_pre', 'ok:true with batchId when the tiny POST succeeds');
+    assert(created?.requests?.[0]?.params?.max_tokens === 1, 'preflight body is a 1-token request');
+    assert(/^[a-zA-Z0-9_-]{1,64}$/.test(created?.requests?.[0]?.custom_id), 'preflight custom_id is valid');
+
+    const failClient = { messages: { batches: { create: async () => { throw new Error('Premature close'); } } } };
+    const r2 = await preflightBatchCheck(failClient, 'claude-sonnet-4-6');
+    assert(r2.ok === false && r2.transient === true, 'ok:false + transient:true on a connection drop', JSON.stringify(r2));
   }
 
   console.log('');

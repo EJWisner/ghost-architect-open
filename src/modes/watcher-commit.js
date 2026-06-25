@@ -33,6 +33,7 @@ import { buildSystemBlast } from '../../prompts/index.js';
 import { buildSystemConflict, buildConflictPrompt } from '../../prompts/conflict.js';
 import {
   submitBatch,
+  preflightBatchCheck,
   pollBatch,
   storePendingBatch,
   retrievePendingBatches,
@@ -866,6 +867,26 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
         }
       }
     }
+  }
+
+  // ── Batches API preflight ────────────────────────────────────────────────
+  // Submit a tiny 1-token batch to confirm the POST path (network + auth +
+  // endpoint) works BEFORE we attempt to upload the full ~600KB codebase
+  // context. This distinguishes a network/auth failure (tiny POST also fails →
+  // nothing we can submit, exit cleanly) from a payload-size failure (tiny POST
+  // succeeds but the full submit drops). Resume above already ran — it only
+  // does GETs, so it is unaffected by a broken submit path.
+  if (watchConfig.scans?.blast_radius !== false || watchConfig.scans?.conflict_detection !== false) {
+    const preflight = await preflightBatchCheck(anthropic, getModel());
+    if (!preflight.ok) {
+      console.error(`Ghost Watcher: Batches API preflight failed — ${preflight.error}`);
+      console.error('Ghost Watcher: the Anthropic Batches endpoint is unreachable from this runner ' +
+        '(network or auth level — check the ANTHROPIC_API_KEY secret and runner egress). ' +
+        'A tiny 1-token POST could not be submitted, so the full scan would fail too. Skipping submission.');
+      console.log('👻 Ghost Watcher™ — could not reach the Batches API; nothing submitted. Exit: 0\n');
+      process.exit(0);
+    }
+    console.log('Ghost Watcher: Batches API preflight OK — POST path reachable, proceeding.\n');
   }
 
   // ── Step 4: Load codebase ────────────────────────────────────────────────
