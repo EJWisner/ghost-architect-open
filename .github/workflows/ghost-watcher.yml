@@ -38,29 +38,40 @@ jobs:
       - name: Install Ghost Architect
         run: npm install -g ghost-architect-open@latest --force
 
-      - name: "Debug: Test Batches API connectivity"
+      - name: Debug -- Test Batches API with Node.js fetch
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          echo "Testing Anthropic Batches API endpoint..."
-          curl -v --max-time 10 \
-            -X POST \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d '{"requests":[{"custom_id":"test","params":{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}}]}' \
-            https://api.anthropic.com/v1/messages/batches 2>&1 | head -60
-          echo "Exit code: $?"
+          node --input-type=module --eval "
+          const key = process.env.ANTHROPIC_API_KEY;
+          console.log('API key present:', !!key, 'length:', key?.length);
 
-      - name: "Debug: Test Messages API connectivity"
-        run: |
-          echo "Testing Anthropic Messages API endpoint..."
-          curl -v --max-time 10 \
-            -X POST \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d '{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
-            https://api.anthropic.com/v1/messages 2>&1 | head -60
-          echo "Exit code: $?"
+          console.log('Testing /v1/messages endpoint...');
+          try {
+            const r1 = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+              body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] })
+            });
+            console.log('/v1/messages status:', r1.status);
+          } catch (e) {
+            console.log('/v1/messages ERROR:', e.message);
+          }
+
+          console.log('Testing /v1/messages/batches endpoint...');
+          try {
+            const r2 = await fetch('https://api.anthropic.com/v1/messages/batches', {
+              method: 'POST',
+              headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+              body: JSON.stringify({ requests: [{ custom_id: 'test-1', params: { model: 'claude-haiku-4-5-20251001', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] } }] })
+            });
+            console.log('/v1/messages/batches status:', r2.status);
+            const text = await r2.text();
+            console.log('/v1/messages/batches response:', text.slice(0, 200));
+          } catch (e) {
+            console.log('/v1/messages/batches ERROR:', e.message);
+          }
+          " 2>&1
 
       - name: Run Ghost Watcher
         run: ghost --watcher-commit
