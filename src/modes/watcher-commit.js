@@ -389,7 +389,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   setScanOptions({ tier });
   let codebaseContext;
   try {
-    codebaseContext = await loadFromPath(repoRoot);
+    codebaseContext = await loadFromPath(repoRoot, { tier });
   } catch (err) {
     console.error(`Ghost Watcher: failed to load codebase — ${err.message}`);
     process.exit(0);

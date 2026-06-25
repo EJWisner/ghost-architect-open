@@ -46,3 +46,18 @@ jobs:
           GHOST_PORTAL_REPO: ${{ secrets.GHOST_PORTAL_REPO }}
           GHOST_PORTAL_TOKEN: ${{ secrets.GHOST_PORTAL_TOKEN }}
           GHOST_PR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ghost Pulse telemetry
+        if: always()
+        run: |
+          if [ -f /tmp/ghost-watcher-telemetry.json ]; then
+            PAYLOAD=$(cat /tmp/ghost-watcher-telemetry.json)
+          else
+            PAYLOAD='{"userId":"ci-ejwisner","version":"9.1.0","tier":"team","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","findings":0,"severity":{"critical":0,"high":0,"medium":0,"low":0},"prompts":0,"scans":{"blast":true,"conflict":true,"brief":true},"commitHash":"${{ github.sha }}","repoHash":"ghost-architect"}'
+          fi
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Ghost-Client: ghost-architect-ci" \
+            --max-time 10 \
+            -d "$PAYLOAD" \
+            https://signup.ghostarchitect.dev/watcher-ping || true

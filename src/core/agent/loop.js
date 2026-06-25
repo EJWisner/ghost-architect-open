@@ -22,6 +22,17 @@ export function __setClientFactoryForTest(factory) {
   clientFactory = factory || (() => new Anthropic({ apiKey: resolveApiKey() }));
 }
 
+// Transient stream errors (dropped sockets mid-response) abort a whole scan
+// with zero findings if not retried. We retry these a small number of times
+// with exponential backoff before giving up on the step.
+const MAX_STREAM_RETRIES = 2;
+const TRANSIENT_STREAM_PATTERNS = ['Premature close', 'ECONNRESET', 'socket hang up', 'UND_ERR_SOCKET'];
+
+function isTransientStreamError(err) {
+  const msg = (err && err.message) || '';
+  return TRANSIENT_STREAM_PATTERNS.some(pattern => msg.includes(pattern));
+}
+
 function buildAgentSystemPrompt(tools, context = '') {
   return `You are Ghost Architect's autonomous analysis agent — a senior software architect AI.
 
@@ -144,12 +155,38 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
             `Attempt ${attempt - 1} failed to parse`);
 
       try {
-        const response = await anthropic.messages.create({
-          model:      getModel(),
-          max_tokens: 1024,
-          system:     systemPrompt,
-          messages:   [{ role: 'user', content: prompt }],
-        });
+        // Transient stream errors (Premature close / dropped sockets) are
+        // retried in-place with exponential backoff so a momentary network
+        // blip does not abort the entire scan. Any other error, or exhausting
+        // the retries, falls through to the outer catch and aborts the loop.
+        let response = null;
+        for (let streamAttempt = 0; ; streamAttempt++) {
+          try {
+            response = await anthropic.messages.create({
+              model:      getModel(),
+              max_tokens: 1024,
+              system:     systemPrompt,
+              messages:   [{ role: 'user', content: prompt }],
+            });
+            break; // success — leave the stream-retry loop
+          } catch (streamErr) {
+            if (isTransientStreamError(streamErr) && streamAttempt < MAX_STREAM_RETRIES) {
+              const backoffMs = 1000 * Math.pow(2, streamAttempt); // 1000ms, then 2000ms
+              memory.record(
+                'stream_retry',
+                { step, attempt, streamAttempt: streamAttempt + 1 },
+                { error: streamErr.message },
+                'Transient stream error — retrying'
+              );
+              onWarning({
+                message: `Transient stream error at step ${step} (retry ${streamAttempt + 1}/${MAX_STREAM_RETRIES}) — ${streamErr.message}; retrying in ${backoffMs}ms...`,
+              });
+              await new Promise(resolve => setTimeout(resolve, backoffMs));
+              continue; // retry the API call
+            }
+            throw streamErr; // non-transient, or retries exhausted
+          }
+        }
         raw = response.content[0]?.text || '';
         // Capture real API usage for cost tracking (one record per loop step)
         if (onUsage && response.usage) {

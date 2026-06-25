@@ -140,21 +140,34 @@ export async function loadCodebase(method, options) {
 }
 
 // ── loadFromPath — non-interactive, takes a known directory path ──────────────
-// Used by the Commit Forecast non-interactive flag path (--baseline).
-// Throws with a clear message if path doesn't exist or isn't a directory.
-// Returns the same shape as loadFromFiles.
-export async function loadFromPath(dirPath) {
+// Used by the Commit Forecast non-interactive flag path (--baseline) and by
+// Ghost Watcher. Throws with a clear message if path doesn't exist or isn't a
+// directory. Returns the same shape as loadFromFiles.
+//
+// options.tier — optional tier ('open' | 'pro' | 'team' | 'enterprise'). When
+// provided, the tier-appropriate context cap is applied. Non-interactive
+// callers must pass it because they never run setScanOptions through the
+// interactive flow; without it the cap defaults to the Open 50K ceiling.
+export async function loadFromPath(dirPath, options = {}) {
   if (!fs.existsSync(dirPath)) {
     throw new Error(`Path does not exist: ${dirPath}`);
   }
   if (!fs.statSync(dirPath).isDirectory()) {
     throw new Error(`Path is not a directory: ${dirPath}`);
   }
-  return await _loadFromDirPath(dirPath);
+  return await _loadFromDirPath(dirPath, options);
 }
 
 // ── _loadFromDirPath — shared implementation used by both interactive and non-interactive paths ──
-async function _loadFromDirPath(dirPath) {
+async function _loadFromDirPath(dirPath, options = {}) {
+  // Honor an explicitly passed tier so non-interactive callers (e.g. Ghost
+  // Watcher) get the tier-appropriate context cap. resolveContextCap is the
+  // single cap resolver (invoked downstream in buildContext); seeding the tier
+  // here routes it through that resolver instead of the Open 50K default.
+  if (options.tier) {
+    setScanOptions({ ...getScanOptions(), tier: options.tier });
+  }
+
   const spinner = ora('Scanning files...').start();
 
   // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
