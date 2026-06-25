@@ -33,6 +33,17 @@ function isTransientStreamError(err) {
   return TRANSIENT_STREAM_PATTERNS.some(pattern => msg.includes(pattern));
 }
 
+// In CI (GitHub Actions sets CI=true), the streaming connection to the
+// Anthropic API gets dropped consistently on large-context scans (~150K tokens),
+// surfacing as "Premature close". Retrying the same streaming call fails the same
+// way. In CI we force a non-streaming request (stream: false) so the SDK waits for
+// the full response in one shot, which eliminates the mid-response stream closure.
+// Local dev keeps the existing behavior untouched.
+function isCI() {
+  const ci = process.env.CI;
+  return ci !== undefined && ci !== '' && ci !== 'false' && ci !== '0';
+}
+
 function buildAgentSystemPrompt(tools, context = '') {
   return `You are Ghost Architect's autonomous analysis agent — a senior software architect AI.
 
@@ -132,11 +143,18 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
 
   const anthropic    = getClient();
   const systemPrompt = buildAgentSystemPrompt(tools);
+  const inCI         = isCI();
   let   lastResult   = null;
   let   finished     = false;
   let   parseErrors  = 0;      // track parse failures across whole run
   let   apiError     = null;   // set to the API error message if the loop aborts on an API failure
   const MAX_PARSE_RETRIES = 2; // per step
+
+  // Surface the CI non-streaming switch through the warning channel so it shows
+  // up in the GitHub Actions log (this module emits no console output directly).
+  if (inCI) {
+    onWarning({ message: 'CI environment detected — using non-streaming Anthropic API calls (stream: false) to avoid premature stream closure on large-context scans.' });
+  }
 
   for (let step = 1; step <= maxSteps && !finished; step++) {
     onStep({ step, maxSteps });
@@ -162,12 +180,18 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
         let response = null;
         for (let streamAttempt = 0; ; streamAttempt++) {
           try {
-            response = await anthropic.messages.create({
+            // In CI, force a non-streaming response (stream: false) so the SDK
+            // waits for the full message instead of holding a stream that the CI
+            // network drops mid-response on large contexts. Locally we omit the
+            // flag entirely to preserve the existing behavior.
+            const createParams = {
               model:      getModel(),
               max_tokens: 1024,
               system:     systemPrompt,
               messages:   [{ role: 'user', content: prompt }],
-            });
+            };
+            if (inCI) createParams.stream = false;
+            response = await anthropic.messages.create(createParams);
             break; // success — leave the stream-retry loop
           } catch (streamErr) {
             if (isTransientStreamError(streamErr) && streamAttempt < MAX_STREAM_RETRIES) {
