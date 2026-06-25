@@ -14,12 +14,21 @@
  * batch keeps processing on Anthropic's servers and the NEXT commit push resumes
  * it (see retrievePendingBatches / storePendingBatch).
  *
- * SDK surface used (verified against @anthropic-ai/sdk 0.39.0
- * resources/messages/batches.d.ts):
- *   client.messages.batches.create({ requests: [{ custom_id, params }] }) -> MessageBatch
- *   client.messages.batches.retrieve(batchId)  -> MessageBatch (has processing_status, request_counts)
- *   client.messages.batches.results(batchId)   -> Promise<JSONLDecoder<MessageBatchIndividualResponse>> (async-iterable)
- *   client.messages.batches.cancel(batchId)    -> MessageBatch
+ * Transport note: we talk to the Batches API directly over native fetch, NOT
+ * through the @anthropic-ai/sdk client. The SDK's batches.create() reliably
+ * drops with "Premature close" on GitHub Actions runners, while a plain
+ * native-fetch POST to the same /v1/messages/batches endpoint succeeds with the
+ * identical body and headers. So all four operations below are native-fetch
+ * calls. For convenience the public functions still accept the SDK client object
+ * as their first argument and pull the key off it (client.apiKey); a bare API
+ * key string works too.
+ *
+ * HTTP surface (api.anthropic.com, anthropic-version: 2023-06-01 — the Batches
+ * API is GA at SDK 0.39.0, so no anthropic-beta header is needed):
+ *   POST /v1/messages/batches                 { requests: [{ custom_id, params }] } -> MessageBatch
+ *   GET  /v1/messages/batches/{id}            -> MessageBatch (processing_status, request_counts, results_url)
+ *   GET  {results_url}                        -> JSONL of MessageBatchIndividualResponse
+ *   POST /v1/messages/batches/{id}/cancel     -> MessageBatch
  *
  * processing_status is one of 'in_progress' | 'canceling' | 'ended'.
  * Each result item: { custom_id, result: { type, message?, error? } } where
@@ -127,18 +136,127 @@ function normalizeResultItem(item) {
   return { custom_id: item?.custom_id, type, text, usage, error };
 }
 
+// ── HTTP transport (native fetch) ──────────────────────────────────────────────
+//
+// The SDK's batches.create() drops with "Premature close" on GitHub Actions
+// runners; a native-fetch POST to the same endpoint succeeds. So every Batches
+// operation here is a direct native-fetch call. Public functions accept either
+// the SDK client (we read client.apiKey) or a bare key string.
+
+const ANTHROPIC_BASE    = 'https://api.anthropic.com';
+const ANTHROPIC_VERSION = '2023-06-01';
+
+// Per-request timeouts (ms). Submit gets a generous window for the large context
+// upload; status/cancel are fast; results may be a sizeable JSONL download.
+const SUBMIT_TIMEOUT_MS  = 120000;
+const STATUS_TIMEOUT_MS  = 30000;
+const RESULTS_TIMEOUT_MS  = 120000;
+
+// Accept either an SDK client object (pull .apiKey off it) or a bare key string.
+// Falls back to the ANTHROPIC_API_KEY env var.
+function resolveKey(clientOrKey) {
+  if (typeof clientOrKey === 'string') return clientOrKey;
+  if (clientOrKey && typeof clientOrKey === 'object') {
+    return clientOrKey.apiKey || clientOrKey.api_key || process.env.ANTHROPIC_API_KEY || null;
+  }
+  return process.env.ANTHROPIC_API_KEY || null;
+}
+
+function batchHeaders(apiKey) {
+  return {
+    'x-api-key':         apiKey,
+    'anthropic-version': ANTHROPIC_VERSION,
+    'content-type':      'application/json',
+  };
+}
+
+// One native-fetch round trip with an AbortController timeout. Returns the raw
+// Response. Network-level failures (premature close, ECONNRESET, DNS, abort)
+// reject here; HTTP error statuses (4xx/5xx) resolve and are checked by callers.
+async function anthropicFetch(apiKey, pathOrUrl, { method = 'GET', body, timeoutMs = STATUS_TIMEOUT_MS } = {}) {
+  if (!apiKey) throw new Error('No Anthropic API key available for Batches request.');
+  const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${ANTHROPIC_BASE}${pathOrUrl}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method,
+      headers: batchHeaders(apiKey),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Read a Response body, throwing a status-bearing Error on non-2xx so callers can
+// distinguish deterministic 4xx from retryable 5xx/connection failures.
+async function readJsonOrThrow(res) {
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(`Batches API HTTP ${res.status}: ${text.slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Batches API returned non-JSON body: ${text.slice(0, 200)}`);
+  }
+}
+
+async function createBatchHttp(apiKey, requests, timeoutMs = SUBMIT_TIMEOUT_MS) {
+  const res = await anthropicFetch(apiKey, '/v1/messages/batches', { method: 'POST', body: { requests }, timeoutMs });
+  return readJsonOrThrow(res);
+}
+
+async function retrieveBatchHttp(apiKey, batchId, timeoutMs = STATUS_TIMEOUT_MS) {
+  const res = await anthropicFetch(apiKey, `/v1/messages/batches/${encodeURIComponent(batchId)}`, { method: 'GET', timeoutMs });
+  return readJsonOrThrow(res);
+}
+
+async function cancelBatchHttp(apiKey, batchId, timeoutMs = STATUS_TIMEOUT_MS) {
+  const res = await anthropicFetch(apiKey, `/v1/messages/batches/${encodeURIComponent(batchId)}/cancel`, { method: 'POST', timeoutMs });
+  await res.text().catch(() => {});
+  return res;
+}
+
+// Fetch and parse the JSONL results file from a batch's results_url. Each
+// non-empty line is one MessageBatchIndividualResponse.
+async function fetchBatchResultsHttp(apiKey, resultsUrl, timeoutMs = RESULTS_TIMEOUT_MS) {
+  const res = await anthropicFetch(apiKey, resultsUrl, { method: 'GET', timeoutMs });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(`Batches results HTTP ${res.status}: ${text.slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const items = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try { items.push(JSON.parse(trimmed)); } catch { /* skip a malformed JSONL line */ }
+  }
+  return items;
+}
+
 // ── Public: submission / polling / cancel ──────────────────────────────────────
 
 // Classify an error as a transient network/connection failure (worth retrying)
-// vs a deterministic API rejection (4xx — retrying is pointless). "Premature
-// close" / ECONNRESET / socket hang up are the connection drops seen on
-// GitHub Actions runners; the SDK surfaces them as APIConnectionError.
+// vs a deterministic API rejection. "Premature close" / ECONNRESET / socket hang
+// up / fetch failed / abort are the connection drops seen on GitHub Actions
+// runners. 5xx and 429 are retryable server-side conditions; other 4xx are
+// deterministic and must not be retried.
 function isTransientNetworkError(err) {
   const name = err?.name || '';
+  if (name === 'AbortError') return true; // AbortController timeout
   if (name === 'APIConnectionError' || name === 'APIConnectionTimeoutError') return true;
-  // A 4xx that carries a status is deterministic — do not retry.
   const status = err?.status;
-  if (typeof status === 'number' && status >= 400 && status < 500) return false;
+  if (typeof status === 'number') {
+    if (status === 429 || status >= 500) return true; // rate limit / server error → retry
+    if (status >= 400) return false;                  // other 4xx → deterministic
+  }
   const msg = (err?.message || '').toLowerCase();
   return (
     msg.includes('premature close') ||
@@ -151,19 +269,22 @@ function isTransientNetworkError(err) {
     msg.includes('network') ||
     msg.includes('connection error') ||
     msg.includes('terminated') ||
+    msg.includes('aborted') ||
     msg.includes('fetch failed')
   );
 }
 
 /**
  * Cheap reachability probe for the Batches POST path. Submits a minimal 1-token
- * batch BEFORE we attempt to upload the full ~600KB codebase context, so we can
- * tell a network/auth failure (tiny POST also fails) apart from a payload-size
- * failure (tiny POST succeeds, full POST drops). Never throws.
+ * batch (native fetch) BEFORE we attempt to upload the full ~600KB codebase
+ * context, so we can tell a network/auth failure (tiny POST also fails) apart
+ * from a payload-size failure (tiny POST succeeds, full POST drops). Never throws.
  *
+ * @param {object|string} clientOrKey  SDK client or bare API key
  * @returns {Promise<{ok: boolean, batchId?: string, error?: string, transient?: boolean}>}
  */
-export async function preflightBatchCheck(anthropic, model) {
+export async function preflightBatchCheck(clientOrKey, model) {
+  const apiKey = resolveKey(clientOrKey);
   const requests = [{
     custom_id: `preflight-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64),
     params: {
@@ -173,11 +294,11 @@ export async function preflightBatchCheck(anthropic, model) {
     },
   }];
   try {
-    const batch = await anthropic.messages.batches.create({ requests });
+    const batch = await createBatchHttp(apiKey, requests, STATUS_TIMEOUT_MS);
     const batchId = batch?.id;
     if (!batchId) return { ok: false, error: 'Batches API returned no batch id for preflight.' };
     // Best-effort cleanup — don't leave a stray tiny batch behind. Don't await.
-    Promise.resolve(cancelBatch(anthropic, batchId)).catch(() => {});
+    Promise.resolve(cancelBatch(clientOrKey, batchId)).catch(() => {});
     return { ok: true, batchId };
   } catch (err) {
     return { ok: false, error: err?.message || String(err), transient: isTransientNetworkError(err) };
@@ -185,23 +306,25 @@ export async function preflightBatchCheck(anthropic, model) {
 }
 
 /**
- * Submit an array of requests to the Batches API, with retry-and-backoff on
- * transient connection failures (the "Premature close" / ECONNRESET drops seen
- * on CI runners). Deterministic 4xx rejections fail immediately.
+ * Submit an array of requests to the Batches API over native fetch, with
+ * retry-and-backoff on transient connection failures (the "Premature close" /
+ * ECONNRESET drops seen on CI runners). Deterministic 4xx rejections fail fast.
  *
  * Each request: { custom_id, params: { model, max_tokens, system, messages } }.
  * custom_id must match ^[a-zA-Z0-9_-]{1,64}$ (caller's responsibility to build).
  *
- * @param {object} anthropic
+ * @param {object|string} clientOrKey  SDK client or bare API key
  * @param {Array}  requests
  * @param {object} [opts]
  * @param {number} [opts.maxAttempts=4]
- * @param {number} [opts.baseBackoffMs=2000]  attempt N waits baseBackoffMs * 2^(N-1)
+ * @param {number} [opts.baseBackoffMs=2000]      attempt N waits baseBackoffMs * 2^(N-1)
+ * @param {number} [opts.requestTimeoutMs=120000]
  * @returns {Promise<string>} the batch id
  * @throws if submission ultimately fails
  */
-export async function submitBatch(anthropic, requests, opts = {}) {
-  const { maxAttempts = 4, baseBackoffMs = 2000 } = opts;
+export async function submitBatch(clientOrKey, requests, opts = {}) {
+  const { maxAttempts = 4, baseBackoffMs = 2000, requestTimeoutMs = SUBMIT_TIMEOUT_MS } = opts;
+  const apiKey = resolveKey(clientOrKey);
 
   // Report the on-the-wire body size. A large POST body is a known trigger for
   // mid-upload connection drops on constrained CI networks; logging it gives us
@@ -219,7 +342,7 @@ export async function submitBatch(anthropic, requests, opts = {}) {
   let lastErr = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const batch = await anthropic.messages.batches.create({ requests });
+      const batch = await createBatchHttp(apiKey, requests, requestTimeoutMs);
       const batchId = batch?.id;
       if (!batchId) throw new Error('Batches API returned no batch id.');
       console.log(`Ghost Watcher: batch submitted — ${batchId}`);
@@ -242,9 +365,11 @@ export async function submitBatch(anthropic, requests, opts = {}) {
 }
 
 /**
- * Poll a batch until it ends, then collect and return its results.
+ * Poll a batch until it ends (native fetch), then download and parse its JSONL
+ * results. Transient status-check failures are tolerated (logged and retried on
+ * the next interval) so an occasional connection blip does not abort a long poll.
  *
- * @param {object} anthropic  Anthropic SDK client
+ * @param {object|string} clientOrKey  SDK client or bare API key
  * @param {string} batchId
  * @param {object} opts
  * @param {number} [opts.pollIntervalMs=30000]
@@ -254,12 +379,27 @@ export async function submitBatch(anthropic, requests, opts = {}) {
  * @throws {BatchTimeoutError}    if timeoutMs is exceeded before the batch ends
  * @throws {BatchAllFailedError}  if the batch ends but every result errored/expired/canceled
  */
-export async function pollBatch(anthropic, batchId, opts = {}) {
+export async function pollBatch(clientOrKey, batchId, opts = {}) {
   const { pollIntervalMs = 30000, timeoutMs = 5400000, onProgress } = opts;
+  const apiKey = resolveKey(clientOrKey);
   const start = Date.now();
 
   for (;;) {
-    const batch = await anthropic.messages.batches.retrieve(batchId);
+    let batch;
+    try {
+      batch = await retrieveBatchHttp(apiKey, batchId);
+    } catch (err) {
+      if (Date.now() - start >= timeoutMs) {
+        throw new BatchTimeoutError(batchId, Math.round((Date.now() - start) / 60000));
+      }
+      if (isTransientNetworkError(err)) {
+        console.warn(`Ghost Watcher: batch ${batchId} status check failed transiently (${err?.message || err}); retrying next interval`);
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      throw err; // deterministic (e.g. 404 batch not found)
+    }
+
     const elapsedMs = Date.now() - start;
     const status = batch?.processing_status;
     const counts = batch?.request_counts || {};
@@ -270,11 +410,22 @@ export async function pollBatch(anthropic, batchId, opts = {}) {
     console.log(`Ghost Watcher: batch ${batchId} — ${status} (${Math.round(elapsedMs / 1000)}s elapsed)`);
 
     if (status === 'ended') {
-      const results = [];
-      const decoder = await anthropic.messages.batches.results(batchId);
-      for await (const item of decoder) {
-        results.push(normalizeResultItem(item));
+      if (!batch.results_url) {
+        throw new Error(`Batches API: batch ${batchId} ended but returned no results_url.`);
       }
+      // Download the JSONL results, tolerating a couple of transient blips.
+      let rawItems = null;
+      for (let rAttempt = 1; ; rAttempt++) {
+        try {
+          rawItems = await fetchBatchResultsHttp(apiKey, batch.results_url);
+          break;
+        } catch (err) {
+          if (!isTransientNetworkError(err) || rAttempt >= 3) throw err;
+          console.warn(`Ghost Watcher: batch ${batchId} results download attempt ${rAttempt} failed transiently (${err?.message || err}); retrying...`);
+          await sleep(2000 * rAttempt);
+        }
+      }
+      const results = rawItems.map(normalizeResultItem);
       const succeeded = results.filter(r => r.type === 'succeeded').length;
       if (results.length > 0 && succeeded === 0) {
         throw new BatchAllFailedError(batchId, counts);
@@ -291,11 +442,14 @@ export async function pollBatch(anthropic, batchId, opts = {}) {
 }
 
 /**
- * Cancel a batch. Best effort — swallows all errors.
+ * Cancel a batch (native fetch). Best effort — swallows all errors.
+ *
+ * @param {object|string} clientOrKey  SDK client or bare API key
  */
-export async function cancelBatch(anthropic, batchId) {
+export async function cancelBatch(clientOrKey, batchId) {
   try {
-    await anthropic.messages.batches.cancel(batchId);
+    const apiKey = resolveKey(clientOrKey);
+    await cancelBatchHttp(apiKey, batchId);
     console.log(`Ghost Watcher: batch ${batchId} canceled`);
   } catch {
     /* best effort — a cancel failure must never surface */
