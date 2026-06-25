@@ -23,6 +23,14 @@ function getModel() {
   return getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 }
 
+// In CI (GitHub Actions), streaming connections drop with "Premature close"
+// on large-context scans. When this returns true we fall back to a single
+// non-streaming messages.create() call and replicate the streamed output so
+// callers see identical behavior.
+function isCI() {
+  return Boolean(process.env.CI || process.env.GITHUB_ACTIONS);
+}
+
 function getRates() {
   const cfg = getConfig();
   return { junior: cfg.get('rateJunior') || 85, mid: cfg.get('rateMid') || 125, senior: cfg.get('rateSenior') || 200 };
@@ -57,10 +65,34 @@ export async function streamChat(codebaseContext, conversationHistory, userMessa
   process.stdout.write(chalk.cyan('\n👻 Ghost: '));
   let fullResponse = '';
 
-  const stream = anthropic.messages.stream({
+  const requestParams = {
     model: getModel(), max_tokens: 4096, system: SYSTEM_CHAT,
     messages: contextualMessages
-  });
+  };
+
+  if (isCI()) {
+    // Non-streaming fallback for CI. Replicate the streamed output: write each
+    // text block to stdout and accumulate it into fullResponse, then read usage
+    // off the same response (no separate finalMessage() round-trip needed). The
+    // create() call propagates errors just as the stream loop does below.
+    const message = await anthropic.messages.create({ ...requestParams, stream: false });
+    for (const block of message.content || []) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        process.stdout.write(chalk.white(block.text));
+        fullResponse += block.text;
+      }
+    }
+    let inputTokens = null;
+    let outputTokens = null;
+    if (message?.usage) {
+      inputTokens  = message.usage.input_tokens  ?? null;
+      outputTokens = message.usage.output_tokens ?? null;
+    }
+    console.log('\n');
+    return { text: fullResponse, inputTokens, outputTokens };
+  }
+
+  const stream = anthropic.messages.stream(requestParams);
 
   for await (const chunk of stream) {
     if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
@@ -103,15 +135,26 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
   const profileReminder = options.profile
     ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
     : '';
-  const stream = anthropic.messages.stream({
+  const requestParams = {
     model: getModel(), max_tokens: 8096, temperature: 0.3, system: buildSystemPOI(rates, options.profile),
     messages: [{ role: 'user', content: `${profileReminder}Perform a full Points of Interest scan on this codebase:\n\n${codebaseContext.context}` }]
-  });
+  };
 
   let rawOutput = '';
-  for await (const chunk of stream) {
-    if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-      rawOutput += chunk.delta.text;
+  if (isCI()) {
+    // Non-streaming fallback for CI — same params, collect the full response.
+    const message = await anthropic.messages.create({ ...requestParams, stream: false });
+    for (const block of message.content || []) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        rawOutput += block.text;
+      }
+    }
+  } else {
+    const stream = anthropic.messages.stream(requestParams);
+    for await (const chunk of stream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
+        rawOutput += chunk.delta.text;
+      }
     }
   }
 
@@ -264,32 +307,45 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
   }
 
   // Step 1: Run blast scan silently
-  const stream = anthropic.messages.stream({
+  const requestParams = {
     model: getModel(), max_tokens: 8096, system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }]
-  });
+  };
 
   let rawOutput = '';
-  for await (const chunk of stream) {
-    if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-      rawOutput += chunk.delta.text;
+  let blastUsage = null;
+  if (isCI()) {
+    // Non-streaming fallback for CI — same params, collect the full response
+    // and read usage off the same response object.
+    const message = await anthropic.messages.create({ ...requestParams, stream: false });
+    for (const block of message.content || []) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        rawOutput += block.text;
+      }
     }
-  }
-
-  // Capture real token usage from the blast scan call.
-  if (options.onUsage) {
+    blastUsage = message?.usage || null;
+  } else {
+    const stream = anthropic.messages.stream(requestParams);
+    for await (const chunk of stream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
+        rawOutput += chunk.delta.text;
+      }
+    }
+    // Capture real token usage from the blast scan call.
     try {
       const blastFinal = await stream.finalMessage();
-      if (blastFinal?.usage) {
-        options.onUsage(
-          blastFinal.usage.input_tokens  ?? 0,
-          blastFinal.usage.output_tokens ?? 0,
-          getModel()
-        );
-      }
+      blastUsage = blastFinal?.usage || null;
     } catch (_) {
       // Usage capture failed — response already delivered. Non-fatal.
     }
+  }
+
+  if (options.onUsage && blastUsage) {
+    options.onUsage(
+      blastUsage.input_tokens  ?? 0,
+      blastUsage.output_tokens ?? 0,
+      getModel()
+    );
   }
 
   // Step 2: Narrator rewrites — streaming to user

@@ -39,9 +39,12 @@ function isTransientStreamError(err) {
 // way. In CI we force a non-streaming request (stream: false) so the SDK waits for
 // the full response in one shot, which eliminates the mid-response stream closure.
 // Local dev keeps the existing behavior untouched.
+//
+// Detection mirrors src/license/validator.js: trust CI, but also honor
+// GITHUB_ACTIONS as a fallback in case a runner ever leaves CI unset/empty.
 function isCI() {
-  const ci = process.env.CI;
-  return ci !== undefined && ci !== '' && ci !== 'false' && ci !== '0';
+  const truthy = (v) => v !== undefined && v !== '' && v !== 'false' && v !== '0';
+  return truthy(process.env.CI) || truthy(process.env.GITHUB_ACTIONS);
 }
 
 function buildAgentSystemPrompt(tools, context = '') {
