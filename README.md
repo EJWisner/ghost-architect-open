@@ -28,6 +28,14 @@ That's it. On first run, Ghost walks you through a one-time setup wizard (API ke
 
 ---
 
+## What's New in v9.3.1
+
+Ghost Watcher™ now emails the customer after every scan.
+
+- **New: Findings email** -- When Ghost Watcher™ finds issues, it emails a notification with per-finding detail (severity badge, title, affected files, and description) plus a severity summary (critical / high / medium / low counts).
+- **New: Clean scan email** -- When Ghost Watcher™ finds zero findings, it emails a confirmation that the commit is clean.
+- Both emails are fire-and-forget and never block the CI pipeline.
+
 ## What's New in v9.3.0
 
 Cost-aware streaming vs batch transport menu on every scan mode, plus batch retrieval commands and transport metadata in every report.

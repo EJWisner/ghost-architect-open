@@ -609,6 +609,28 @@ function emailCleanScan({ repo, shortSha, fileCount, portalSlug }) {
   };
 }
 
+function emailFindings({ repo, shortSha, findingsCount, criticalCount, highCount, mediumCount, lowCount, findings, portalSlug }) {
+  const findingsHtml = (findings || []).map(f =>
+    `  <li style="margin-bottom:12px;">\n` +
+    `    <strong style="color:#ff5555;">[${f.severity}]</strong> ${f.title}<br>\n` +
+    `    <span style="color:#666;">Files: ${(f.files || []).join(', ') || 'none'}</span><br>\n` +
+    `    <span>${f.detail || ''}</span>\n` +
+    `  </li>`
+  ).join('\n');
+
+  return {
+    subject: `Ghost Watcher™ — ${findingsCount} findings on ${repo} commit ${shortSha}`,
+    html:
+      `<h2 style="color:#ff5555;">Ghost Watcher™ — ${findingsCount} findings</h2>\n` +
+      `<p>Ghost Watcher™ scanned commit <code>${shortSha}</code> on <strong>${repo}</strong> and found ${findingsCount} issues requiring attention.</p>\n` +
+      `<p><strong>Severity summary:</strong><br>\n` +
+      `Critical: ${criticalCount} | High: ${highCount} | Medium: ${mediumCount} | Low: ${lowCount}</p>\n` +
+      `<ul>\n${findingsHtml}\n</ul>\n` +
+      `<p>View the full report in <a href="https://ghostarchitect.dev/portal-${portalSlug}.html">Ghost Portal</a>.</p>\n` +
+      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+  };
+}
+
 // ── Incomplete-run handling (batch timed out before the job ended) ─────────────
 //
 // The batch is already persisted (storePendingBatch ran at submission), so the
@@ -1176,7 +1198,28 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   // A completed run resets the consecutive-incomplete-run counter.
   await resetIncompleteRuns(octokitPortal, portalRepoPath);
 
-  // ── Step 8c: Clean scan email ─────────────────────────────────────────────
+  // ── Step 8c: Findings email ───────────────────────────────────────────────
+  // One or more findings — email the customer a summary with per-finding detail.
+  // Fire-and-forget; never blocks the portal push that follows.
+  if (allFindings.length > 0) {
+    try {
+      const sev = buildSeverityCounts(allFindings);
+      const eFindings = emailFindings({
+        repo:          repoPath,
+        shortSha:      commitSha,
+        findingsCount: allFindings.length,
+        criticalCount: sev.critical,
+        highCount:     sev.high,
+        mediumCount:   sev.medium,
+        lowCount:      sev.low,
+        findings:      allFindings,
+        portalSlug:    portalSlug || repoOwner,
+      });
+      await sendWatcherEmail(emailRecipients, eFindings.subject, eFindings.html);
+    } catch (_) { /* email never blocks */ }
+  }
+
+  // ── Step 8d: Clean scan email ─────────────────────────────────────────────
   // Zero findings across both scans — tell the customer the commit is clean.
   // Fire-and-forget; never blocks the portal push that follows.
   if (allFindings.length === 0) {
