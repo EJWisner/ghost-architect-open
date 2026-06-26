@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { formatTransportFooter } from './lib/transport-meta.js';
 
 const _require = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _require('../package.json');
@@ -470,6 +471,19 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
         if (/^\d+\./.test(line)) { writeLine(clean(line), { indent: 14 }); i++; continue; }
         if (/^\*\*.+\*\*/.test(line)) { writeLine(clean(line), { font: 'Helvetica-Bold' }); i++; continue; }
         writeLine(clean(line)); i++;
+      }
+
+      // ── Transport footer line ──────────────────────────────────────────────
+      // One line at the end of the report body recording how the scan reached
+      // the model (streaming vs batch). Rendered only when transport metadata
+      // is present; omitted entirely otherwise. Not shown in PR comments/email.
+      const transportFooter = formatTransportFooter(meta.transport);
+      if (transportFooter) {
+        y += 8;
+        need(16);
+        doc.save().moveTo(ML, y).lineTo(ML + CW, y).lineWidth(0.5).stroke(C.LIGHT_GRAY).restore();
+        y += 8;
+        writeLine(transportFooter, { font: 'Helvetica', size: 7.5, color: C.MED_GRAY });
       }
 
       doc.end();

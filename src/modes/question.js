@@ -26,13 +26,18 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { streamChat } from '../analyst/index.js';
+import ora from 'ora';
+import { streamChat, buildQuestionRequest } from '../analyst/index.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
-import { getConfig } from '../config.js';
+import { getConfig, resolveApiKey } from '../config.js';
 import { saveReport } from '../reports.js';
 import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 import { requireTier } from '../license/tier-gates.js';
 import { isBackKeyword } from '../cli/prompt-helpers.js';
+import { resolveTransport } from '../lib/transport-menu.js';
+import { buildStreamingTransport, buildBatchTransport } from '../lib/transport-meta.js';
+import { addPendingBatch } from '../lib/batch-store.js';
+import { deriveRepoName, submitBatchInteractive, formatBatchLabelDate } from '../lib/batch-submit.js';
 
 const RETRY_DELAYS = [10, 30];
 
@@ -131,6 +136,24 @@ export async function runQuestionMode(codebaseContext, options = {}) {
   }]);
   if (!proceed) {
     console.log(chalk.gray('\n  Cancelled. Returning to menu.\n'));
+    return;
+  }
+
+  // ── Transport selection (streaming vs batch) ──────────────────────────────
+  // Mirrors blast.js: after the proceed confirm, before the API call. --stream/
+  // --batch, CI, and Ghost Watcher skip the menu. Batch submits and exits; the
+  // user retrieves later via `ghost batch-retrieve <id>`. Streaming falls
+  // through to the live answer below.
+  const transport = await resolveTransport({
+    flags:     options.flags || {},
+    mode:      'question',
+    modeLabel: 'Question',
+    codebaseContext,
+    model,
+  });
+
+  if (transport === 'batch') {
+    await submitQuestionBatch({ codebaseContext, question: trimmed, tier });
     return;
   }
 
@@ -233,10 +256,115 @@ export async function runQuestionMode(codebaseContext, options = {}) {
   // publish, audit-log) short-circuit. Same D4 invariant shape as
   // chat.js's saveLabel ternary.
   const saveLabel = projectIntelGate.allowed ? (label || 'question') : null;
-  const saved = await saveReport(content, 'ghost-question', saveLabel);
+  // Transport metadata — this answer was produced live (streaming). Stamped into
+  // findings.json and the report footer. See src/lib/transport-meta.js.
+  const saved = await saveReport(content, 'ghost-question', saveLabel, { transport: buildStreamingTransport() });
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)`));
   if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
   console.log('');
+}
+
+// ── Batch transport: submit ─────────────────────────────────────────────────
+//
+// Build the exact same chat request the streaming path sends (buildQuestionRequest)
+// and submit it to the Message Batches API via submitBatchInteractive. Persist a
+// pending-batch record in the local configstore (the question text + resolved
+// save label are all a later `ghost batch-retrieve` needs to reproduce the saved
+// transcript), print the retrieval instructions, and return — no polling.
+//
+// Save-label note: the streaming flow prompts for a project label AFTER the
+// answer. Batch has no answer yet at submit time, so we resolve the same default
+// the streaming path would use when the user skips the label prompt: 'question'
+// on Pro+ (project-tracking), null on Open. A future enhancement could prompt
+// for the label up front in the batch path.
+async function submitQuestionBatch({ codebaseContext, question, tier }) {
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    console.log(chalk.red('\n  ✗ No Anthropic API key configured — cannot submit a batch.'));
+    console.log(chalk.gray('  Set ANTHROPIC_API_KEY or run `ghost` once to configure your key.\n'));
+    return;
+  }
+
+  const req = buildQuestionRequest(codebaseContext, [], question);
+
+  const submittedAt = new Date().toISOString();
+  const customId = `question-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
+  const requests = [{
+    custom_id: customId,
+    params: {
+      model:       req.model,
+      max_tokens:  req.max_tokens,
+      temperature: req.temperature,
+      system:      req.system,
+      messages:    req.messages,
+    },
+  }];
+
+  const spinner = ora({ text: chalk.gray('Submitting batch to Anthropic...'), color: 'cyan' }).start();
+  let batchId;
+  try {
+    batchId = await submitBatchInteractive(apiKey, requests);
+    spinner.succeed(chalk.green('Batch submitted'));
+  } catch (err) {
+    spinner.fail(chalk.red('Batch submission failed'));
+    console.log(chalk.yellow(`  ${friendlyError(err)}\n`));
+    return;
+  }
+
+  const repo = deriveRepoName(codebaseContext);
+  const projectIntelEnabled = requireTier('feature:project-tracking', { tier }).allowed;
+  const saveLabel = projectIntelEnabled ? 'question' : null;
+
+  try {
+    addPendingBatch({
+      id:          batchId,
+      mode:        'question',
+      repo,
+      label:       `Question — ${repo} — ${formatBatchLabelDate(submittedAt)}`,
+      submittedAt,
+      status:      'pending',
+      customId,
+      context: { question, saveLabel },
+    });
+  } catch (err) {
+    console.log(chalk.yellow(`\n  ⚠  Could not record the pending batch locally (${err.message}).`));
+    console.log(chalk.yellow(`     Save this batch id to retrieve it later: ${batchId}\n`));
+  }
+
+  console.log('');
+  console.log(chalk.green(`✓ Batch submitted — ID: ${batchId}`));
+  console.log(chalk.gray('  Check status:        ') + chalk.cyan('ghost batch-status'));
+  console.log(chalk.gray('  Retrieve when ready: ') + chalk.cyan(`ghost batch-retrieve ${batchId}`));
+  console.log(chalk.gray('  Estimated ready: ~15 minutes'));
+  console.log('');
+}
+
+// ── Batch transport: retrieve replay ────────────────────────────────────────
+//
+// Given the model's answer text from a retrieved batch plus the stored
+// pending-batch entry, rebuild the same Q&A transcript the streaming path saves
+// and saveReport it. The only difference from a live run is the transport
+// metadata block (method: 'batch'). Called by `ghost batch-retrieve`.
+//
+// Returns { saved }.
+export async function retrieveQuestionBatchResult(answerText, entry) {
+  const ctx = (entry && entry.context) || {};
+  const question = ctx.question || '(question unavailable)';
+  const saveLabel = ctx.saveLabel || null;
+
+  // Same transcript shape the streaming save block builds.
+  const timestamp = new Date().toLocaleString();
+  const sep = '-'.repeat(60);
+  let content = `GHOST ARCHITECT — QUESTION AND ANSWER\n`;
+  content += `Saved: ${timestamp}\n`;
+  content += `${sep}\n\n`;
+  content += `Question: ${question}\n\n`;
+  content += `Answer: ${answerText}\n\n`;
+  content += `${sep}\n`;
+
+  const meta = { transport: buildBatchTransport({ submittedAt: entry && entry.submittedAt }) };
+  const saved = await saveReport(content, 'ghost-question', saveLabel, meta);
+  return { saved };
 }

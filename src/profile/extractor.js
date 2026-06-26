@@ -88,6 +88,7 @@ export async function extractProfile(text) {
     response = await anthropic.messages.create({
       model: getModel(),
       max_tokens: 1500,
+      temperature: 0,
       system: EXTRACTION_SYSTEM,
       messages: [
         {

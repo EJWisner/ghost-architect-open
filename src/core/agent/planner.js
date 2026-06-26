@@ -191,6 +191,7 @@ Respond with JSON only. No preamble.`;
     const response = await anthropic.messages.create({
       model:      getModel(),
       max_tokens: 1024,
+      temperature: 0,
       messages:   [{ role: 'user', content: prompt }],
     });
 

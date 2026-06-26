@@ -1715,6 +1715,7 @@ export async function narrateExecutiveSummary(memoryResult, context = {}) {
   const response = await anthropic.messages.create({
     model:      getModel(),
     max_tokens: 300,
+    temperature: 0,
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1816,7 +1817,7 @@ export async function narrateConflictReport(verificationResult, context = {}, on
 
   let report = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 5000,
+    model: getModel(), max_tokens: 5000, temperature: 0,
     messages: [{ role: 'user', content: prompt }],
   });
 

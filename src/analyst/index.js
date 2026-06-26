@@ -43,23 +43,42 @@ function extractFindings(rawText, _mode = 'poi') {
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
-export async function streamChat(codebaseContext, conversationHistory, userMessage) {
-  const anthropic = getClient();
-  const messages  = [...conversationHistory, { role: 'user', content: userMessage }];
-
+// ── Question / Chat — request builder ──────────────────────────────────────────
+//
+// Factored out of streamChat so the streaming and batch (transport-menu) paths
+// send byte-for-byte identical params. Returns { model, max_tokens, temperature,
+// system, messages } — the codebase context is prepended to the first user
+// message exactly as streamChat did inline.
+export function buildQuestionRequest(codebaseContext, conversationHistory, userMessage) {
+  const messages = [...conversationHistory, { role: 'user', content: userMessage }];
   const contextualMessages = messages.map((msg, i) => {
     if (i === 0 && msg.role === 'user') {
       return { ...msg, content: `Here is the codebase to analyze:\n\n${codebaseContext.context}\n\n---\n\n${msg.content}` };
     }
     return msg;
   });
+  return {
+    model:       getModel(),
+    max_tokens:  4096,
+    temperature: 0,
+    system:      SYSTEM_CHAT,
+    messages:    contextualMessages,
+  };
+}
+
+export async function streamChat(codebaseContext, conversationHistory, userMessage) {
+  const anthropic = getClient();
+  const req = buildQuestionRequest(codebaseContext, conversationHistory, userMessage);
 
   process.stdout.write(chalk.cyan('\n👻 Ghost: '));
   let fullResponse = '';
 
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 4096, system: SYSTEM_CHAT,
-    messages: contextualMessages
+    model:       req.model,
+    max_tokens:  req.max_tokens,
+    temperature: req.temperature,
+    system:      req.system,
+    messages:    req.messages,
   });
 
   for await (const chunk of stream) {
@@ -189,9 +208,19 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
 // (typing a class name or method name). The change-set form is the new
 // path that the picker UX uses when the user selects 2+ files.
 
-export async function runBlastRadius(codebaseContext, target, onChunk, options = {}) {
-  const anthropic = getClient();
-  const rates     = mergeRates(getRates(), options.profile);
+// ── Blast Radius — request builder ─────────────────────────────────────────────
+//
+// Pulls the prompt/params construction OUT of runBlastRadius so the exact same
+// request can be (a) streamed live, or (b) submitted to the Message Batches API
+// and replayed later via processBlastRawOutput. Both paths MUST build the
+// identical { model, max_tokens, system, messages } so batch output is
+// indistinguishable from streaming output.
+//
+// Returns the request plus the derived targets / projectLabel / rates that
+// post-processing needs, so a batch-retrieve (which has no codebaseContext)
+// can persist them at submit time and reuse them at retrieve time.
+export function buildBlastRequest(codebaseContext, target, options = {}) {
+  const rates = mergeRates(getRates(), options.profile);
 
   // Normalize target into a consistent shape. We always work with an array
   // internally so the prompt branch is the same shape; we just decide the
@@ -204,27 +233,11 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     throw new Error('Blast radius requires at least one target.');
   }
 
-  // Ghost Partner — consultant lens for the system prompt and the user
-  // message. Mirrors runPOIScan: the system prompt gets the consultant
-  // context block injected via buildSystemBlast, and the user message gets
-  // a leading reminder so the model treats this as a profile-aware run.
-  // When options.profile is null the builder returns the default prompt and
-  // the reminder is empty — zero behavior change for unprofiled runs.
   const systemPrompt = buildSystemBlast(rates, options.profile);
   const profileReminder = options.profile
     ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the rollback plan around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
     : '';
 
-  // Build the prompt content. Single-target form keeps the existing
-  // language so existing callers see no behavior change. Multi-target
-  // form explicitly tells the model to treat the set as a coordinated
-  // change and to produce one unified report.
-  //
-  // forecastMode (Commit Forecast): prepend a context block that reframes
-  // the analysis as "what would happen if these proposed changes were pushed
-  // to production right now" rather than a generic blast radius audit. The
-  // codebaseContext is the forecast overlay (proposed files already patched in);
-  // the model sees the proposed versions as the current state of those files.
   const forecastPreamble = options.forecastMode
     ? `COMMIT FORECAST CONTEXT:\n` +
       `The files listed below as targets have NOT yet been committed. They represent ` +
@@ -263,10 +276,100 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
       `Codebase:\n\n${codebaseContext.context}`;
   }
 
-  // Step 1: Run blast scan silently
+  const projectLabel = targets.length === 1
+    ? targets[0]
+    : `change set of ${targets.length} files`;
+
+  return {
+    model:      getModel(),
+    max_tokens: 8096,
+    temperature: 0,
+    system:     systemPrompt,
+    messages:   [{ role: 'user', content: userMessage }],
+    targets,
+    projectLabel,
+    rates,
+  };
+}
+
+// ── Blast Radius — post-stream processing ──────────────────────────────────────
+//
+// Takes the model's RAW completion text (whether it arrived via streaming or a
+// retrieved batch) and runs the identical narrator/findings pipeline, streaming
+// the narrated report through onChunk. Shared so batch-retrieve produces output
+// indistinguishable from a live streaming run.
+//
+// Deliberately does NOT depend on codebaseContext — only on the small set of
+// derived values (targets, projectLabel, rates, loadedFiles) that a
+// batch-retrieve can persist at submit time and reload later.
+export async function processBlastRawOutput(rawOutput, {
+  targets,
+  projectLabel,
+  rates,
+  profile = null,
+  loadedFiles = 0,
+  onChunk = () => {},
+  onNarratorStart,
+  onUsage,
+} = {}) {
+  const findings = extractFindings(rawOutput, 'blast');
+
+  if (findings.length === 0) {
+    for (const char of rawOutput) onChunk(char);
+    return rawOutput;
+  }
+
+  if (onNarratorStart) onNarratorStart();
+
+  const memoryResult = {
+    findings,
+    findingCount:  findings.length,
+    filesAnalyzed: loadedFiles || 0,
+    stepCount:     1,
+    auditTrail:    [],
+  };
+
+  const label = projectLabel || (Array.isArray(targets) && targets.length === 1
+    ? targets[0]
+    : `change set of ${Array.isArray(targets) ? targets.length : 1} files`);
+
+  const narratedReport = await narrateReport(
+    memoryResult,
+    {
+      projectLabel: label,
+      mode: 'blast',
+      rates,
+      profile,  // Ghost Partner — consultant voice for narrator
+    },
+    onChunk
+  );
+
+  // Narrator cost estimate — character-count approximation, not real API usage.
+  // (Same rationale as the streaming path: narrateReport has no aggregated usage.)
+  if (onUsage && narratedReport) {
+    const narratorInputEst  = Math.ceil(rawOutput.length / 4);
+    const narratorOutputEst = Math.ceil(narratedReport.length / 4);
+    onUsage(narratorInputEst, narratorOutputEst, getModel(), 'narrate');
+  }
+
+  return narratedReport || rawOutput;
+}
+
+export async function runBlastRadius(codebaseContext, target, onChunk, options = {}) {
+  const anthropic = getClient();
+
+  // Build the request via the shared builder so the streaming and batch paths
+  // are byte-for-byte identical in what they send to the model.
+  const req = buildBlastRequest(codebaseContext, target, options);
+  const { targets, projectLabel, rates } = req;
+
+  // Step 1: Run blast scan silently (streaming transport).
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }]
+    model:      req.model,
+    max_tokens: req.max_tokens,
+    temperature: req.temperature,
+    system:     req.system,
+    messages:   req.messages,
   });
 
   let rawOutput = '';
@@ -292,55 +395,18 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     }
   }
 
-  // Step 2: Narrator rewrites — streaming to user
-  const findings = extractFindings(rawOutput, 'blast');
-
-  if (findings.length === 0) {
-    for (const char of rawOutput) onChunk(char);
-    return rawOutput;
-  }
-
-  if (options.onNarratorStart) options.onNarratorStart();
-
-  const memoryResult = {
-    findings,
-    findingCount:  findings.length,
-    filesAnalyzed: codebaseContext.loadedFiles || 0,
-    stepCount:     1,
-    auditTrail:    [],
-  };
-
-  // Project label for the narrator: single-target uses the target verbatim;
-  // multi-target uses a short summary label so the report header reads
-  // "Blast Radius — change set of 3 files" rather than a giant filename list.
-  const projectLabel = targets.length === 1
-    ? targets[0]
-    : `change set of ${targets.length} files`;
-
-  const narratedReport = await narrateReport(
-    memoryResult,
-    {
-      projectLabel,
-      mode: 'blast',
-      rates,
-      profile: options.profile,  // Ghost Partner — consultant voice for narrator
-    },
-    onChunk
-  );
-
-  // Narrator cost estimate — character-count approximation, not real API usage.
-  // narrateReport dispatches through 4-5 internal streaming functions with no
-  // aggregated usage output. Estimating from rawOutput (narrator input) and
-  // narratedReport (narrator output) at ~4 chars/token. Callers that pass
-  // onUsage as (i, o, m) will record this under the same stage as scan until
-  // commit-forecast.js is updated to accept a stage-aware (i, o, m, stage).
-  if (options.onUsage && narratedReport) {
-    const narratorInputEst  = Math.ceil(rawOutput.length / 4);
-    const narratorOutputEst = Math.ceil(narratedReport.length / 4);
-    options.onUsage(narratorInputEst, narratorOutputEst, getModel(), 'narrate');
-  }
-
-  return narratedReport || rawOutput;
+  // Step 2: Narrator rewrites — streamed to the caller via onChunk. Shared with
+  // the batch-retrieve path so both produce identical output.
+  return processBlastRawOutput(rawOutput, {
+    targets,
+    projectLabel,
+    rates,
+    profile:        options.profile,
+    loadedFiles:    codebaseContext.loadedFiles || 0,
+    onChunk,
+    onNarratorStart: options.onNarratorStart,
+    onUsage:         options.onUsage,
+  });
 }
 
 // ── Audit Mode — Modernization Roadmap synthesis ───────────────────────────────

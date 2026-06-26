@@ -190,6 +190,7 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
             const createParams = {
               model:      getModel(),
               max_tokens: 1024,
+              temperature: 0,
               system:     systemPrompt,
               messages:   [{ role: 'user', content: prompt }],
             };

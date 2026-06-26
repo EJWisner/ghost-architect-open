@@ -424,6 +424,7 @@ Respond with JSON only:
     const response = await anthropic.messages.create({
       model:      getModel(),
       max_tokens: 256,
+      temperature: 0,
       messages:   [{ role: 'user', content: prompt }],
     });
 

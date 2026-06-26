@@ -5,10 +5,14 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
-import { runBlastRadius } from '../analyst/index.js';
+import { runBlastRadius, buildBlastRequest, processBlastRawOutput } from '../analyst/index.js';
 import { showCostEstimate, showActualCost, showConflictCost, SessionCostTracker } from '../estimator.js';
-import { getConfig } from '../config.js';
+import { getConfig, resolveApiKey } from '../config.js';
 import { saveReport } from '../reports.js';
+import { resolveTransport } from '../lib/transport-menu.js';
+import { buildStreamingTransport, buildBatchTransport } from '../lib/transport-meta.js';
+import { addPendingBatch } from '../lib/batch-store.js';
+import { deriveRepoName, submitBatchInteractive, formatBatchLabelDate } from '../lib/batch-submit.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
 import { promptProjectLabel } from '../projects.js';
 import { requireTier } from '../license/tier-gates.js';
@@ -276,6 +280,25 @@ export async function runBlastMode(codebaseContext, options = {}) {
   }]);
   if (!proceed) { console.log(chalk.gray('\nAnalysis cancelled.\n')); return; }
 
+  // ── Transport selection (streaming vs batch) ──────────────────────────────
+  // Context is loaded and the scan is confirmed; choose how the Anthropic call
+  // runs. --stream/--batch flags, CI, and Ghost Watcher contexts skip the menu
+  // (see resolveTransport). Batch submits the request and exits cleanly; the
+  // user retrieves later via `ghost batch-retrieve <id>`. Streaming falls
+  // through to the existing live path below.
+  const transport = await resolveTransport({
+    flags:     options.flags || {},
+    mode:      'blast',
+    modeLabel: 'Blast Radius',
+    codebaseContext,
+    model,
+  });
+
+  if (transport === 'batch') {
+    await submitBlastBatch({ codebaseContext, target, targetCount, profile, projectIntelEnabled, label });
+    return;
+  }
+
   console.log('');
 
   // Spinner copy reflects single vs change-set framing. We check
@@ -391,6 +414,9 @@ export async function runBlastMode(codebaseContext, options = {}) {
         medium:       mediumCount,
         low:          lowCount,
         totalHours,
+        // Transport metadata — this scan ran live (streaming). Stamped into
+        // findings.json and the PDF/Ghost Brief footer. See src/lib/transport-meta.js.
+        transport:    buildStreamingTransport(),
       };
 
       const saved = await saveReport(buffer, 'ghost-blast', saveLabel, meta);
@@ -416,6 +442,152 @@ export async function runBlastMode(codebaseContext, options = {}) {
     spinner.fail(chalk.red('Blast radius analysis failed'));
     showFriendlyError(err);
   }
+}
+
+// ── Batch transport: submit ─────────────────────────────────────────────────
+//
+// Build the exact same request the streaming path would send (buildBlastRequest)
+// and submit it to the Message Batches API via the existing, hardened
+// submitBatch() helper. Persist a pending-batch record in the local configstore
+// (including everything a later `ghost batch-retrieve` needs to reproduce the
+// streamed output without re-loading the codebase), print the retrieval
+// instructions, and return — no polling, no waiting.
+
+async function submitBlastBatch({ codebaseContext, target, targetCount, profile, projectIntelEnabled, label }) {
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured — cannot submit a batch.`));
+    console.log(chalk.gray('  Set ANTHROPIC_API_KEY or run `ghost` once to configure your key.\n'));
+    return;
+  }
+
+  // Same request the streaming path builds — byte-for-byte identical params so
+  // the batch result is indistinguishable from a live run.
+  const req = buildBlastRequest(codebaseContext, target, { profile });
+
+  const submittedAt = new Date().toISOString();
+  const customId = `blast-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
+  const requests = [{
+    custom_id: customId,
+    params: {
+      model:      req.model,
+      max_tokens: req.max_tokens,
+      temperature: req.temperature,
+      system:     req.system,
+      messages:   req.messages,
+    },
+  }];
+
+  const spinner = ora({ text: chalk.gray('Submitting batch to Anthropic...'), color: 'cyan' }).start();
+  let batchId;
+  try {
+    batchId = await submitBatchInteractive(apiKey, requests);
+    spinner.succeed(chalk.green('Batch submitted'));
+  } catch (err) {
+    spinner.fail(chalk.red('Batch submission failed'));
+    showFriendlyError(err);
+    return;
+  }
+
+  // Derive save metadata now (at submit time) so retrieve can save under the
+  // same project label the streaming path would have used. Mirrors the
+  // saveLabel/changeSet logic in the streaming save block.
+  const repo = deriveRepoName(codebaseContext);
+  const fallbackLabel = targetCount > 1
+    ? `change-set-${targetCount}-files`
+    : (Array.isArray(target) ? target[0] : target);
+  const saveLabel = projectIntelEnabled ? (label || fallbackLabel) : null;
+  const changeSet = Array.isArray(target) ? target : [target];
+
+  try {
+    addPendingBatch({
+      id:          batchId,
+      mode:        'blast-radius',
+      repo,
+      label:       `Blast Radius — ${repo} — ${formatBatchLabelDate(submittedAt)}`,
+      submittedAt,
+      status:      'pending',
+      customId,
+      context: {
+        targets:      req.targets,
+        projectLabel: req.projectLabel,
+        rates:        req.rates,
+        profile:      profile || null,
+        loadedFiles:  codebaseContext.loadedFiles || 0,
+        totalFiles:   codebaseContext.totalFiles  || 0,
+        saveLabel,
+        changeSet,
+        targetCount,
+      },
+    });
+  } catch (err) {
+    // The batch is already submitted on Anthropic's side; a configstore write
+    // failure shouldn't lose the id. Surface it so the user can still retrieve.
+    console.log(chalk.yellow(`\n  ⚠  Could not record the pending batch locally (${err.message}).`));
+    console.log(chalk.yellow(`     Save this batch id to retrieve it later: ${batchId}\n`));
+  }
+
+  console.log('');
+  console.log(chalk.green(`${SYM.check} Batch submitted — ID: ${batchId}`));
+  console.log(chalk.gray('  Check status:        ') + chalk.cyan('ghost batch-status'));
+  console.log(chalk.gray('  Retrieve when ready: ') + chalk.cyan(`ghost batch-retrieve ${batchId}`));
+  console.log(chalk.gray('  Estimated ready: ~15 minutes'));
+  console.log('');
+}
+
+// ── Batch transport: retrieve replay ────────────────────────────────────────
+//
+// Given the model's raw completion text from a retrieved batch plus the stored
+// pending-batch entry, run the IDENTICAL post-stream pipeline (narrator,
+// findings extraction) and saveReport the result — same files, same sidecar,
+// same PDF the streaming path would have produced. The only difference is the
+// transport metadata block (method: 'batch'). Called by `ghost batch-retrieve`.
+//
+// Returns { saved, buffer }.
+export async function retrieveBlastBatchResult(rawOutput, entry) {
+  const ctx = (entry && entry.context) || {};
+
+  // Reproduce the streamed report into a buffer (no stdout streaming on
+  // retrieve — the report is read from the saved files, same as a live run).
+  let buffer = '';
+  await processBlastRawOutput(rawOutput, {
+    targets:      ctx.targets,
+    projectLabel: ctx.projectLabel,
+    rates:        ctx.rates,
+    profile:      ctx.profile || null,
+    loadedFiles:  ctx.loadedFiles || 0,
+    onChunk:      (chunk) => { buffer += chunk; },
+  });
+
+  // Same sidecar-findings derivation as the streaming save block.
+  const parsedFindings = extractFindings(buffer);
+  const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+  const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
+  const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+  const lowCount       = parsedFindings.filter(f => f.severity === 'LOW').length;
+  const totalHours     = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
+
+  const meta = {
+    filesAnalyzed: ctx.totalFiles
+      ? `${ctx.loadedFiles} of ${ctx.totalFiles}`
+      : `${ctx.loadedFiles || 0}`,
+    totalFiles:   ctx.totalFiles,
+    profile:      ctx.profile || null,
+    changeSet:    ctx.changeSet,
+    targetCount:  ctx.targetCount,
+    findings:     parsedFindings,
+    findingCount: parsedFindings.length,
+    critical:     criticalCount,
+    high:         highCount,
+    medium:       mediumCount,
+    low:          lowCount,
+    totalHours,
+    // Transport metadata — this scan ran via the Message Batches API.
+    transport:    buildBatchTransport({ submittedAt: entry && entry.submittedAt }),
+  };
+
+  const saved = await saveReport(buffer, 'ghost-blast', ctx.saveLabel || null, meta);
+  return { saved, buffer };
 }
 
 function colorizeOutput(text) {

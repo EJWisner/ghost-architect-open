@@ -324,7 +324,12 @@ async function loadFromZip() {
   }
 
   spinner.succeed(`Extracted ${count} code files from ZIP`);
-  return buildContext(fileMap);
+  // Attach the source ZIP path so callers can identify the source (buildContext
+  // returns null on a fail-closed redaction abort, hence the guard — same
+  // pattern as basePath in _loadFromDirPath).
+  const result = buildContext(fileMap);
+  if (result) result.zipPath = zipPath;
+  return result;
 }
 
 // ── GitHub rate-limit helpers ────────────────────────────────────────────────
@@ -639,7 +644,10 @@ async function loadFromGitHub() {
       console.log(chalk.yellow(`  ⚠ Large repo — analyzed first ${fetchCap} code files (${filteredFiles.length} total)`));
     }
 
-    return buildContext(fileMap);
+    // Attach the parsed source repo identity so callers can identify the source.
+    const result = buildContext(fileMap);
+    if (result) { result.owner = owner; result.repo = repo; }
+    return result;
   } catch (err) {
     spinner.fail('GitHub fetch failed.');
     // Classify by HTTP status first (Octokit sets err.status reliably), then

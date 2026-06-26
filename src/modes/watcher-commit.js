@@ -996,6 +996,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
         params: {
           model: getModel(),
           max_tokens: 8096,
+          temperature: 0,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },
@@ -1079,6 +1080,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
         params: {
           model: getModel(),
           max_tokens: 8096,
+          temperature: 0,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },

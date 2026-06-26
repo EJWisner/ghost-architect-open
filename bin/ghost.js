@@ -6,12 +6,15 @@ import gradient from 'gradient-string';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
-import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug } from '../src/config.js';
+import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey } from '../src/config.js';
 import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
-import { runQuestionMode } from '../src/modes/question.js';
+import { runQuestionMode, retrieveQuestionBatchResult } from '../src/modes/question.js';
 import { runPOIMode } from '../src/modes/poi.js';
-import { runBlastMode } from '../src/modes/blast.js';
+import { runBlastMode, retrieveBlastBatchResult } from '../src/modes/blast.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { getPendingBatches, findPendingBatch, updatePendingBatch, removePendingBatch } from '../src/lib/batch-store.js';
+import { formatClockTime } from '../src/lib/transport-meta.js';
 import { runReconMode } from '../src/modes/recon.js';
 import { runAuditMode } from '../src/modes/audit/index.js';
 import { pingModeUsage } from '../src/telemetry/pulse.js';
@@ -112,6 +115,8 @@ function parseArgs(argv) {
     cleanCache: false,
     skipRedaction: false,
     watcherCommit: false,
+    stream: false,
+    batch: false,
     help: false,
     version: false,
   };
@@ -160,6 +165,9 @@ function parseArgs(argv) {
     if (a.startsWith('--set-default-profile=')) { out.setDefaultProfile = a.slice('--set-default-profile='.length); continue; }
     if (a === '--clear-default-profile')        { out.clearDefaultProfile = true; continue; }
     if (a === '--watcher-commit')                 { out.watcherCommit = true; continue; }
+    // Transport selection — skip the streaming-vs-batch menu and force a choice.
+    if (a === '--stream')           { out.stream = true; continue; }
+    if (a === '--batch')            { out.batch = true; continue; }
     // License management flags.
     if (a === '--activate')         { out.activate = argv[++i] || ''; continue; }
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
@@ -264,6 +272,15 @@ Ghost Brief™ (Pro Max and above):
   --input=<path>           Input findings JSON file (default: ghost-report.json)
   --output=<path>          Output path for ghost-brief.json
                            (default: ghost-brief.json in current directory)
+
+Transport (streaming vs batch):
+  --stream                 Run scans live (streaming) and skip the transport menu.
+  --batch                  Submit scans to the half-price Message Batches API and
+                           skip the transport menu. Retrieve results later.
+  ghost batch-status       List batches you submitted and whether each is ready.
+  ghost batch-retrieve <id>
+                           Pull a finished batch and produce the same report,
+                           sidecar, and PDF a streaming run would have.
 
 Misc:
   --clean-cache            Delete the profile extraction cache and exit.
@@ -474,6 +491,15 @@ async function selectMode(codebaseContext, tier = 'open') {
     // top-level menu. Caller checks isBack(mode) and runs confirmExit().
     backChoice(IS_WINDOWS ? '[EXIT] Exit Ghost' : '🚪  Exit Ghost'),
   );
+
+  // Inject pending-batch rows ABOVE the main mode list. Each batch submitted via
+  // the transport menu but not yet retrieved gets a row (selectable "READY" once
+  // ended, grayed "checking..." while in progress). No pending batches → no
+  // injection → the menu renders exactly as before.
+  const pendingChoices = await buildPendingBatchChoices();
+  if (pendingChoices.length > 0) {
+    choices.unshift(...pendingChoices, new inquirer.Separator());
+  }
 
   const { mode } = await inquirer.prompt([{
     type: 'list',
@@ -1292,6 +1318,229 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
   return false;
 }
 
+// ── Batch transport commands ──────────────────────────────────────────────────
+//
+// `ghost batch-status` and `ghost batch-retrieve <id>` complete the
+// streaming-vs-batch transport feature: a scan submitted as a batch (via the
+// transport menu) is checked and pulled back here. Status/results go through
+// the Anthropic SDK directly — the "Premature close" drop that forces the Ghost
+// Watcher onto native fetch only happens on constrained CI runners, and these
+// commands run interactively on a developer machine.
+
+async function runBatchStatusCommand() {
+  const pending = getPendingBatches();
+  if (!pending.length) {
+    console.log(chalk.gray('\nNo pending batches.\n'));
+    return;
+  }
+
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured — cannot check batch status.\n`));
+    return;
+  }
+  const client = new Anthropic({ apiKey });
+
+  const rows = [];
+  let anyReady = false;
+  for (const b of pending) {
+    let status = 'unknown';
+    let ready = false;
+    try {
+      const r = await client.messages.batches.retrieve(b.id);
+      status = r.processing_status || 'unknown';
+      ready = status === 'ended';
+      if (ready && b.status !== 'ended') updatePendingBatch(b.id, { status: 'ended' });
+    } catch (err) {
+      status = 'error: ' + String(err && err.message ? err.message : err).slice(0, 30);
+    }
+    if (ready) anyReady = true;
+    rows.push({
+      id:        b.id,
+      mode:      b.mode || '—',
+      submitted: formatClockTime(b.submittedAt) || b.submittedAt || '—',
+      status,
+      ready:     ready ? 'yes' : 'no',
+    });
+  }
+
+  // Simple column-aligned table.
+  const headers = { id: 'ID', mode: 'MODE', submitted: 'SUBMITTED', status: 'STATUS', ready: 'READY?' };
+  const cols = ['id', 'mode', 'submitted', 'status', 'ready'];
+  const width = {};
+  for (const c of cols) {
+    width[c] = headers[c].length;
+    for (const r of rows) width[c] = Math.max(width[c], String(r[c]).length);
+  }
+  const fmtRow = (r) => cols.map(c => String(r[c]).padEnd(width[c])).join('  ');
+
+  console.log('\n' + chalk.cyan.bold('Pending batches'));
+  console.log(chalk.gray('  ' + fmtRow(headers)));
+  for (const r of rows) {
+    const line = '  ' + fmtRow(r);
+    console.log(r.ready === 'yes' ? chalk.green(line) : chalk.white(line));
+  }
+  console.log('');
+
+  if (anyReady) {
+    const readyOne = rows.find(r => r.ready === 'yes');
+    console.log(chalk.cyan('One or more batches are ready. Retrieve with:'));
+    console.log(chalk.gray('  ghost batch-retrieve ') + chalk.cyan(readyOne.id) + '\n');
+  } else {
+    console.log(chalk.gray('No batches ready yet — check again in a few minutes.\n'));
+  }
+}
+
+async function runBatchRetrieveCommand(id) {
+  if (!id) {
+    console.log(chalk.red(`\n${SYM.cross} Usage: ghost batch-retrieve <batch-id>`));
+    console.log(chalk.gray('  Run `ghost batch-status` to list pending batch ids.\n'));
+    return;
+  }
+
+  const entry = findPendingBatch(id);
+  if (!entry) {
+    console.log(chalk.red(`\n${SYM.cross} No pending batch found with id: ${id}`));
+    console.log(chalk.gray('  Run `ghost batch-status` to list pending batch ids.\n'));
+    return;
+  }
+
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured — cannot retrieve the batch.\n`));
+    return;
+  }
+  const client = new Anthropic({ apiKey });
+
+  // Confirm the batch has finished before pulling results.
+  let batch;
+  try {
+    batch = await client.messages.batches.retrieve(id);
+  } catch (err) {
+    console.log(chalk.red(`\n${SYM.cross} Could not check batch ${id}: ${err.message}\n`));
+    return;
+  }
+  if (batch.processing_status !== 'ended') {
+    console.log(chalk.yellow(`\n  Batch ${id} is not ready yet (status: ${batch.processing_status}).`));
+    console.log(chalk.gray('  Check again later with `ghost batch-status`.\n'));
+    return;
+  }
+
+  // Pull the result text for this batch's request.
+  console.log(chalk.gray(`\n  Retrieving results for ${id}...`));
+  let text = null;
+  try {
+    const results = await client.messages.batches.results(id);
+    for await (const item of results) {
+      const matches = !entry.customId || item.custom_id === entry.customId;
+      if (matches && item.result && item.result.type === 'succeeded') {
+        text = item.result.message?.content?.[0]?.text ?? '';
+        break;
+      }
+    }
+  } catch (err) {
+    console.log(chalk.red(`\n${SYM.cross} Failed to download batch results: ${err.message}\n`));
+    return;
+  }
+
+  if (text == null) {
+    console.log(chalk.red(`\n${SYM.cross} Batch ${id} ended but no successful result was found.`));
+    console.log(chalk.gray('  The request may have errored or expired. The batch is kept in your pending list.'));
+    console.log(chalk.gray(`  Run `) + chalk.cyan(`ghost batch-retrieve ${id}`) + chalk.gray(` to try again.\n`));
+    return;
+  }
+
+  // Dispatch to the mode's retrieve-replay so the output is identical to a
+  // streaming run (same report files, sidecar, and PDF — only the transport
+  // metadata differs).
+  try {
+    if (entry.mode === 'blast-radius') {
+      const { saved } = await retrieveBlastBatchResult(text, entry);
+      removePendingBatch(id);
+      console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
+      console.log(chalk.gray(`  📄 ${saved.txtFile}`));
+      console.log(chalk.gray(`  📋 ${saved.mdFile}`));
+      if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
+      console.log('');
+    } else if (entry.mode === 'question') {
+      const { saved } = await retrieveQuestionBatchResult(text, entry);
+      removePendingBatch(id);
+      console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
+      console.log(chalk.gray(`  📄 ${saved.txtFile}`));
+      console.log(chalk.gray(`  📋 ${saved.mdFile}`));
+      if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
+      console.log('');
+    } else {
+      console.log(chalk.yellow(`\n  Batch retrieve for mode "${entry.mode}" is not wired up in this build yet.`));
+      console.log(chalk.gray('  The reference implementation currently covers Blast Radius.\n'));
+    }
+  } catch (err) {
+    console.log(chalk.red(`\n${SYM.cross} Failed to process batch results: ${err.message}\n`));
+  }
+}
+
+// Human-readable mode label for a pending-batch menu row.
+function friendlyBatchModeLabel(mode) {
+  switch (mode) {
+    case 'blast-radius': return 'Blast Radius';
+    case 'question':     return 'Question';
+    case 'poi':          return 'Points of Interest';
+    case 'conflict':     return 'Conflict Detection';
+    default:             return mode || 'Scan';
+  }
+}
+
+// Build the dynamic pending-batch rows injected at the top of the main mode
+// menu. For each batch the interactive CLI submitted (tracked in configstore),
+// check its status against the Anthropic Batches API and render a row:
+//   - ended      → a selectable "READY" entry (value "batch:<id>")
+//   - otherwise  → a grayed-out, non-selectable "checking..." entry
+// Returns [] when there are no pending batches, so the menu is unchanged and no
+// network call is made (spec: zero pending → zero changes).
+async function buildPendingBatchChoices() {
+  const pending = getPendingBatches();
+  if (pending.length === 0) return [];
+
+  const apiKey = resolveApiKey();
+  let client = null;
+  if (apiKey) {
+    try { client = new Anthropic({ apiKey }); } catch { client = null; }
+  }
+
+  console.log(chalk.gray(`  Checking ${pending.length} pending batch${pending.length === 1 ? '' : 'es'}...`));
+
+  // Check all statuses concurrently. A failed/uncheckable status renders the
+  // row as still-checking (non-selectable) rather than offering a bad retrieve.
+  const checked = await Promise.all(pending.map(async (b) => {
+    let status = 'unknown';
+    if (client) {
+      try {
+        const r = await client.messages.batches.retrieve(b.id);
+        status = r.processing_status || 'unknown';
+      } catch { status = 'unknown'; }
+    }
+    return { entry: b, status };
+  }));
+
+  const rows = [];
+  for (const { entry, status } of checked) {
+    const modeLabel = friendlyBatchModeLabel(entry.mode);
+    const time = formatClockTime(entry.submittedAt) || entry.submittedAt || 'unknown';
+    if (status === 'ended') {
+      rows.push({
+        name: `📬 ${modeLabel} batch (submitted ${time}) - ` + chalk.green.bold('READY'),
+        value: `batch:${entry.id}`,
+      });
+    } else {
+      rows.push({
+        name: chalk.gray(`📬 ${modeLabel} batch (submitted ${time})`),
+        disabled: 'checking...',
+      });
+    }
+  }
+  return rows;
+}
+
 async function main() {
   // Parse CLI flags first so --help / --version / --max-context etc. are honored
   // before we print the banner or run the setup wizard.
@@ -1336,6 +1585,21 @@ async function main() {
   }
   if (cliOpts.licenseClear) {
     await runLicenseClearFlow();
+    process.exit(0);
+  }
+
+  // ── Batch transport subcommands ───────────────────────────────────────────
+  // `ghost batch-status` and `ghost batch-retrieve <id>` are positional
+  // subcommands (not flags). Handle them here, before any codebase load or
+  // setup, so they work as quick standalone commands. They operate purely on
+  // the local pending-batch store + the Anthropic Batches API.
+  const positional = argv.filter(a => !a.startsWith('-'));
+  if (positional[0] === 'batch-status') {
+    await runBatchStatusCommand();
+    process.exit(0);
+  }
+  if (positional[0] === 'batch-retrieve') {
+    await runBatchRetrieveCommand(positional[1]);
     process.exit(0);
   }
 
@@ -1859,6 +2123,17 @@ async function main() {
       continue;
     }
 
+    // Pending-batch retrieval — the user picked a "READY" row injected at the
+    // top of the menu (value "batch:<id>"). Pull and save the finished batch
+    // (same pipeline as `ghost batch-retrieve`: writes report files, confirms
+    // the save, removes the entry from configstore), then loop back to the
+    // menu — the retrieved batch no longer appears.
+    if (typeof mode === 'string' && mode.startsWith('batch:')) {
+      const batchId = mode.slice('batch:'.length);
+      await runBatchRetrieveCommand(batchId);
+      continue;
+    }
+
     // Mode-usage telemetry. Fire-and-forget so a slow Pulse Worker never
     // delays a scan. Lands as `mode-<name>` in the Pulse dashboard so the
     // Scan Modes histogram shows real cross-tier usage (not just Open).
@@ -1891,10 +2166,10 @@ async function main() {
     }
 
     switch (mode) {
-      case 'question':        await runQuestionMode(codebaseContext, { tier: TIER });         break;
+      case 'question':        await runQuestionMode(codebaseContext, { tier: TIER, flags: { stream: cliOpts.stream, batch: cliOpts.batch } });         break;
       case 'chat':            await runChatMode(codebaseContext, { tier: TIER });             break;
       case 'poi':             await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
-      case 'blast':           await runBlastMode(codebaseContext, { profile, tier: TIER });  break;
+      case 'blast':           await runBlastMode(codebaseContext, { profile, tier: TIER, flags: { stream: cliOpts.stream, batch: cliOpts.batch } });  break;
       case 'conflict':        await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
       case 'fix-forecast':    await runSavedFixForecast({ tier: TIER, profile, codebaseContext }); break;
       // Commit Forecast: gate is handled inside runCommitForecastMode via

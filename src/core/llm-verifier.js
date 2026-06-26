@@ -122,6 +122,7 @@ Respond with a single JSON object: { "verdict": "...", "reason": "..." }`;
     const stream = anthropic.messages.stream({
       model: getModel(),
       max_tokens: 300,
+      temperature: 0,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMsg }],
     });

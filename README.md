@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v8.2.7** — Ghost Partner Profiles in the top-level menu. Executive Brief. Ghost Brief. White-label across all seven report types.
+**v9.3.0** Streaming vs batch CLI menu with a cost estimate before every scan. Half-price processing via the Anthropic Batches API. Batch status and retrieve commands. Transport metadata in every report.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
@@ -25,6 +25,99 @@ ghost
 That's it. On first run, Ghost walks you through a one-time setup wizard (API key, optional GitHub token, model preference, billing rates, context size). Your config is saved locally and every future run goes straight to the main menu.
 
 **Requirements:** Node.js 18 or higher, an Anthropic API key (pay-as-you-go, not the same as a Claude.ai subscription), and optionally a GitHub Personal Access Token for private repos.
+
+---
+
+## What's New in v9.3.0
+
+Cost-aware streaming vs batch transport menu on every scan mode, plus batch retrieval commands and transport metadata in every report.
+
+- **New: Streaming vs Batch transport menu** -- Every scan mode that calls the Anthropic API now opens with a cost-aware choice: run live (streaming) for real-time results, or submit to the Message Batches API for half-price processing you retrieve when ready. The menu shows the loaded file count, a token estimate, and the streaming and batch cost side by side. Pass --stream or --batch to skip the menu; CI and Ghost Watcher runs default to batch automatically.
+- **New: Batch retrieval commands** -- ghost batch-status lists every pending batch and whether it is ready. ghost batch-retrieve <id> pulls a finished batch and produces the same report files a live run would have.
+- **New: Dynamic pending-batch menu rows** -- The main menu injects a row per pending batch, grayed out while processing and selectable once ready, so you can retrieve straight from the menu.
+- **New: Transport metadata in every artifact** -- The findings.json sidecar carries a transport block (method, timestamps, version), and the PDF, Markdown, TXT, and Ghost Brief HTML each carry a one-line footer, for example "Scan transport: Streaming (completed 9:49am)".
+- **New: Question mode batch support** -- Question mode joins Blast Radius in supporting the transport menu, batch submission, and batch retrieval.
+- **Fix: Deterministic output** -- Every Anthropic call site now sets temperature 0, so repeated scans of the same codebase produce consistent results.
+- **Fix: Setup wizard tier cap** -- The first-run wizard now defaults the context size to your actual tier cap (Open 50K, Pro 100K, Team 150K, Enterprise 200K) instead of a hardcoded 50K, sourced from the single canonical tier-cap table.
+- **Fix: Accurate source identity** -- The loader records the source of every scan (ZIP path for archive loads, owner and repo for GitHub loads), and batch repository names are derived from the git remote origin rather than the current directory name.
+
+## What's New in v9.2.3
+
+Ghost Brief™ now generates correctly after Batches API scans.
+
+- **Fix: Ghost Brief generates after batch Blast Radius** -- Raw batch output is now passed through the narrator before finding extraction, replicating the old streaming path. Ghost Brief receives findings with populated file arrays and generates prompts correctly.
+
+## What's New in v9.2.2
+
+Critical fix for Ghost Watcher™ Batches API on GitHub Actions.
+
+- **Fix: Replaced Anthropic SDK batch transport with native fetch** -- The SDK's internal HTTP client drops connections on GitHub Actions runners when calling /v1/messages/batches. Native Node.js fetch succeeds reliably. All four batch operations (submit, poll, cancel, preflight) now use native fetch directly.
+
+## What's New in v9.2.1
+
+Ghost Watcher™ batch submission is now more resilient to transient network drops in GitHub Actions.
+
+- **Fix: submitBatch retry with backoff** -- Batch submissions now retry up to 4 times with exponential backoff (2s→4s→8s) on transient connection errors (Premature close, ECONNRESET, socket hang up). Previously the SDK's 2 built-in retries were insufficient for CI network flakiness.
+- **New: Preflight reachability check** -- Before uploading the full codebase context, Ghost Watcher™ sends a tiny 1-token test batch to verify the Anthropic Batches API is reachable. If the endpoint is unreachable, the run exits cleanly with a clear diagnostic message instead of burning a 0.6MB upload.
+- **New: Body size logging** -- The batch request body size is logged on every submission so CI logs show the real payload size.
+
+## What's New in v9.2.0
+
+Ghost Watcher™ now uses the Anthropic Message Batches API for Blast Radius and Conflict Detection -- eliminating Premature close failures on large codebases entirely.
+
+- **Major: Anthropic Batches API** -- Ghost Watcher™ submits scans as async batch requests processed server-side. No streaming connection to drop. No more Premature close errors regardless of codebase size.
+- **Major: Auto-resume** -- If a GitHub Actions job is interrupted before results arrive, Ghost Watcher™ automatically retrieves and delivers the results on the next commit push. No manual intervention required.
+- **New: Incomplete run emails** -- When a run is interrupted, you receive an email explaining what happened and confirming results will be delivered automatically.
+- **New: Resume notification emails** -- When Ghost Watcher™ detects and resumes an incomplete scan, you receive emails at resume-detected and resume-complete milestones.
+- **New: Pending portal state** -- Ghost Portal shows a pending state entry immediately when a batch is submitted, rather than silence while processing.
+- **New: Configurable batch settings** -- Control poll interval and timeout via ghost-watcher.yaml batch section.
+- **Fix: GitHub Actions timeout raised to 90 minutes** -- Accommodates batch polling window.
+
+## What's New in v9.1.4
+
+Ghost Watcher™ Blast Radius and Conflict Detection now complete successfully in CI environments.
+
+- **Fixed: Premature close on Blast Radius and Conflict Detection in CI** -- All three Anthropic API stream calls in the analyst have been switched to non-streaming (stream: false) in CI environments. This eliminates mid-response stream closure on large context windows. Local dev still uses streaming as before.
+
+## What's New in v9.1.3
+
+Ghost Watcher™ now uses non-streaming Anthropic API calls in CI environments, eliminating Premature close failures on large context scans.
+
+- **Fixed: Premature close in CI** -- Ghost Watcher™ now detects CI environments and switches to non-streaming API calls (stream: false). This eliminates stream timeouts on large context windows (150K Team, 200K Enterprise). Local dev still uses streaming as before.
+
+## What's New in v9.1.2
+
+Ghost Watcher™ now correctly uses the full tier token allowance in GitHub Actions CI environments.
+
+- **Fixed: Ghost Watcher™ CI context cap** -- Team tier now uses 150K tokens in CI (was incorrectly clamped to 50K Open tier default). Enterprise now uses 200K. Added `ignoreSavedContext` flag to bypass stale configstore values on ephemeral CI runners.
+- **Fixed: Stream retry on transient errors** -- Premature close, ECONNRESET, and socket hang up errors now retry up to 2 times with exponential backoff before failing. Reduces false zero-findings runs caused by network blips in CI.
+
+## What's New in v9.1.0
+
+Ghost Architect™ scanned its own codebase using Ghost Brief™ and fixed 7 issues found in dogfood pass 10. Ghost Watcher™ confirmed zero findings after the push.
+
+- **Critical fixed:** Prompt injection defense hardened in consultant profile sanitization -- Unicode NFC normalization, zero-width character rejection, bidirectional override blocking
+- **High fixed:** Temp directory leak in Commit Forecast -- try-finally cleanup on all exit paths
+- **High fixed:** API error masking in agent loop -- `ok` field added to result, test coverage added
+- **High fixed:** LLM plan validation -- findings can no longer be silently dropped from reports without disclosure
+- **High fixed:** Manifest concurrent write race -- content verification added to post-write check
+- **High fixed:** Audit log failure threshold lowered from 3 to 1 -- warns on first failure with timestamp
+- **High:** File prioritizer error handling already present from pass 9
+
+## What's New in v9.0.8
+
+### 🔭 Ghost Watcher™ — Automatic commit monitoring
+
+**Fixes in v9.0.8:**
+- Team and Enterprise tier now correctly applies 150,000 token context cap in CI
+- License validation works on ephemeral GitHub Actions runners (fingerprint bypass in CI)
+- Custom branches added in Enable Watch wizard now correctly appear in GitHub Actions workflow trigger
+- PR comment portal link now uses correct lowercase slug
+- Enable Watch wizard version-pins the workflow to the installed Ghost version
+
+Ghost Watcher™ monitors every commit automatically. When a developer pushes to GitHub, Ghost fires — analyzing changed files against the full codebase, surfacing findings, and generating a Ghost Brief™ prompt pack. Results land in Ghost Portal before the PR reviewer opens the tab.
+
+**Available on Ghost Team and Ghost Enterprise memberships.**
 
 ---
 
@@ -696,23 +789,6 @@ See [LICENSE](./LICENSE) for full terms.
 Ghost Architect™ is proprietary software. Unauthorized use, reproduction, or distribution is strictly prohibited.
 
 *Not a code generator. A thinking accelerator.*
-
-## What's New in v9.0.8
-
-### 🔭 Ghost Watcher™ — Automatic commit monitoring
-
-**Fixes in v9.0.8:**
-- Team and Enterprise tier now correctly applies 150,000 token context cap in CI
-- License validation works on ephemeral GitHub Actions runners (fingerprint bypass in CI)
-- Custom branches added in Enable Watch wizard now correctly appear in GitHub Actions workflow trigger
-- PR comment portal link now uses correct lowercase slug
-- Enable Watch wizard version-pins the workflow to the installed Ghost version
-
-Ghost Watcher™ monitors every commit automatically. When a developer pushes to GitHub, Ghost fires — analyzing changed files against the full codebase, surfacing findings, and generating a Ghost Brief™ prompt pack. Results land in Ghost Portal before the PR reviewer opens the tab.
-
-**Available on Ghost Team and Ghost Enterprise memberships.**
-
----
 
 ## 🔭 Ghost Watcher™
 

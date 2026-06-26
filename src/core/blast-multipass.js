@@ -142,6 +142,7 @@ ${combinedResults}`;
   const stream = await anthropic.messages.stream({
     model:      synthesisModel,
     max_tokens: 8096,
+    temperature: 0,
     system:     systemPrompt,
     messages:   [{ role: 'user', content: userMessage }],
   });

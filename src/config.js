@@ -2,6 +2,8 @@ import Configstore from 'configstore';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
+import { getTierCap } from './loader/tierCaps.js';
+import { getActiveTier } from './license/session.js';
 
 const config = new Configstore('ghost-architect');
 
@@ -137,6 +139,12 @@ export async function runSetupWizard() {
   ));
   console.log('');
 
+  // Resolve the context cap from the active tier so the wizard defaults to the
+  // user's actual ceiling instead of a hardcoded 50K. getTierCap is the single
+  // source of truth (src/loader/tierCaps.js); getActiveTier() === null (no
+  // license = Open) resolves to the Open cap. No tier-cap numbers live here.
+  const tierCap = getTierCap(getActiveTier());
+
   const answers = await inquirer.prompt([
     {
       type: 'password',
@@ -186,8 +194,8 @@ export async function runSetupWizard() {
     {
       type: 'number',
       name: 'maxTokensContext',
-      message: chalk.cyan('Max file context size in tokens (50000 recommended):'),
-      default: 50000,
+      message: chalk.cyan(`Max file context size in tokens (${tierCap.toLocaleString()} = your tier cap):`),
+      default: tierCap,
     },
     {
       type: 'number',
@@ -222,7 +230,7 @@ export async function runSetupWizard() {
   const block = {
     anthropicApiKey: answers.anthropicApiKey,
     defaultModel: answers.defaultModel,
-    maxTokensContext: answers.maxTokensContext,
+    maxTokensContext: answers.maxTokensContext || tierCap,
     rateJunior: answers.rateJunior || 85,
     rateMid: answers.rateMid || 125,
     rateSenior: answers.rateSenior || 200,

@@ -46,7 +46,7 @@ async function callClaude(prompt, system, maxTokens = 8096, onChunk = null, onUs
   const anthropic = getClient();
   let result = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: maxTokens, system,
+    model: getModel(), max_tokens: maxTokens, temperature: 0, system,
     messages: [{ role: 'user', content: prompt }]
   });
   for await (const chunk of stream) {
