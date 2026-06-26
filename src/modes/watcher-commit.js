@@ -593,6 +593,22 @@ function emailSetupWarning({ repo }) {
   };
 }
 
+function emailCleanScan({ repo, shortSha, fileCount, portalSlug }) {
+  return {
+    subject: `Ghost Watcher™ — Clean scan on ${repo} commit ${shortSha}`,
+    html:
+      `<h2 style="color:#00e5a8;">Ghost Watcher™ — Clean scan</h2>\n` +
+      `<p>Ghost Watcher™ scanned commit <code>${shortSha}</code> on <strong>${repo}</strong> and found no issues.</p>\n` +
+      `<p>Your codebase is clean. No action required.</p>\n` +
+      `<p><strong>Scan summary:</strong><br>\n` +
+      `Files analyzed: ${fileCount}<br>\n` +
+      `Blast Radius: 0 findings<br>\n` +
+      `Conflict Detection: 0 findings</p>\n` +
+      `<p>View your scan history in <a href="https://ghostarchitect.dev/portal-${portalSlug}.html">Ghost Portal</a>.</p>\n` +
+      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+  };
+}
+
 // ── Incomplete-run handling (batch timed out before the job ended) ─────────────
 //
 // The batch is already persisted (storePendingBatch ran at submission), so the
@@ -1157,6 +1173,21 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   }
   // A completed run resets the consecutive-incomplete-run counter.
   await resetIncompleteRuns(octokitPortal, portalRepoPath);
+
+  // ── Step 8c: Clean scan email ─────────────────────────────────────────────
+  // Zero findings across both scans — tell the customer the commit is clean.
+  // Fire-and-forget; never blocks the portal push that follows.
+  if (allFindings.length === 0) {
+    try {
+      const eClean = emailCleanScan({
+        repo: repoPath,
+        shortSha: commitSha,
+        fileCount: codebaseContext.loadedFiles || 0,
+        portalSlug: portalSlug || repoOwner,
+      });
+      await sendWatcherEmail(emailRecipients, eClean.subject, eClean.html);
+    } catch (_) { /* email never blocks */ }
+  }
 
   // ── Step 9: Push to portal repo ──────────────────────────────────────────
   // Resolve portal credentials: env vars take priority (CI/GitHub Actions),
