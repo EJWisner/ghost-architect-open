@@ -568,6 +568,66 @@ function sanitizeCustomId(id) {
   return String(id).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
 }
 
+// ── Detailed remediation prompts (Step 8e) ──────────────────────────────────
+//
+// After the Ghost Brief is built, Ghost Watcher generates one LLM-authored,
+// developer-ready remediation prompt per finding through a single batch (one
+// request per finding). The returned text replaces the templated prompt on the
+// matching brief entry. Results are matched back to findings by the numeric
+// index baked into the custom_id (prompt-<commitSha>-<index>).
+
+const PROMPT_GEN_SYSTEM =
+  'You are a senior software architect writing remediation prompts for developers. ' +
+  'Write a detailed, actionable prompt that a developer can paste directly into Claude Code, ' +
+  'Cursor, Copilot, or any AI coding tool to fix the finding. Be specific about the files, ' +
+  'the problem, and the exact steps to take. No preamble. No explanation of what you are doing. ' +
+  'Just the prompt the developer will use.';
+
+// One batch request per finding. detailById supplies the raw finding detail that
+// the Ghost Brief adapter does not carry onto the adapted finding.
+function buildPromptGenRequests(findings, commitSha, detailById = new Map()) {
+  return findings.map((f, i) => {
+    const files  = (f.files?.primary || []).join(', ') || 'none listed';
+    const detail = detailById.get(f.source_finding_id) || 'No detail provided';
+    const userMessage =
+      `Finding: ${f.title || 'Untitled'}\n` +
+      `Severity: ${f.severity || 'medium'}\n` +
+      `Files: ${files}\n` +
+      `Detail: ${detail}\n\n` +
+      `Write a developer-ready remediation prompt for this finding.`;
+    return {
+      custom_id: sanitizeCustomId(`prompt-${commitSha}-${i}`),
+      params: {
+        model: getModel(),
+        max_tokens: 4096,
+        temperature: 0,
+        system: PROMPT_GEN_SYSTEM,
+        messages: [{ role: 'user', content: userMessage }],
+      },
+    };
+  });
+}
+
+// Replace each finding's prompt with the matching batch result text, matched by
+// the numeric index in the result custom_id. Only successful, non-empty results
+// replace the templated prompt; anything else keeps its original prompt.
+export function enrichFindingsWithPrompts(findings, results) {
+  if (!Array.isArray(findings) || !Array.isArray(results)) return findings;
+  const textByIndex = new Map();
+  for (const r of results) {
+    if (r?.type !== 'succeeded') continue;
+    const text = (r.text || '').trim();
+    if (!text) continue;
+    const idx = parseInt(String(r.custom_id || '').split('-').pop(), 10);
+    if (Number.isInteger(idx)) textByIndex.set(idx, text);
+  }
+  findings.forEach((f, i) => {
+    const text = textByIndex.get(i);
+    if (text) f.prompt = text;
+  });
+  return findings;
+}
+
 // ── Email (fire-and-forget) ────────────────────────────────────────────────────
 //
 // Ghost Watcher has no SMTP/transport in-process. Like pingWatcherRun in
@@ -977,6 +1037,83 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
           await sendWatcherEmail(pending.emailRecipients?.length ? pending.emailRecipients : emailRecipients, e2.subject, e2.html);
         } catch (_) { /* email never blocks */ }
 
+        // ── Detailed-prompts batch resume ────────────────────────────────────
+        // No raw scan to re-parse: the results ARE the prompt texts. Enrich the
+        // stored findings, regenerate the brief, and push it under the ORIGINAL
+        // commit (the resume branch's own Step 9 equivalent).
+        if (pending.type === 'prompts') {
+          try {
+            const shortSha = (pending.commitHash || '').slice(0, 7);
+            const promptResults = await pollBatch(anthropic, pending.batchId, {
+              pollIntervalMs: 10000, timeoutMs: 60000,
+              onProgress: (p) => console.log(`Ghost Watcher: prompts resume check — ${p.status}`),
+            });
+
+            const enriched = enrichFindingsWithPrompts(pending.findings || [], promptResults);
+
+            let resumeBrief = null;
+            try {
+              const { generateBrief } = await import('../../lib/ghostBrief.js');
+              resumeBrief = generateBrief({
+                findings: enriched, ghostVersion: pending.version || version,
+                scanFile: `watch-${shortSha}`, codebaseRoot: repoRoot,
+                tier: pending.tier || tier, profile,
+              });
+            } catch (e) {
+              console.error(`Ghost Watcher: prompts resume brief regen failed (non-fatal) — ${e.message}`);
+            }
+            const promptCount = resumeBrief?.prompts?.length || 0;
+
+            // Push the enriched brief to the portal Brief tab under the original commit.
+            if (resumeBrief && octokitPortal && portalOwner && portalRepoName
+                && pending.projectSlug && pending.developerEmail) {
+              try {
+                const basePath = `projects/${pending.projectSlug}/scans/watch/${emailToSlug(pending.developerEmail)}`;
+                await upsertPortalFile(
+                  octokitPortal, portalOwner, portalRepoName,
+                  `${basePath}/watch-brief-${shortSha}.json`,
+                  JSON.stringify(resumeBrief, null, 2),
+                  `watch-brief: ${shortSha} (detailed prompts)`,
+                );
+              } catch (e) {
+                console.error(`Ghost Watcher: prompts resume brief push failed (non-fatal) — ${e.message}`);
+              }
+            }
+
+            // Refresh commit-state prompt count, reusing the stored severity so
+            // the Watch tab's counts are not clobbered.
+            await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
+              commitHash: pending.commitHash, branch, developer: developer.name,
+              timestamp: new Date().toISOString(), status: 'complete', batchId: null,
+              message: 'Ghost Watcher™ detailed remediation prompts ready.',
+              findings: [], findingCount: pending.findingCount ?? (pending.findings || []).length,
+              severity: pending.severity || { critical: 0, high: 0, medium: 0, low: 0 },
+              prompts: promptCount,
+            });
+
+            if (pending.prNumber) {
+              const body =
+                `## 👻 Ghost Watcher™ — Detailed prompts ready\n\n` +
+                `Detailed remediation prompts for commit \`${shortSha}\` are ready ` +
+                `(${promptCount} prompt${promptCount === 1 ? '' : 's'}).\n\n` +
+                (portalSlug ? `[Open Ghost Portal to copy prompts into your AI coding tool.](https://ghostarchitect.dev/portal-${portalSlug}.html)\n` : '');
+              await postCommentToPR(pending.repo || repoPath, pending.prNumber, body);
+            }
+
+            console.log(`Ghost Watcher: resumed prompts batch ${pending.batchId} successfully`);
+            await clearPendingBatch(octokitPortal, portalRepoPath, pending.batchId);
+            await resetIncompleteRuns(octokitPortal, portalRepoPath);
+          } catch (err) {
+            if (err instanceof BatchTimeoutError) {
+              console.log(`Ghost Watcher: prompts batch ${pending.batchId} still processing, will retry next run`);
+            } else {
+              console.log(`Ghost Watcher: prompts resume failed for batch ${pending.batchId} — ${err.message}`);
+              await clearPendingBatch(octokitPortal, portalRepoPath, pending.batchId);
+            }
+          }
+          continue;   // skip the blast/conflict extraction path below
+        }
+
         try {
           const resumeResults = await pollBatch(anthropic, pending.batchId, {
             pollIntervalMs: 10000,
@@ -1248,6 +1385,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   // ── Step 8: Ghost Brief ──────────────────────────────────────────────────
   let brief           = null;
   let briefPromptCount = 0;
+  let adaptedFindings  = [];   // hoisted so Step 8e can enrich and regenerate
 
   if (watchConfig.scans?.ghost_brief !== false && allFindings.length > 0) {
     try {
@@ -1255,7 +1393,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
 
       // Adapt raw findings into Ghost Brief prompt shape via the adapter.
       // Blast findings use fromPOI (same shape); conflict findings use fromConflict.
-      const adaptedFindings = [
+      adaptedFindings = [
         ...fromPOI(blastFindings.map(f => ({ ...f, source_mode: 'blast' }))),
         ...fromConflict(conflictFindings),
       ].filter(f => f.files?.primary?.length > 0);
@@ -1326,6 +1464,81 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
       });
       await sendWatcherEmail(emailRecipients, eClean.subject, eClean.html);
     } catch (_) { /* email never blocks */ }
+  }
+
+  // ── Step 8e: Detailed remediation prompts (Batches API) ───────────────────
+  // For every finding, generate an LLM-authored, developer-ready remediation
+  // prompt via one batch (one request per finding). The returned text replaces
+  // the templated prompt on each brief entry, then the brief is regenerated so
+  // brief.prompts carries the detailed prompts. On timeout the batch is stored
+  // and the next push resumes it; the basic brief still ships now via Step 9.
+  if (watchConfig.scans?.detailed_prompts !== false && brief && adaptedFindings.length > 0) {
+    console.log('Ghost Watcher: generating detailed remediation prompts (batch)...');
+
+    // Detail lives on the raw findings; map id to detail so each request can
+    // include the finding detail the Ghost Brief adapter dropped.
+    const detailById = new Map(
+      [...blastFindings, ...conflictFindings]
+        .filter(f => f && f.id)
+        .map(f => [f.id, f.detail || ''])
+    );
+
+    let promptBatchId = null;
+    try {
+      const requests = buildPromptGenRequests(adaptedFindings, commitSha, detailById);
+      promptBatchId = await submitBatch(anthropic, requests);
+    } catch (err) {
+      console.error(`Ghost Watcher: detailed prompt submission failed (non-fatal) — ${err.message}`);
+    }
+
+    if (promptBatchId) {
+      await storePendingBatch(octokitPortal, portalRepoPath, promptBatchId, {
+        type: 'prompts', commitHash: commitHashFull, repo: repoPath, repoOwner,
+        timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
+        pollIntervalMs, timeoutMs,
+        findings:       adaptedFindings,
+        severity:       buildSeverityCounts(allFindings),
+        findingCount:   allFindings.length,
+        developerEmail: developer.email,
+        projectSlug:    (process.env.GITHUB_REPOSITORY || 'unknown-project').replace('/', '-').toLowerCase(),
+        version, tier,
+      });
+
+      try {
+        const promptResults = await pollBatch(anthropic, promptBatchId, {
+          pollIntervalMs, timeoutMs,
+          onProgress: (p) => console.log(`Ghost Watcher: detailed prompts — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
+        });
+
+        enrichFindingsWithPrompts(adaptedFindings, promptResults);
+
+        try {
+          const { generateBrief } = await import('../../lib/ghostBrief.js');
+          brief = generateBrief({
+            findings: adaptedFindings, ghostVersion: version,
+            scanFile: `watch-${commitSha}`, codebaseRoot: repoRoot, tier, profile,
+          });
+          briefPromptCount = brief?.prompts?.length || 0;
+        } catch (e) {
+          console.error(`Ghost Watcher: brief regeneration after prompts failed (non-fatal) — ${e.message}`);
+        }
+
+        await clearPendingBatch(octokitPortal, portalRepoPath, promptBatchId);
+        console.log(`Ghost Watcher: detailed prompts complete — ${briefPromptCount} prompts enriched\n`);
+      } catch (err) {
+        if (err instanceof BatchTimeoutError) {
+          // Batch is stored; the next push resumes it and overwrites the brief
+          // with the detailed prompts. Deliver the basic brief now via Step 9.
+          console.log('Ghost Watcher: detailed prompts still processing; basic brief ships now, detailed prompts follow on the next push.\n');
+        } else if (err instanceof BatchAllFailedError) {
+          console.error(`Ghost Watcher: detailed prompts batch all failed (non-fatal) — ${err.message}`);
+          await clearPendingBatch(octokitPortal, portalRepoPath, promptBatchId);
+        } else {
+          console.error(`Ghost Watcher: detailed prompts failed (non-fatal) — ${err.message}`);
+          await clearPendingBatch(octokitPortal, portalRepoPath, promptBatchId);
+        }
+      }
+    }
   }
 
   // ── Step 9: Push to portal repo ──────────────────────────────────────────

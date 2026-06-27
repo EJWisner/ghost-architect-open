@@ -23,6 +23,7 @@ import {
   BatchTimeoutError,
   BatchAllFailedError,
 } from '../src/modes/watcher-batch.js';
+import { enrichFindingsWithPrompts } from '../src/modes/watcher-commit.js';
 
 let failures = 0;
 
@@ -332,6 +333,66 @@ async function run() {
     let r2;
     try { r2 = await preflightBatchCheck('sk-ant-test', 'claude-sonnet-4-6'); } finally { restoreFetch(); }
     assert(r2.ok === false && r2.transient === true, 'ok:false + transient:true on a connection drop', JSON.stringify(r2));
+  }
+
+  // Normalized pollBatch result items (the shape enrichFindingsWithPrompts
+  // consumes): { custom_id, type, text }. The detailed-prompts custom_id is
+  // prompt-<commitSha>-<index>; enrich matches results back to findings by the
+  // trailing index.
+  const succeededResult = (index, text) => ({ custom_id: `prompt-abcdef1-${index}`, type: 'succeeded', text });
+
+  // 14) enrichFindingsWithPrompts replaces matched prompts, leaves unmatched alone
+  console.log('\nTest 14: enrichFindingsWithPrompts replaces matched prompts and leaves unmatched findings unchanged');
+  {
+    const findings = [
+      { id: 'GB-001', prompt: 'orig-0' },
+      { id: 'GB-002', prompt: 'orig-1' },
+      { id: 'GB-003', prompt: 'orig-2' },
+    ];
+    // results for index 0 and 2 only; index 1 has no matching result
+    const results = [succeededResult(0, 'NEW-0'), succeededResult(2, 'NEW-2')];
+    const returned = enrichFindingsWithPrompts(findings, results);
+    assert(returned === findings, 'returns the same findings array (mutated in place)');
+    assert(findings[0].prompt === 'NEW-0', 'matched finding 0 prompt replaced', findings[0].prompt);
+    assert(findings[1].prompt === 'orig-1', 'unmatched finding 1 prompt unchanged', findings[1].prompt);
+    assert(findings[2].prompt === 'NEW-2', 'matched finding 2 prompt replaced', findings[2].prompt);
+  }
+
+  // 15) enrichFindingsWithPrompts only succeeded results replace prompts
+  console.log('\nTest 15: enrichFindingsWithPrompts ignores errored/canceled/empty results, only succeeded replace prompts');
+  {
+    const findings = [
+      { id: 'GB-001', prompt: 'orig-0' },
+      { id: 'GB-002', prompt: 'orig-1' },
+      { id: 'GB-003', prompt: 'orig-2' },
+      { id: 'GB-004', prompt: 'orig-3' },
+    ];
+    const results = [
+      { custom_id: 'prompt-abcdef1-0', type: 'errored',   text: null, error: { message: 'boom' } },
+      { custom_id: 'prompt-abcdef1-1', type: 'canceled',  text: null },
+      { custom_id: 'prompt-abcdef1-2', type: 'succeeded', text: '   ' }, // whitespace-only → skipped
+      succeededResult(3, 'NEW-3'),
+    ];
+    enrichFindingsWithPrompts(findings, results);
+    assert(findings[0].prompt === 'orig-0', 'errored result did not replace prompt', findings[0].prompt);
+    assert(findings[1].prompt === 'orig-1', 'canceled result did not replace prompt', findings[1].prompt);
+    assert(findings[2].prompt === 'orig-2', 'succeeded-but-empty result did not replace prompt', findings[2].prompt);
+    assert(findings[3].prompt === 'NEW-3', 'succeeded result replaced prompt', findings[3].prompt);
+  }
+
+  // 16) enrichFindingsWithPrompts handles an empty results array without throwing
+  console.log('\nTest 16: enrichFindingsWithPrompts handles an empty results array without throwing');
+  {
+    const findings = [
+      { id: 'GB-001', prompt: 'orig-0' },
+      { id: 'GB-002', prompt: 'orig-1' },
+    ];
+    let threw = null;
+    let returned = null;
+    try { returned = enrichFindingsWithPrompts(findings, []); } catch (err) { threw = err; }
+    assert(threw === null, 'did not throw on empty results array', threw ? threw.message : '');
+    assert(returned === findings, 'returns the findings array unchanged');
+    assert(findings[0].prompt === 'orig-0' && findings[1].prompt === 'orig-1', 'no prompts changed with empty results');
   }
 
   console.log('');

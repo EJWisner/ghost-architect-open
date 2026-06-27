@@ -506,6 +506,14 @@ export async function retrievePendingBatches(octokit, portalRepo) {
         portalSlug:      b.portalSlug ?? null,
         pollIntervalMs:  b.pollIntervalMs,
         timeoutMs:       b.timeoutMs,
+        // Detailed-prompts (type 'prompts') resume payload:
+        findings:        Array.isArray(b.findings) ? b.findings : undefined,
+        severity:        b.severity ?? undefined,
+        findingCount:    b.findingCount ?? undefined,
+        developerEmail:  b.developerEmail ?? undefined,
+        projectSlug:     b.projectSlug ?? undefined,
+        version:         b.version ?? undefined,
+        tier:            b.tier ?? undefined,
       }));
   } catch {
     return [];
