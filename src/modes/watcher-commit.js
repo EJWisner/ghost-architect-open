@@ -25,7 +25,7 @@ import { getPortalConfig, isPortalConfigured } from '../core/portal-publish.js';
 import { loadProfile, getBranding, mergeRates } from '../profile/index.js';
 import { getDefaultProfileSlug, getConfig, resolveApiKey } from '../config.js';
 import { loadFromPath, setScanOptions } from '../loader/index.js';
-import { extractFindings } from '../utils/finding-parser.js';
+import { extractFindings, generateFindingId } from '../utils/finding-parser.js';
 import { normalizeCandidateToFinding, extractCandidates } from '../core/conflict.js';
 import { narrateReport } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
@@ -417,6 +417,92 @@ function buildConflictPrompts(fileMap, profile) {
   return { systemPrompt, userMessage };
 }
 
+// ── Blast-aware file recovery ──────────────────────────────────────────────────
+//
+// Raw Blast Radius batch output lists impacted files as bullets under a per-
+// section header, with no `Files:` line:
+//   ### From `src/reports.js`
+//   - **`src/pdf-generator.js`** — imported directly for `generatePDF()`
+//   - **`src/lib/transport-meta.js`** — imported for `formatTransportFooter()`
+// extractFindings() therefore yields empty `files` arrays, which the Ghost Brief
+// adapter's files.primary filter drops. We recover the paths straight from the
+// raw text, keyed by section title (the section's own backtick file first, then
+// the bullet files), and merge them into findings that arrived without files.
+// Parser and narrator are untouched.
+
+// A backtick token is a file path only if it has a dotted extension and no
+// parentheses — keeps `src/pdf-generator.js`, `package.json`; rejects
+// `generatePDF()` and bare symbols like `GHOST_VERSION`.
+function looksLikeFilePath(token) {
+  const t = token.replace(/\*+/g, '').trim();
+  if (!t || /\s/.test(t) || t.includes('(') || t.includes(')')) return false;
+  return /\.[A-Za-z0-9]+$/.test(t) && /^[\w./@-]+$/.test(t);
+}
+
+// Pull the file paths out of a single line's backtick tokens, in order.
+function filePathsFromLine(line) {
+  const out = [];
+  const re = /`([^`]+)`/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    const file = m[1].replace(/\*+/g, '').trim();
+    if (looksLikeFilePath(file)) out.push(file);
+  }
+  return out;
+}
+
+// Normalize a section header / finding title to a stable lookup key. Mirrors the
+// trimming extractFindings applies to titles (leading "N." and the #s) so raw
+// section headers and parsed finding titles collapse to the same key.
+function normalizeSectionKey(title) {
+  return String(title)
+    .replace(/^#{2,3}\s+/, '').replace(/^\d+\.\s+/, '')
+    .replace(/[`*]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Walk the raw blast text; for each ##/### section collect file paths keyed by
+// normalized section title. The section header's own backtick file (e.g.
+// `src/reports.js` in "### From `src/reports.js`") is seeded FIRST so it lands
+// as the finding's primary file, with the bullet files following in order.
+function extractBlastSectionFiles(rawBlastOutput) {
+  const map = new Map();
+  if (!rawBlastOutput) return map;
+  let key = null, inCodeBlock = false;
+  for (const raw of rawBlastOutput.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('```')) { inCodeBlock = !inCodeBlock; continue; }
+    if (inCodeBlock) continue;
+    if (/^#{2,3}\s+/.test(line)) {
+      key = normalizeSectionKey(line);
+      if (!map.has(key)) map.set(key, []);
+      const bucket = map.get(key);
+      // Seed the title's own file first (the changed source the section is "From").
+      for (const file of filePathsFromLine(line)) {
+        if (!bucket.includes(file)) bucket.push(file);
+      }
+      continue;
+    }
+    if (!key || !/^[-*]\s/.test(line)) continue;   // bullet lines only
+    const bucket = map.get(key);
+    for (const file of filePathsFromLine(line)) {
+      if (!bucket.includes(file)) bucket.push(file);
+    }
+  }
+  return map;
+}
+
+// Fill empty `files` arrays from the section map (never overrides files the
+// narrator already produced) and recompute the id to reflect the primary file.
+function enrichBlastFindingFiles(findings, sectionFiles) {
+  if (!findings || !sectionFiles || sectionFiles.size === 0) return findings;
+  for (const f of findings) {
+    if (f.files && f.files.length) continue;
+    const files = sectionFiles.get(normalizeSectionKey(f.title || ''));
+    if (files && files.length) { f.files = [...files]; f.id = generateFindingId(f); }
+  }
+  return findings;
+}
+
 /**
  * Turn the raw Blast Radius batch output into findings, replicating Step 2 of
  * runBlastRadius() (src/analyst/index.js).
@@ -440,6 +526,12 @@ async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, cod
   const rawFindings = extractFindings(rawBlastOutput, 'blast');
   if (rawFindings.length === 0) return [];
 
+  // Recover per-section file paths from the raw bullet lines once, then enrich
+  // the parsed findings BEFORE narration so the narrator receives real file
+  // paths and emits `Files:` lines (which the re-parse below then captures).
+  const sectionFiles = extractBlastSectionFiles(rawBlastOutput);
+  enrichBlastFindingFiles(rawFindings, sectionFiles);
+
   try {
     const rates = mergeRates(getRates(), profile);
     const projectLabel = changedFiles.length === 1
@@ -459,10 +551,12 @@ async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, cod
       () => {},
     );
 
-    return extractFindings(narratedReport || rawBlastOutput);
+    // Re-enrich the re-parsed result as a guarantee (covers any finding the
+    // narrator rendered without a Files line).
+    return enrichBlastFindingFiles(extractFindings(narratedReport || rawBlastOutput), sectionFiles);
   } catch (err) {
     console.error(`Ghost Watcher: Blast narrator failed (non-fatal), using raw findings — ${err.message}`);
-    return rawFindings;
+    return enrichBlastFindingFiles(rawFindings, sectionFiles);
   }
 }
 
