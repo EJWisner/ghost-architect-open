@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v9.3.0** Streaming vs batch CLI menu with a cost estimate before every scan. Half-price processing via the Anthropic Batches API. Batch status and retrieve commands. Transport metadata in every report.
+**v9.3.3** Ghost Watcher™ now generates detailed LLM-authored remediation prompts for every finding. Paste directly into Claude Code, Cursor, or Copilot.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
