@@ -61,8 +61,8 @@ console.log('Test 1: provider and VCS tokens are redacted');
   checkNotContains('anthropic key gone', anthropic, 'sk-ant-api03');
   checkContains('anthropic placeholder', anthropic, '<redacted-key>');
 
-  const gh = sanitizeForDebugLog('token ghp_4k3MMrnABCDEFGHIJKLMNOPQRSTUV0123');
-  checkNotContains('github pat gone', gh, 'ghp_4k3MMrn');
+  const gh = sanitizeForDebugLog('token ghp_TESTTOKENabcdefghijklmnop0123');
+  checkNotContains('github pat gone', gh, 'ghp_TESTTOKEN');
   checkContains('github placeholder', gh, '<redacted-key>');
 
   const aws = sanitizeForDebugLog('AKIAIOSFODNN7EXAMPLE in config');
