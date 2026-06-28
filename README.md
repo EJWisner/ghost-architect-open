@@ -28,6 +28,21 @@ That's it. On first run, Ghost walks you through a one-time setup wizard (API ke
 
 ---
 
+## Ghost Triple Crown™ -- Three Passes. One Complete Picture.
+
+Every Ghost Watcher™ commit triggers three passes automatically.
+
+**Leg 1 -- Blast Radius™**
+Maps every file that breaks if you change something. Know the impact before you touch the code.
+
+**Leg 2 -- Conflict Detection™**
+Finds where two sides of the codebase expect different things. Catches contract mismatches before they hit production.
+
+**Leg 3 -- Ghost Brief™**
+Generates a developer-ready remediation prompt for every finding. Paste directly into Claude Code, Cursor, Copilot, or any AI coding tool.
+
+Ghost Watcher™ runs the Ghost Triple Crown™ automatically on every commit. No configuration. No manual scans. Every push, every time.
+
 ## What's New in v9.3.1
 
 Ghost Watcher™ now emails the customer after every scan.
