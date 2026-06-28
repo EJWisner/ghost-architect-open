@@ -65,6 +65,28 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+// ── Markdown escaping (PR comments) ─────────────────────────────────────────────
+// Escaper for interpolating user/model-generated content (finding titles,
+// severities, branch names, actor names) into GitHub PR-comment markdown.
+// Neutralizes markdown control characters, HTML angle brackets, newlines, and
+// @-mention triggers so crafted finding titles or fork branch names cannot
+// inject markup or notify arbitrary users.
+function escapeMarkdown(str) {
+  return String(str ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\*/g, '\\*')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/</g, '\\<')
+    .replace(/>/g, '\\>')
+    .replace(/\n/g, ' ')
+    .replace(/#/g, '\\#')
+    .replace(/@/g, '\\@');
+}
+
 // ── Config reader ─────────────────────────────────────────────────────────────
 
 /**
@@ -248,8 +270,8 @@ async function postPRComment({ findings, blastFileCount, briefPromptCount, porta
       const body = [
         `## 👻 Ghost Watcher™ — Commit Analysis`,
         ``,
-        `**Branch:** \`${refName}\``,
-        `**Commit:** \`${shortSha}\` · ${actor} · ${date}`,
+        `**Branch:** \`${escapeMarkdown(refName)}\``,
+        `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}`,
         ``,
         `✅ **No findings detected.**`,
         ``,
@@ -292,8 +314,8 @@ async function postPRComment({ findings, blastFileCount, briefPromptCount, porta
   const date     = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
   let body = `## 👻 Ghost Watcher™ — Commit Analysis\n\n`;
-  body    += `**Branch:** \`${refName}\`\n`;
-  body    += `**Commit:** \`${shortSha}\` · ${actor} · ${date}\n\n`;
+  body    += `**Branch:** \`${escapeMarkdown(refName)}\`\n`;
+  body    += `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}\n\n`;
   body    += `**Findings:** ${total} (${severitySummary})\n`;
   body    += `**Blast radius:** ${blastFileCount} file${blastFileCount === 1 ? '' : 's'} affected\n`;
   body    += `**Ghost Brief:** ${briefPromptCount} prompt${briefPromptCount === 1 ? '' : 's'} ready\n\n`;
@@ -301,7 +323,7 @@ async function postPRComment({ findings, blastFileCount, briefPromptCount, porta
   if (phase1.length > 0) {
     body += `### PHASE 1 — Fix first (surgical)\n`;
     for (const f of phase1) {
-      body += `  - **${f.severity}:** ${f.title}\n`;
+      body += `  - **${escapeMarkdown(f.severity)}:** ${escapeMarkdown(f.title)}\n`;
     }
     body += `  → Prompts ready in Ghost Portal\n\n`;
   }
@@ -309,7 +331,7 @@ async function postPRComment({ findings, blastFileCount, briefPromptCount, porta
   if (phase2.length > 0) {
     body += `### PHASE 2 — Fix second (moderate)\n`;
     for (const f of phase2) {
-      body += `  - **${f.severity}:** ${f.title}\n`;
+      body += `  - **${escapeMarkdown(f.severity)}:** ${escapeMarkdown(f.title)}\n`;
     }
     body += `  → Prompts ready in Ghost Portal\n\n`;
   }
