@@ -2,7 +2,7 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-**v9.3.4** HTML escaping in all Ghost Watcher email templates. Full test suite restored with 14 suites.
+**v9.3.5** Ghost Watcher™ PR comments are now fully markdown-escaped. Finding titles and branch names can no longer inject markdown into GitHub PR comments.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
