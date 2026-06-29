@@ -122,6 +122,25 @@ export function readWatchConfig(repoRoot = process.cwd()) {
   return cfg;
 }
 
+/**
+ * Opt-in iteration-limit predicate (Step 1c of runWatchCommit).
+ *
+ * The limit fires ONLY when iterations.max is explicitly set in
+ * ghost-watcher.yaml. Absent (undefined) or null means no limit, so Watch runs
+ * on every push. An explicit number fires only when runNumber is strictly
+ * GREATER than the limit (at-limit is allowed, over-limit skips).
+ *
+ * Pure and exported so it can be unit-tested directly.
+ *
+ * @param {object} watchConfig  parsed ghost_watcher config
+ * @param {number} runNumber    GITHUB_RUN_NUMBER for this PR
+ * @returns {boolean} true if this run should be skipped
+ */
+export function shouldSkipForIterationLimit(watchConfig, runNumber) {
+  const maxIterations = watchConfig?.iterations?.max;
+  return maxIterations != null && runNumber > maxIterations;
+}
+
 // ── Git diff ──────────────────────────────────────────────────────────────────
 
 /**
@@ -967,12 +986,14 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   }
 
   // ── Step 1c: Iteration limit check ──────────────────────────────────────
-  // Prevents Ghost Watcher from running indefinitely on high-commit PRs.
-  // Reads max_iterations from ghost-watcher.yaml (default: 10).
-  // Counts prior Watch runs for this PR by checking GITHUB_RUN_NUMBER.
-  const maxIterations = watchConfig.iterations?.max ?? 10;
+  // Opt-in guard against Ghost Watcher running indefinitely on high-commit PRs.
+  // The limit fires ONLY when iterations.max is explicitly set in
+  // ghost-watcher.yaml. If iterations.max is absent (undefined/null), no limit
+  // is applied and Watch runs on every push. Counts prior Watch runs for this
+  // PR by checking GITHUB_RUN_NUMBER.
+  const maxIterations = watchConfig.iterations?.max;
   const runNumber     = parseInt(process.env.GITHUB_RUN_NUMBER || '1', 10);
-  if (runNumber > maxIterations) {
+  if (shouldSkipForIterationLimit(watchConfig, runNumber)) {
     console.log(`Ghost Watcher: iteration limit reached (run ${runNumber} of ${maxIterations} max).`);
     console.log('   Open Ghost Portal to review findings from earlier runs.');
     console.log('👻 Ghost Watcher™ skipped — iteration limit.\n');

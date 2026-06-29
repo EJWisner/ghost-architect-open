@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.3.7** Fix Max-tier context caps (Pro Max/Team Max/Enterprise Max now correctly get 100K/150K/200K tokens). Remove iteration limit from Ghost Watcher (no-config = no limit, opt-in only). Extract shouldSkipForIterationLimit as exported pure helper with full test coverage. Fix FREE_QUOTA duplication in freemium.js.
+
 **v9.3.6** Add token/cost telemetry to Ghost Watcher writer. All batch paths (blast, conflict, prompts, resume) now record inputTokens, outputTokens, and estimatedCostUsd at Anthropic batch API rates ($1.50/$7.50 per 1M tokens). Unit tests added for buildTokenUsage and sumBatchUsage.
 
 **v9.3.5** Ghost Watcher™ PR comments are now fully markdown-escaped. Finding titles and branch names can no longer inject markdown into GitHub PR comments.

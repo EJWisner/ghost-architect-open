@@ -20,8 +20,6 @@ ghost_watcher:
     pr_comment: true
     email:
       - ejwisner@gmail.com
-  iterations:
-    max: 50
   exclude:
     - "test/**"
     - "tests/**"

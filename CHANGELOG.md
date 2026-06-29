@@ -5,6 +5,40 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.3.7] - 2026-06-29
+
+### Fixed
+
+- **Max-tier context caps.**
+  Pro Max, Team Max, and Enterprise Max now correctly receive 100K,
+  150K, and 200K token context caps respectively. Previously these
+  tiers were absent from the canonical `TIER_CAPS` table in
+  `src/loader/tierCaps.js` and silently fell back to the Open 50K
+  cap, under-capping paying Max customers.
+
+- **FREE_QUOTA duplication.**
+  Removed the duplicated `FREE_QUOTA` constant from
+  `src/freemium.js`; the quota now imports `SCAN_QUOTA` from
+  `src/license/tier-gates.js`, the single policy source of truth.
+
+### Changed
+
+- **Ghost Watcher™ iteration limit is now opt-in.**
+  The Step 1c iteration guard fires only when `iterations.max` is
+  explicitly set in `ghost-watcher.yaml`. With no config, no limit is
+  applied and Watch runs on every push. The prior hardcoded default
+  of 10 is removed.
+
+### Added
+
+- **`shouldSkipForIterationLimit` exported pure helper.**
+  The iteration-limit predicate is extracted from `runWatchCommit`
+  into an exported, unit-testable function in
+  `src/modes/watcher-commit.js`, with a dedicated smoke test
+  (`tests/watcher-iteration-limit.smoke.mjs`). A tier-caps smoke test
+  (`tests/tier-caps.smoke.mjs`) covering all seven tiers and the Open
+  fallback was added alongside the cap fix.
+
 ## [9.3.6] - 2026-06-29
 
 ### Added
