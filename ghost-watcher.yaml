@@ -35,3 +35,4 @@ ghost_watcher:
     - "*.pdf"
   team:
     config: team.yaml
+# CI license: team-max (updated 2026-06-29)
