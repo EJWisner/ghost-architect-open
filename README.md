@@ -836,6 +836,14 @@ Developer commits → GitHub Actions fires → Ghost Watcher™ runs
 
 → Loop continues until findings reach zero
 
+### Detailed Remediation Prompts
+
+After the basic Ghost Brief™ ships, Ghost Watcher™ submits a second Anthropic Batches API job, one request per finding, to generate detailed, LLM-authored remediation prompts. These replace the templated prompts in the Ghost Brief™, so every finding carries a developer-ready prompt written for that specific issue.
+
+If the detailed-prompts batch times out, the basic brief ships immediately and the detailed prompts are delivered automatically on the next push. A slow batch never blocks your results.
+
+This step is controlled by the `detailed_prompts` key under `scans:` in `ghost-watcher.yaml` and defaults to `true`. Set it to `false` to ship only the templated brief.
+
 ### Requirements
 
 - Ghost Team or Ghost Enterprise membership
@@ -940,6 +948,7 @@ ghost_watcher:
     blast_radius: true
     conflict_detection: true
     ghost_brief: true
+    detailed_prompts: true   # Generate LLM-authored remediation prompts per finding (default: true)
   notifications:
     pr_comment: true
   iterations:

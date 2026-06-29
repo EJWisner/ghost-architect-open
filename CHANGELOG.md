@@ -5,6 +5,356 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.3.6] - 2026-06-29
+
+### Added
+
+- **Token and cost telemetry in the Ghost Watcher™ writer.**
+  All batch paths (Blast Radius, Conflict Detection, detailed prompts,
+  and resume) now record `inputTokens`, `outputTokens`, and
+  `estimatedCostUsd` at Anthropic batch API rates ($1.50 input /
+  $7.50 output per 1M tokens). Unit tests added for `buildTokenUsage`
+  and `sumBatchUsage`.
+
+## [9.3.5] - 2026-06-28
+
+### Fixed
+
+- **Ghost Watcher™ PR comments are now fully markdown-escaped.**
+  Finding titles and branch names can no longer inject markdown into
+  GitHub PR comments.
+
+### Maintenance
+
+- Versions 9.3.2, 9.3.3, and 9.3.4 were release-sync bumps with no
+  functional changes (version string and README hero line only).
+
+## [9.3.1] - 2026-06-26
+
+### Added
+
+- **Ghost Watcher™ email notifications.**
+  Ghost Watcher™ now emails the customer after every scan. A findings
+  email reports per-finding detail (severity badge, title, affected
+  files, description) plus a severity summary (critical / high /
+  medium / low counts). A clean-scan email confirms when a commit
+  produced zero findings. Both emails are fire-and-forget and never
+  block the CI pipeline.
+
+## [9.3.0] - 2026-06-26
+
+### Added
+
+- **Streaming vs Batch transport menu.**
+  Every scan mode that calls the Anthropic API now opens with a
+  cost-aware choice: run live (streaming) for real-time results, or
+  submit to the Message Batches API for half-price processing
+  retrieved when ready. The menu shows loaded file count, a token
+  estimate, and streaming vs batch cost side by side. `--stream` and
+  `--batch` skip the menu; CI and Ghost Watcher™ runs default to batch.
+
+- **Batch retrieval commands.**
+  `ghost batch-status` lists every pending batch and whether it is
+  ready. `ghost batch-retrieve <id>` pulls a finished batch and
+  produces the same report files a live run would have.
+
+- **Dynamic pending-batch menu rows.**
+  The main menu injects a row per pending batch, grayed out while
+  processing and selectable once ready.
+
+- **Transport metadata in every artifact.**
+  The `findings.json` sidecar carries a transport block (method,
+  timestamps, version), and the PDF, Markdown, TXT, and Ghost Brief™
+  HTML each carry a one-line transport footer.
+
+- **Question mode batch support.**
+  Question mode joins Blast Radius in supporting the transport menu,
+  batch submission, and batch retrieval.
+
+### Fixed
+
+- **Deterministic output.**
+  Every Anthropic call site now sets temperature 0, so repeated scans
+  of the same codebase produce consistent results.
+
+- **Setup wizard tier cap.**
+  The first-run wizard now defaults context size to the actual tier
+  cap (Open 50K, Pro 100K, Team 150K, Enterprise 200K) instead of a
+  hardcoded 50K, sourced from the single canonical tier-cap table.
+
+- **Accurate source identity.**
+  The loader records the source of every scan (ZIP path for archive
+  loads, owner and repo for GitHub loads), and batch repository names
+  are derived from the git remote origin rather than the current
+  directory name.
+
+## [9.2.3] - 2026-06-25
+
+### Fixed
+
+- **Ghost Brief™ generates after batch Blast Radius.**
+  Raw batch output is now passed through the narrator before finding
+  extraction, replicating the old streaming path. Ghost Brief™
+  receives findings with populated file arrays and generates prompts
+  correctly.
+
+## [9.2.2] - 2026-06-25
+
+### Fixed
+
+- **Replaced Anthropic SDK batch transport with native fetch.**
+  The SDK's internal HTTP client drops connections on GitHub Actions
+  runners when calling `/v1/messages/batches`. Native Node.js fetch
+  succeeds reliably. All four batch operations (submit, poll, cancel,
+  preflight) now use native fetch directly.
+
+## [9.2.1] - 2026-06-25
+
+### Added
+
+- **Preflight reachability check.**
+  Before uploading the full codebase context, Ghost Watcher™ sends a
+  tiny 1-token test batch to verify the Anthropic Batches API is
+  reachable. If unreachable, the run exits cleanly with a clear
+  diagnostic instead of burning a 0.6MB upload.
+
+- **Body size logging.**
+  The batch request body size is logged on every submission so CI
+  logs show the real payload size.
+
+### Fixed
+
+- **submitBatch retry with backoff.**
+  Batch submissions now retry up to 4 times with exponential backoff
+  (2s, 4s, 8s) on transient connection errors (Premature close,
+  ECONNRESET, socket hang up).
+
+## [9.2.0] - 2026-06-25
+
+### Added
+
+- **Anthropic Message Batches API.**
+  Ghost Watcher™ submits Blast Radius and Conflict Detection scans as
+  async batch requests processed server-side. No streaming connection
+  to drop, no Premature close errors regardless of codebase size.
+
+- **Auto-resume.**
+  If a GitHub Actions job is interrupted before results arrive, Ghost
+  Watcher™ automatically retrieves and delivers the results on the
+  next commit push.
+
+- **Incomplete run emails.**
+  When a run is interrupted, the customer receives an email explaining
+  what happened and confirming results will be delivered automatically.
+
+- **Resume notification emails.**
+  When Ghost Watcher™ detects and resumes an incomplete scan, the
+  customer receives emails at resume-detected and resume-complete
+  milestones.
+
+- **Pending portal state.**
+  Ghost Portal™ shows a pending entry immediately when a batch is
+  submitted, rather than silence while processing.
+
+- **Configurable batch settings.**
+  Poll interval and timeout are controllable via the `batch` section
+  of `ghost-watcher.yaml`.
+
+### Fixed
+
+- **GitHub Actions timeout raised to 90 minutes** to accommodate the
+  batch polling window.
+
+## [9.1.4] - 2026-06-25
+
+### Fixed
+
+- **Premature close on Blast Radius and Conflict Detection in CI.**
+  All three Anthropic API stream calls in the analyst are switched to
+  non-streaming (`stream: false`) in CI environments, eliminating
+  mid-response stream closure on large context windows. Local dev
+  still uses streaming.
+
+## [9.1.3] - 2026-06-25
+
+### Fixed
+
+- **Premature close in CI.**
+  Ghost Watcher™ now detects CI environments and switches to
+  non-streaming API calls (`stream: false`), eliminating stream
+  timeouts on large context windows (150K Team, 200K Enterprise).
+  Local dev still uses streaming.
+
+## [9.1.2] - 2026-06-25
+
+### Fixed
+
+- **Ghost Watcher™ CI context cap.**
+  Team tier now uses 150K tokens in CI (was incorrectly clamped to
+  the 50K Open default). Enterprise now uses 200K. Added an
+  `ignoreSavedContext` flag to bypass stale configstore values on
+  ephemeral CI runners.
+
+- **Stream retry on transient errors.**
+  Premature close, ECONNRESET, and socket hang up errors now retry up
+  to 2 times with exponential backoff before failing, reducing false
+  zero-findings runs caused by network blips in CI.
+
+### Maintenance
+
+- Version 9.1.1 was a Ghost Watcher™ validation-trigger run with no
+  functional changes.
+
+## [9.1.0] - 2026-06-24
+
+### Fixed
+
+- **Dogfood pass 10.**
+  Ghost Architect™ scanned its own codebase using Ghost Brief™ and
+  fixed 7 issues; Ghost Watcher™ confirmed zero findings after the
+  push. Prompt-injection defense hardened in consultant profile
+  sanitization (Unicode NFC normalization, zero-width rejection,
+  bidirectional override blocking). Temp directory leak in Commit
+  Forecast closed with try-finally cleanup on all exit paths. API
+  error masking in the agent loop fixed (`ok` field added, test
+  coverage added). LLM plan validation now prevents findings from
+  being silently dropped from reports. Manifest concurrent-write race
+  closed with post-write content verification. Audit-log failure
+  threshold lowered from 3 to 1.
+
+## [9.0.8] - 2026-06-23
+
+### Fixed
+
+- Team and Enterprise tiers now correctly apply the 150,000 token
+  context cap in CI.
+- License validation works on ephemeral GitHub Actions runners
+  (fingerprint bypass in CI).
+- Custom branches added in the Enable Watch wizard now correctly
+  appear in the GitHub Actions workflow trigger.
+- PR comment portal link now uses the correct lowercase slug.
+- The Enable Watch wizard version-pins the workflow to the installed
+  Ghost version.
+
+### Maintenance
+
+- Versions 9.0.1 through 9.0.5 were publish and version-sync bumps
+  with no functional changes.
+
+## [9.0.0] - 2026-06-23
+
+### Added
+
+- **Ghost Watcher™, automatic commit monitoring.**
+  A headless CI pipeline that runs inside GitHub Actions. When a
+  developer pushes to GitHub, Ghost Watcher™ analyzes changed files
+  against the full codebase, surfaces findings, generates a Ghost
+  Brief™ prompt pack, pushes results to Ghost Portal™, and posts a PR
+  comment summary. Includes a portal Watch tab, a CLI menu, and a
+  cost estimator. Available on Ghost Team and Ghost Enterprise
+  memberships.
+
+## [8.2.5] - 2026-06-22
+
+### Added
+
+- **Ghost Partner™ Profiles in the top-level menu.**
+  Ghost Partner™ Profile is now accessible from the first Ghost menu
+  with no codebase selection required. Select a profile, activate it
+  for the session, and every scan uses your branding automatically.
+
+### Maintenance
+
+- Versions 8.2.6 and 8.2.7 were version-sync bumps across platforms
+  with no functional changes.
+
+## [8.2.2] - 2026-06-20
+
+### Added
+
+- **White-label branding across all report types.**
+  Ghost Partner™ branding (company name, accent color, footer,
+  confidentiality line) is applied consistently across every report
+  type, not just the PDF.
+
+## [8.2.0] - 2026-06-20
+
+### Added
+
+- **Executive Brief.**
+  A one-page business-intelligence report for non-technical
+  stakeholders: health score 0 to 100, a plain-language executive
+  narrative, a manual vs AI-assisted cost comparison table, and a
+  three-phase remediation sequence. Available on Pro Max, Team Max,
+  and Enterprise Max.
+
+## [8.1.2] - 2026-06-17
+
+### Fixed
+
+- **Ghost Brief™ dogfood pass 4.**
+  Six fixes: prompt injection via consultant profile fields
+  (`narrator.js`), freemium quota bypass closed (`tier-gates.js`),
+  seat registration verification race fixed (`enterprise.js`), silent
+  Tier 2 detector failures now surface to stderr, GitHub Enterprise
+  Server URL parsing fixed for team-sync, and GitHub API rate-limit
+  retry with user-facing progress messages plus a continue/stop prompt.
+
+### Maintenance
+
+- Versions 8.1.3 through 8.1.9 were version-sync bumps with no
+  functional changes.
+
+## [8.1.0] - 2026-06-17
+
+### Fixed
+
+- **Ghost Brief™ dogfood passes 1 and 2.**
+  Ghost Architect™ scanned its own codebase using Ghost Brief™ and
+  Claude Code fixed 19 findings across two iterative passes. Zero
+  critical findings remaining. Test suite expanded with 4 new smoke
+  test files.
+
+## [8.0.3] - 2026-06-17
+
+### Changed
+
+- **Ghost Brief™ prompt quality overhaul.**
+  Prompts now include full remediation context, fix steps,
+  constraints, confidence score, and effort estimate extracted
+  directly from scan findings. Validation hints are now
+  finding-specific.
+
+## [8.0.2] - 2026-06-16
+
+### Added
+
+- **Ghost Brief™.**
+  Convert any Ghost scan into a validated, blast-radius-aware Claude
+  Code prompt pack. Ghost reads the findings JSON, converts each
+  finding into a structured prompt with blast-radius ordering,
+  validation hints, and file context, and writes `ghost-brief.json`
+  to disk. Feed it into Claude Code, Cursor, or Copilot. If Ghost
+  Portal™ is configured, the Brief is pushed automatically. Requires
+  Ghost Pro Max or higher.
+
+## [8.0.0] - 2026-06-16
+
+### Added
+
+- **Ghost Brief™ launch.**
+  First release of the Ghost Brief™ prompt-pack pipeline. Initial
+  `--brief --input=<path>` flag and post-scan menu entry land here;
+  the prompt-quality overhaul follows in 8.0.3.
+
+## [7.2.0] - 2026-06-04
+
+### Notes
+
+- Working-session rollup bump. No standalone changelog content was
+  authored for this version; functional changes are captured in the
+  surrounding 7.1.x and 8.0.x entries.
+
 ## [7.1.0] - 2026-05-29
 
 ### Added
