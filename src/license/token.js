@@ -35,7 +35,7 @@ const TRIAL_HEADER = { v: 1, t: 'ghost-trial' };
 const TRIAL_HEADER_JSON = JSON.stringify(TRIAL_HEADER);
 const TRIAL_HEADER_B64 = Buffer.from(TRIAL_HEADER_JSON, 'utf8').toString('base64url');
 
-const VALID_TIERS = new Set(['pro', 'team', 'enterprise', 'trial']);
+const VALID_TIERS = new Set(['pro', 'team', 'enterprise', 'trial', 'pro-max', 'team-max', 'enterprise-max']);
 
 function isIsoUtc(s) {
   if (typeof s !== 'string') return false;

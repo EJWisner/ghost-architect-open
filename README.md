@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.3.9** Add Max tier support to CLI license parser and token validator. Pro Max, Team Max, and Enterprise Max licenses now activate correctly via ghost --activate.
+
 **v9.3.8** Wire Ghost Brief tier gate (Max-tier only: pro-max, team-max, enterprise-max). Wire conflict_verify verifier in Ghost Watcher (opt-in, quick mode, drops false positives). Refactor redactor.js PEM replacement strings to named constants. Fix buildTokenUsage to derive batch rates from estimator.js pricing table. Add detailed_prompts to ghost-watcher.yaml config.
 
 **v9.3.7** Fix Max-tier context caps (Pro Max/Team Max/Enterprise Max now correctly get 100K/150K/200K tokens). Remove iteration limit from Ghost Watcher (no-config = no limit, opt-in only). Extract shouldSkipForIterationLimit as exported pure helper with full test coverage. Fix FREE_QUOTA duplication in freemium.js.

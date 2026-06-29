@@ -5,7 +5,7 @@
 // Surface shape:  GA-2026-PRO-X7K9-M2P4-Q8R3
 //                 ^^ ^^^^ ^^^ ^^^^^^^^^^^^ checksum is last char
 //                 |  |    |   `payload (12 chars, last is checksum)
-//                 |  |    `tier (PRO/TEM/ENT)
+//                 |  |    `tier (PRO/TEM/ENT/PMX/TMX/EMX)
 //                 |  `year (4 digits)
 //                 `brand prefix
 //
@@ -19,7 +19,28 @@
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ALPHABET_SET = new Set(ALPHABET.split(''));
 
-const VALID_TIERS = new Set(['PRO', 'TEM', 'ENT']);
+// Bidirectional tier mappings — single source of truth for the two tier
+// vocabularies. CODE_TO_TIER maps the 3-char key code to the canonical tier
+// string used everywhere else (token payload, tier-gates); TIER_TO_CODE is
+// the inverse. Mirror of the maps in the license worker; keep them in lockstep
+// so a tier added in one place doesn't silently break parsing in the other.
+const CODE_TO_TIER = {
+  PRO: 'pro',
+  TEM: 'team',
+  ENT: 'enterprise',
+  PMX: 'pro-max',
+  TMX: 'team-max',
+  EMX: 'enterprise-max',
+};
+const TIER_TO_CODE = {
+  pro: 'PRO',
+  team: 'TEM',
+  enterprise: 'ENT',
+  'pro-max': 'PMX',
+  'team-max': 'TMX',
+  'enterprise-max': 'EMX',
+};
+const VALID_TIERS = new Set(Object.keys(CODE_TO_TIER));
 
 // Mod-32 checksum over the data chars. Each char maps to its index in the
 // alphabet, sum mod 32 gives the checksum char.
@@ -111,11 +132,13 @@ export function parseKey(input) {
   // 3-char codes (PRO/TEM/ENT) for typing-friendliness; everywhere else uses
   // full names. Inconsistency here previously caused parseKey('GA-...-ENT-...')
   // to return tier='ent' which doesn't match the token payload vocabulary.
-  const tierLower = tier.toLowerCase();
-  const tierNormalized =
-    tierLower === 'tem' ? 'team' :
-    tierLower === 'ent' ? 'enterprise' :
-    tierLower; // 'pro' stays 'pro'
+  const tierNormalized = CODE_TO_TIER[tier];
+  if (!tierNormalized) {
+    // Unreachable in practice — VALID_TIERS.has(tier) was checked above — but
+    // guard explicitly so a code added to one map and not the other fails loud
+    // here instead of leaking an unmapped tier downstream. No silent fallthrough.
+    throw new Error(`Unmapped tier code: ${tier}`);
+  }
 
   return {
     brand,

@@ -5,6 +5,28 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.3.9] - 2026-06-29
+
+### Fixed
+
+- **Max tier licenses now activate via the CLI.** The license worker
+  understood the Max tiers (`pro-max`, `team-max`, `enterprise-max`), but the
+  CLI's local parser and token validator did not, so `ghost --activate` on a
+  Max key (e.g. `GA-2026-TMX-...`) failed with "Token must have 3 parts, got 1":
+  `tryParseKey()` rejected the unknown `PMX`/`TMX`/`EMX` segment, and the key
+  fell through to the signed-token path. Two fixes:
+  - `src/license/format.js` now recognizes the `PMX`/`TMX`/`EMX` key codes via
+    bidirectional `CODE_TO_TIER`/`TIER_TO_CODE` maps (mirroring the license
+    worker), replacing the hand-rolled tier-normalization ternary. Unmapped
+    codes now throw instead of silently falling through.
+  - `src/license/token.js` adds `pro-max`, `team-max`, `enterprise-max` to the
+    token payload's valid-tier set, so the signed token returned by the
+    activation server passes local verification.
+
+  Tier gating (`tier-gates.js`), context caps (`loader/tierCaps.js`), and
+  session resolution already supported the Max tiers; only the parser and
+  validator were missing.
+
 ## [9.3.8] - 2026-06-29
 
 ### Changed
