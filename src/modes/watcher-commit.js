@@ -885,6 +885,32 @@ function buildSeverityCounts(findings) {
   };
 }
 
+// Sum input/output tokens across a pollBatch() result array. Any missing or
+// malformed usage is treated as 0 so a result without usage never yields NaN.
+function sumBatchUsage(results) {
+  let inputTokens = 0, outputTokens = 0;
+  for (const r of (results || [])) {
+    const u = r?.usage;
+    inputTokens  += Number(u?.input_tokens)  || 0;
+    outputTokens += Number(u?.output_tokens) || 0;
+  }
+  return { inputTokens, outputTokens };
+}
+
+// Build the tokenUsage payload. The watcher runs every scan through the
+// Anthropic Message Batches API, which bills at 50% of standard rates. For
+// claude-sonnet-4-6 (the watcher default) that is $1.50/1M input and
+// $7.50/1M output (standard $3.00/$15.00, halved). Cost rounded to 6 dp.
+function buildTokenUsage(inputTokens, outputTokens) {
+  const inCost  = (inputTokens  / 1_000_000) * 1.50;
+  const outCost = (outputTokens / 1_000_000) * 7.50;
+  return {
+    inputTokens,
+    outputTokens,
+    estimatedCostUsd: Math.round((inCost + outCost) * 1e6) / 1e6,
+  };
+}
+
 // ── Direct PR comment (resume + immediate "analyzing" notice) ──────────────────
 //
 // Posts a fresh comment to a specific PR number. Used for the immediate
@@ -1083,6 +1109,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
               pollIntervalMs: 10000, timeoutMs: 60000,
               onProgress: (p) => console.log(`Ghost Watcher: prompts resume check — ${p.status}`),
             });
+            const promptUsage = sumBatchUsage(promptResults);
 
             const enriched = enrichFindingsWithPrompts(pending.findings || [], promptResults);
 
@@ -1124,6 +1151,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
               findings: [], findingCount: pending.findingCount ?? (pending.findings || []).length,
               severity: pending.severity || { critical: 0, high: 0, medium: 0, low: 0 },
               prompts: promptCount,
+              tokenUsage: buildTokenUsage(promptUsage.inputTokens, promptUsage.outputTokens),
             });
 
             if (pending.prNumber) {
@@ -1155,6 +1183,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
             timeoutMs: 60000,
             onProgress: (p) => console.log(`Ghost Watcher: resume check — ${p.status}`),
           });
+          const resumeUsage = sumBatchUsage(resumeResults);
 
           // Extract findings from the resumed result by scan type.
           const rawText = resumeResults[0]?.text || '';
@@ -1181,6 +1210,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
             findingCount: pendingFindings.length,
             severity: sev,
             prompts: 0,
+            tokenUsage: buildTokenUsage(resumeUsage.inputTokens, resumeUsage.outputTokens),
           });
 
           // Update the PR comment on the ORIGINAL PR with the real findings.
@@ -1274,6 +1304,11 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
   let blastFindings  = [];
   let blastFileCount = 0;
 
+  // Running token totals across every batch in this commit run (blast, conflict,
+  // detailed prompts). Treated as 0 for any result that carries no usage.
+  let totalInputTokens  = 0;
+  let totalOutputTokens = 0;
+
   if (watchConfig.scans?.blast_radius !== false) {
     console.log('Ghost Watcher: running Blast Radius (batch)...');
     let blastBatchId = null;
@@ -1330,10 +1365,10 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
         // every finding. blastFileCount is computed from the narrated findings.
         blastFindings  = await blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, codebaseContext });
         blastFileCount = blastFindings.reduce((acc, f) => acc + (f.files?.length || 0), 0);
-        if (blastResults[0]?.usage) {
-          const u = blastResults[0].usage;
-          console.log(`Ghost Watcher: Blast Radius tokens — in ${u.input_tokens ?? 0}, out ${u.output_tokens ?? 0}`);
-        }
+        const blastUsage = sumBatchUsage(blastResults);
+        totalInputTokens  += blastUsage.inputTokens;
+        totalOutputTokens += blastUsage.outputTokens;
+        console.log(`Ghost Watcher: Blast Radius tokens — in ${blastUsage.inputTokens}, out ${blastUsage.outputTokens}`);
         await clearPendingBatch(octokitPortal, portalRepoPath, blastBatchId);
         console.log(`Ghost Watcher: Blast Radius complete — ${blastFindings.length} findings\n`);
       } catch (err) {
@@ -1391,6 +1426,9 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
         });
         const rawConflictOutput = conflictResults[0]?.text || '';
         conflictFindings = extractCandidates([rawConflictOutput]).map(normalizeCandidateToFinding);
+        const conflictUsage = sumBatchUsage(conflictResults);
+        totalInputTokens  += conflictUsage.inputTokens;
+        totalOutputTokens += conflictUsage.outputTokens;
         await clearPendingBatch(octokitPortal, portalRepoPath, conflictBatchId);
         console.log(`Ghost Watcher: Conflict Detection complete — ${conflictFindings.length} findings\n`);
       } catch (err) {
@@ -1460,6 +1498,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
       message: 'Ghost Watcher™ analysis complete.',
       findings: allFindings, findingCount: allFindings.length,
       severity: sevAll, prompts: briefPromptCount,
+      tokenUsage: buildTokenUsage(totalInputTokens, totalOutputTokens),
     });
   }
   // A completed run resets the consecutive-incomplete-run counter.
@@ -1544,6 +1583,9 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
           pollIntervalMs, timeoutMs,
           onProgress: (p) => console.log(`Ghost Watcher: detailed prompts — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
         });
+        const promptUsage = sumBatchUsage(promptResults);
+        totalInputTokens  += promptUsage.inputTokens;
+        totalOutputTokens += promptUsage.outputTokens;
 
         enrichFindingsWithPrompts(adaptedFindings, promptResults);
 
@@ -1623,6 +1665,7 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
         briefPromptCount,
         findings:    allFindings,
         brief:       brief || null,
+        tokenUsage:  buildTokenUsage(totalInputTokens, totalOutputTokens),
       };
 
       // Push findings JSON
