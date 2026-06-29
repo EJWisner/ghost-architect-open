@@ -2147,7 +2147,7 @@ async function main() {
     // when Question mode launched as the Open-tier Q&A surface). Question,
     // recon, compare, dashboard — free across all tiers.
     // commit-forecast is handled separately below (uses its own forecast-quota gate).
-    if (['chat', 'poi', 'blast', 'conflict', 'audit'].includes(mode)) {
+    if (['chat', 'poi', 'blast', 'conflict', 'audit', 'ghost-brief'].includes(mode)) {
       const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
       if (!verdict.allowed) {
         renderPaywall(verdict.paywall, promos.paywallPromo);

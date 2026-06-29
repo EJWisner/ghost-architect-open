@@ -30,6 +30,7 @@ import { normalizeCandidateToFinding, extractCandidates } from '../core/conflict
 import { narrateReport } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
 import { pingWatcherRun } from '../telemetry/pulse.js';
+import { requireTier } from '../license/tier-gates.js';
 import { buildSystemBlast } from '../../prompts/index.js';
 import { buildSystemConflict, buildConflictPrompt } from '../../prompts/conflict.js';
 import {
@@ -955,7 +956,7 @@ async function postCommentToPR(repoPath, prNumber, body) {
  * Entry point for `ghost --watcher-commit`.
  * Orchestrates the full Watch pipeline. Always exits 0.
  */
-export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) {
+export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) {
   const repoRoot = process.cwd();
 
   console.log(`\n👻 Ghost Watcher™ v${version} — Commit Analysis`);
@@ -1476,12 +1477,24 @@ export async function runWatchCommit({ tier = 'team', version = '9.0.0' } = {}) 
 
   console.log(`Ghost Watcher: ${allFindings.length} total findings (blast: ${blastFindings.length}, conflict: ${conflictFindings.length})\n`);
 
-  // ── Step 8: Ghost Brief ──────────────────────────────────────────────────
+  // ── Step 8: Ghost Brief (Max-tier gated) ─────────────────────────────────
+  // Ghost Brief is a Max-tier artifact (pro-max / team-max / enterprise-max).
+  // requireTier('mode:ghost-brief') is the single source of truth. Non-Max
+  // tiers skip both the basic brief AND Step 8e: Step 8e's only output is the
+  // regenerated brief, and its guard already requires a non-null `brief`, so a
+  // skipped Step 8 leaves `brief` null and Step 8e never runs.
   let brief           = null;
   let briefPromptCount = 0;
   let adaptedFindings  = [];   // hoisted so Step 8e can enrich and regenerate
 
-  if (watchConfig.scans?.ghost_brief !== false && allFindings.length > 0) {
+  const briefTierAllowed = requireTier('mode:ghost-brief', { tier }).allowed;
+  const briefRequested   = watchConfig.scans?.ghost_brief !== false && allFindings.length > 0;
+
+  if (briefRequested && !briefTierAllowed) {
+    console.log('Ghost Watcher: Ghost Brief™ requires Max tier -- skipping brief generation.');
+  }
+
+  if (briefRequested && briefTierAllowed) {
     try {
       const { generateBrief, writeBrief } = await import('../../lib/ghostBrief.js');
 

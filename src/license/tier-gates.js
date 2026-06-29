@@ -59,8 +59,9 @@ const TIER_POLICY = {
   'mode:conflict':         { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   'mode:prompt-triage':    { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   'mode:audit':            { open: false,              trial: false, pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
-  // Ghost Brief: pro-max and above only. Pro and below are blocked.
-  'mode:ghost-brief':      { open: false,              trial: false, pro: false, 'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  // Ghost Brief artifact: Max tiers only (pro-max, team-max, enterprise-max).
+  // Non-Max paid tiers (pro, team, enterprise) are blocked.
+  'mode:ghost-brief':      { open: false,              trial: false, pro: false, 'pro-max': true,  team: false, 'team-max': true,  enterprise: false, 'enterprise-max': true  },
   // Commit Forecast: Open gets 'forecast-quota' — a separate 1-run quota managed
   // by src/freemium.js's getForecastCount/incrementForecastCount (isolated from
   // ghostOpenScanCount so daily pro-tier usage patterns don't burn the shared

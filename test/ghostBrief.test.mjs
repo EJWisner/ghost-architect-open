@@ -210,9 +210,9 @@ ok("'mode:ghost-brief' exists in TIER_POLICY", ghostBriefPolicy !== undefined);
 check('open         tier → false', ghostBriefPolicy?.open,              false);
 check('pro          tier → false', ghostBriefPolicy?.pro,               false);
 check('pro-max           → true',  ghostBriefPolicy?.['pro-max'],       true);
-check('team         tier → true',  ghostBriefPolicy?.team,              true);
+check('team         tier → false', ghostBriefPolicy?.team,              false);
 check('team-max          → true',  ghostBriefPolicy?.['team-max'],      true);
-check('enterprise   tier → true',  ghostBriefPolicy?.enterprise,        true);
+check('enterprise   tier → false', ghostBriefPolicy?.enterprise,        false);
 check('enterprise-max    → true',  ghostBriefPolicy?.['enterprise-max'], true);
 
 // Verify via requireTier() with tier override
@@ -228,9 +228,9 @@ check('enterprise-max    → true',  ghostBriefPolicy?.['enterprise-max'], true)
   check('requireTier: open          → allowed=false', openVerdict.allowed,          false);
   check('requireTier: pro           → allowed=false', proVerdict.allowed,           false);
   check('requireTier: pro-max       → allowed=true',  proMaxVerdict.allowed,        true);
-  check('requireTier: team          → allowed=true',  teamVerdict.allowed,          true);
+  check('requireTier: team          → allowed=false', teamVerdict.allowed,          false);
   check('requireTier: team-max      → allowed=true',  teamMaxVerdict.allowed,       true);
-  check('requireTier: enterprise    → allowed=true',  enterpriseVerdict.allowed,    true);
+  check('requireTier: enterprise    → allowed=false', enterpriseVerdict.allowed,    false);
   check('requireTier: enterprise-max→ allowed=true',  enterpriseMaxVerdict.allowed, true);
 }
 
