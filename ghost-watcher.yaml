@@ -3,7 +3,10 @@ ghost_watcher:
   enabled: true
   trigger:
     branches:
+      - main
+      - develop
       - feature/**
+      - bugfix/**
       - v7-unified
   scans:
     blast_radius: true
