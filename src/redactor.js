@@ -15,6 +15,12 @@ import chalk from 'chalk';
 
 const SIZE_GUARD_BYTES = 500_000; // ~500KB; above this, regex rules are skipped (ReDoS protection)
 
+// Placeholders written in place of redacted PEM blocks. Kept here as named
+// constants — well away from the PEM marker strings in the variants array — so
+// the marker/replacement roles are never visually conflated.
+const PRIVATE_KEY_REPLACEMENT = '[REDACTED:PRIVATE_KEY_BLOCK]';
+const CERTIFICATE_REPLACEMENT = '[REDACTED:CERTIFICATE_BLOCK]';
+
 
 // ── Stateful parsers for complex patterns (immune to ReDoS) ──────────────────
 
@@ -63,13 +69,13 @@ function parsePrivateKeyBlocks(content) {
   ];
   let result = content;
   for (const { begin, end } of variants) {
-    result = parseKeyBlocks(result, begin, end, '[REDACTED:PRIVATE_KEY_BLOCK]');
+    result = parseKeyBlocks(result, begin, end, PRIVATE_KEY_REPLACEMENT);
   }
   return result;
 }
 
 function parseCertificateBlocks(content) {
-  return parseKeyBlocks(content, '-----BEGIN CERTIFICATE-----', '-----END CERTIFICATE-----', '[REDACTED:CERTIFICATE_BLOCK]');
+  return parseKeyBlocks(content, '-----BEGIN CERTIFICATE-----', '-----END CERTIFICATE-----', CERTIFICATE_REPLACEMENT);
 }
 
 // ── Regex timeout wrapper (Finding 15 - ReDoS protection) ──────────────────

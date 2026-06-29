@@ -5,6 +5,49 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.3.8] - 2026-06-29
+
+### Changed
+
+- **Ghost Brief™ tier gate now enforced, Max tiers only.**
+  `mode:ghost-brief` was defined in `TIER_POLICY` but never consulted,
+  so every tier (including Open) could generate a Ghost Brief. The gate
+  is now wired at the interactive dispatch in `bin/ghost.js` and in the
+  Ghost Watcher pipeline (`src/modes/watcher-commit.js`), and the policy
+  is restricted to the Max tiers: `pro-max`, `team-max`, `enterprise-max`.
+  Non-Max tiers skip both the basic brief and the Step 8e detailed
+  prompts, since the detailed-prompts step only re-generates the brief.
+
+- **Redactor PEM replacement strings extracted to named constants.**
+  `PRIVATE_KEY_REPLACEMENT` and `CERTIFICATE_REPLACEMENT` are now defined
+  at the top of `src/redactor.js`, separated from the PEM marker strings
+  in the variants array. Behavior is unchanged; redaction output is
+  identical.
+
+### Added
+
+- **`conflict_verify` verifier wired into Ghost Watcher™.**
+  When `scans.conflict_verify: true` in `ghost-watcher.yaml`, conflict
+  candidates run through the same agent verifier the interactive Conflict
+  mode uses, in `quick` mode (single call per candidate, headless-safe).
+  CONFIRMED and POSSIBLE findings are kept; FALSE_POSITIVE and
+  INSUFFICIENT are dropped before findings reach the report. Opt-in and
+  default-off; with no config, conflict findings flow through unchanged.
+
+- **`detailed_prompts` key in `ghost-watcher.yaml`.**
+  Documents the existing Step 8e behavior (LLM-authored remediation
+  prompts per finding) as an explicit config key, default `true`.
+
+### Fixed
+
+- **`buildTokenUsage` batch rates derive from the pricing table.**
+  The hardcoded `$1.50`/`$7.50` per-1M batch rates in
+  `src/modes/watcher-commit.js` are replaced with
+  `getPricing('claude-sonnet-4-6')` standard rates from
+  `src/core/estimator.js` multiplied by the `BATCH_DISCOUNT` constant in
+  `src/lib/cost-estimator.js`. Computed values are identical
+  ($1.50/$7.50), now sourced from the single pricing source of truth.
+
 ## [9.3.7] - 2026-06-29
 
 ### Fixed

@@ -31,6 +31,9 @@ import { narrateReport } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
 import { pingWatcherRun } from '../telemetry/pulse.js';
 import { requireTier } from '../license/tier-gates.js';
+import { verifyConflicts } from '../core/agent/verifier.js';
+import { getPricing } from '../core/estimator.js';
+import { BATCH_DISCOUNT } from '../lib/cost-estimator.js';
 import { buildSystemBlast } from '../../prompts/index.js';
 import { buildSystemConflict, buildConflictPrompt } from '../../prompts/conflict.js';
 import {
@@ -918,12 +921,18 @@ export function sumBatchUsage(results) {
 }
 
 // Build the tokenUsage payload. The watcher runs every scan through the
-// Anthropic Message Batches API, which bills at 50% of standard rates. For
-// claude-sonnet-4-6 (the watcher default) that is $1.50/1M input and
-// $7.50/1M output (standard $3.00/$15.00, halved). Cost rounded to 6 dp.
+// Anthropic Message Batches API, which bills at BATCH_DISCOUNT (50%) of
+// standard rates. Standard per-model rates come from getPricing() (the single
+// pricing source of truth); the batch rate is standard * BATCH_DISCOUNT, the
+// same relationship cost-estimator.js uses. Pinned to the watcher-default
+// claude-sonnet-4-6 ($3.00/$15.00 standard → $1.50/$7.50 batch). Cost rounded
+// to 6 dp.
 export function buildTokenUsage(inputTokens, outputTokens) {
-  const inCost  = (inputTokens  / 1_000_000) * 1.50;
-  const outCost = (outputTokens / 1_000_000) * 7.50;
+  const pricing = getPricing('claude-sonnet-4-6');
+  const batchInputRate  = pricing.inputPerM  * BATCH_DISCOUNT;
+  const batchOutputRate = pricing.outputPerM * BATCH_DISCOUNT;
+  const inCost  = (inputTokens  / 1_000_000) * batchInputRate;
+  const outCost = (outputTokens / 1_000_000) * batchOutputRate;
   return {
     inputTokens,
     outputTokens,
@@ -1447,7 +1456,20 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           onProgress: (p) => console.log(`Ghost Watcher: Conflict Detection — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
         });
         const rawConflictOutput = conflictResults[0]?.text || '';
-        conflictFindings = extractCandidates([rawConflictOutput]).map(normalizeCandidateToFinding);
+        let conflictCandidates = extractCandidates([rawConflictOutput]);
+
+        // Optional verifier pass (opt-in via scans.conflict_verify). Runs the
+        // same agent verifier the interactive Conflict mode uses, in 'quick'
+        // mode (single-call per candidate, headless-safe). Keep CONFIRMED +
+        // POSSIBLE; drop FALSE_POSITIVE + INSUFFICIENT.
+        if (watchConfig.scans?.conflict_verify === true && conflictCandidates.length > 0) {
+          console.log(`Ghost Watcher: verifying ${conflictCandidates.length} conflict candidates...`);
+          const vr = await verifyConflicts(conflictCandidates, codebaseContext.fileMap || {}, {}, 'quick', tier);
+          conflictCandidates = [...vr.confirmed, ...vr.possible];
+          console.log(`Ghost Watcher: ${vr.stats.eliminated} false positives eliminated, ${conflictCandidates.length} kept\n`);
+        }
+
+        conflictFindings = conflictCandidates.map(normalizeCandidateToFinding);
         const conflictUsage = sumBatchUsage(conflictResults);
         totalInputTokens  += conflictUsage.inputTokens;
         totalOutputTokens += conflictUsage.outputTokens;

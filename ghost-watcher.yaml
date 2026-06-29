@@ -10,6 +10,8 @@ ghost_watcher:
     conflict_detection: true
     ghost_brief: true
     conflict_verify: false
+    # Generate LLM-authored remediation prompts per finding (default: true)
+    detailed_prompts: true
   batch:
     poll_interval_seconds: 30
     timeout_minutes: 90
