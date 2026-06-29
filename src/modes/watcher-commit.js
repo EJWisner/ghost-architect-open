@@ -887,7 +887,7 @@ function buildSeverityCounts(findings) {
 
 // Sum input/output tokens across a pollBatch() result array. Any missing or
 // malformed usage is treated as 0 so a result without usage never yields NaN.
-function sumBatchUsage(results) {
+export function sumBatchUsage(results) {
   let inputTokens = 0, outputTokens = 0;
   for (const r of (results || [])) {
     const u = r?.usage;
@@ -901,7 +901,7 @@ function sumBatchUsage(results) {
 // Anthropic Message Batches API, which bills at 50% of standard rates. For
 // claude-sonnet-4-6 (the watcher default) that is $1.50/1M input and
 // $7.50/1M output (standard $3.00/$15.00, halved). Cost rounded to 6 dp.
-function buildTokenUsage(inputTokens, outputTokens) {
+export function buildTokenUsage(inputTokens, outputTokens) {
   const inCost  = (inputTokens  / 1_000_000) * 1.50;
   const outCost = (outputTokens / 1_000_000) * 7.50;
   return {

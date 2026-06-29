@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.3.6** Add token/cost telemetry to Ghost Watcher writer. All batch paths (blast, conflict, prompts, resume) now record inputTokens, outputTokens, and estimatedCostUsd at Anthropic batch API rates ($1.50/$7.50 per 1M tokens). Unit tests added for buildTokenUsage and sumBatchUsage.
+
 **v9.3.5** Ghost Watcher™ PR comments are now fully markdown-escaped. Finding titles and branch names can no longer inject markdown into GitHub PR comments.
 
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
