@@ -44,6 +44,7 @@ import boxen from 'boxen';
 // FORECAST_QUOTA is owned by tier-gates.js (the policy source of truth).
 // Imported here so renderForecastPaywall copy stays in sync without duplicating
 // the constant. tier-gates never imports freemium — no circular dependency.
+import { SCAN_QUOTA } from './license/tier-gates.js';
 import { FORECAST_QUOTA } from './license/tier-gates.js';
 import { FIX_FORECAST_QUOTA } from './license/tier-gates.js';
 
@@ -86,12 +87,9 @@ const MODE_TO_PREFIX = {
   'prompt-triage': 'ghost-prompt-triage',
 };
 
-// Per D1 (locked 2026-05-23): bumped from 2 to 4 free saved reports. The
-// SCAN_QUOTA constant in src/license/tier-gates.js MUST stay in sync with
-// this value. Both live with the value 4; tier-gates is the policy source
-// of truth, this is the legacy backward-compat reference used by the quota
-// paywall copy below.
-export const FREE_QUOTA = 4;
+// Per D1 (locked 2026-05-23): the free saved-report quota is 4. The value
+// lives in src/license/tier-gates.js as SCAN_QUOTA (the policy source of
+// truth) and is imported above; the quota paywall copy below references it.
 
 function getStore() {
   return new Configstore(CONFIGSTORE_NAME);
@@ -248,7 +246,7 @@ export function shouldBlockMode(modeId) {
   if (!prefix) return { block: false };
   // Counted modes hit the quota gate.
   const count = getScanCount();
-  if (count >= FREE_QUOTA) {
+  if (count >= SCAN_QUOTA) {
     return { block: true, reason: 'quota' };
   }
   return { block: false };
@@ -289,7 +287,7 @@ export function renderAuditPaywall(paywallPromo = '') {
 // paywallPromo is worker-driven; when empty the promo block is not rendered.
 export function renderQuotaPaywall(paywallPromo = '') {
   const lines = [
-    chalk.yellow.bold(`You've used your ${FREE_QUOTA} free Ghost Architect reports.`),
+    chalk.yellow.bold(`You've used your ${SCAN_QUOTA} free Ghost Architect reports.`),
     '',
     chalk.white('Upgrade to keep going: unlimited reports, all modes'),
     chalk.white('including Inheritance Audit, hardware-bound license,'),

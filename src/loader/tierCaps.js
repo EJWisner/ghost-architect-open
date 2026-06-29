@@ -10,6 +10,14 @@ export const TIER_CAPS = {
   pro: 100000,
   team: 150000,
   enterprise: 200000,
+  // Max tiers share the context cap of their base tier (the Max upgrade adds
+  // Ghost Brief / Unified Brief / co-engagement, not context). These keys must
+  // exist explicitly: getActiveTier() returns the raw license tier string
+  // ('pro-max', etc.), so without them getTierCap() falls back to Open's 50K
+  // and silently under-caps paying Max customers.
+  'pro-max': 100000,
+  'team-max': 150000,
+  'enterprise-max': 200000,
 };
 
 const UPGRADE_HINTS = {
@@ -17,12 +25,15 @@ const UPGRADE_HINTS = {
   pro: 'Upgrade to Team for 150K or Enterprise for 200K.',
   team: 'Upgrade to Enterprise for 200K.',
   enterprise: null,
+  'pro-max': 'Upgrade to Team for 150K or Enterprise for 200K.',
+  'team-max': 'Upgrade to Enterprise for 200K.',
+  'enterprise-max': null,
 };
 
 /**
  * Resolve the effective context cap for this run.
  *
- * @param {string} tier - 'open' | 'pro' | 'team' | 'enterprise'
+ * @param {string} tier - 'open' | 'pro' | 'pro-max' | 'team' | 'team-max' | 'enterprise' | 'enterprise-max'
  * @param {number|null|undefined} userRequested - value from --max-context, or null/undefined
  * @param {'cli'|'config'|'default'} [source='cli'] - where userRequested came from.
  *   'cli' = --max-context flag (the visible user action).
