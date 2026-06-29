@@ -63,7 +63,7 @@ import {
   getLicenseRecord,
 } from '../src/license/store.js';
 import { setActiveLicense, getActiveTier } from '../src/license/session.js';
-import { requireTier } from '../src/license/tier-gates.js';
+import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
 import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
 
 // Activation server endpoint. Hardcoded so customers can't be tricked into
@@ -86,12 +86,12 @@ const VERSION   = _require('../package.json').version;
 let TIER = 'open';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
-// The Max tiers. Single source of truth for Max-only feature gates (Ghost
-// Brief, Executive Brief), kept in lockstep with the 'mode:ghost-brief' policy
-// in src/license/tier-gates.js. Previously two divergent BRIEF_TIERS arrays
-// here wrongly included non-Max 'team'/'enterprise', letting them generate
-// briefs the tier-gates policy and the docs both block.
-const MAX_TIERS = ['pro-max', 'team-max', 'enterprise-max'];
+// The Max tiers, derived directly from the 'mode:ghost-brief' policy in
+// src/license/tier-gates.js so there is exactly ONE source of truth. Previously
+// a hardcoded array here drifted from the policy (two divergent BRIEF_TIERS
+// wrongly included non-Max 'team'/'enterprise'); deriving makes that drift
+// impossible — this list IS the set of tiers the policy allows Ghost Brief.
+const MAX_TIERS = allowedTiers('mode:ghost-brief');
 
 // ── CLI argument parsing ────────────────────────────────────────────────────
 // Supports:

@@ -248,5 +248,23 @@ export function paywallFor(gateId, tier) {
   return { kind: 'unknown', gateId, tier };
 }
 
+/**
+ * Return the list of tiers explicitly allowed (verdict === true) for a gate.
+ * The single source of truth for "which tiers can do X" — callers derive their
+ * tier lists from this instead of hardcoding a parallel array that can drift
+ * from TIER_POLICY. Quota verdicts ('quota', 'forecast-quota', etc.) are not
+ * `true`, so they are excluded; this returns only the unconditionally-allowed
+ * tiers. Unknown gate ids yield an empty list.
+ *
+ * @param {string} gateId  e.g. 'mode:ghost-brief'
+ * @returns {string[]} tiers whose policy verdict is exactly true
+ */
+export function allowedTiers(gateId) {
+  const policy = TIER_POLICY[gateId] || {};
+  return Object.entries(policy)
+    .filter(([, v]) => v === true)
+    .map(([t]) => t);
+}
+
 // Exported for tests. Not part of the public CLI surface.
 export { TIER_POLICY };

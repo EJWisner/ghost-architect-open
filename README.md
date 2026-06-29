@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.3** Fix verified findings leaking into Ghost Brief prompts. @ghost-verified findings now correctly excluded from Ghost Brief and detailed prompt generation. Add allowedTiers() helper to tier-gates.js -- MAX_TIERS in bin/ghost.js now derives from policy instead of a hardcoded array, preventing gate drift. Wire test-loop-api-error.js into CI test suite.
+
 **v9.4.2** Fix GitHub Actions workflow timeout. Template and live workflow timeout raised to 360 minutes (GitHub maximum). The Actions job is no longer the limiting factor -- batch poll timeouts and the store-and-resume logic own time management, preventing unnecessary incomplete-run emails on large codebase scans.
 
 **v9.4.1** Fix Ghost Brief and Executive Brief interactive menu gating. BRIEF_TIERS in bin/ghost.js incorrectly included team and enterprise tiers, allowing non-Max users to run Ghost Brief interactively while Watcher blocked them. Replaced with shared MAX_TIERS constant (pro-max, team-max, enterprise-max) matching tier-gates.js policy. Also fixes Executive Brief which shared the same incorrect gate.

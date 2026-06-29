@@ -1560,9 +1560,13 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
       // Adapt raw findings into Ghost Brief prompt shape via the adapter.
       // Blast findings use fromPOI (same shape); conflict findings use fromConflict.
+      // Build from allFindings (the ACTIVE set), not the raw blast/conflict
+      // arrays — those still contain @ghost-verified findings, which must not
+      // get Ghost Brief prompts generated for them. allFindings carries
+      // source_mode tags from the merge, so split it back by source here.
       adaptedFindings = [
-        ...fromPOI(blastFindings.map(f => ({ ...f, source_mode: 'blast' }))),
-        ...fromConflict(conflictFindings),
+        ...fromPOI(allFindings.filter(f => f.source_mode === 'blast')),
+        ...fromConflict(allFindings.filter(f => f.source_mode === 'conflict')),
       ].filter(f => f.files?.primary?.length > 0);
 
       brief = generateBrief({
@@ -1643,10 +1647,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   if (watchConfig.scans?.detailed_prompts !== false && brief && adaptedFindings.length > 0) {
     console.log('Ghost Watcher: generating detailed remediation prompts (batch)...');
 
-    // Detail lives on the raw findings; map id to detail so each request can
-    // include the finding detail the Ghost Brief adapter dropped.
+    // Detail lives on the findings; map id to detail so each request can
+    // include the finding detail the Ghost Brief adapter dropped. Use
+    // allFindings (active set) so we never carry detail for @ghost-verified
+    // findings, which aren't in adaptedFindings anyway.
     const detailById = new Map(
-      [...blastFindings, ...conflictFindings]
+      allFindings
         .filter(f => f && f.id)
         .map(f => [f.id, f.detail || ''])
     );

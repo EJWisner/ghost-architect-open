@@ -5,6 +5,33 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.3] - 2026-06-29
+
+### Fixed
+
+- **`@ghost-verified` findings no longer get Ghost Brief™ prompts.** Ghost Brief
+  generation (Step 8 of the Ghost Watcher™ pipeline) built its adapted-findings
+  set from the raw blast/conflict arrays, which still contained findings marked
+  `@ghost-verified`. So a finding segregated out of the PR comment and scan file
+  could still have a remediation prompt — and a Step 8e detailed prompt —
+  generated for it, partially defeating the annotation. Both the brief input and
+  the Step 8e `detailById` map now derive from the active finding set
+  (`allFindings`), so verified findings are excluded end to end.
+
+### Changed
+
+- **`MAX_TIERS` in `bin/ghost.js` now derives from policy, eliminating gate
+  drift.** A new `allowedTiers(gateId)` helper in `src/license/tier-gates.js`
+  returns the tiers a gate allows (verdict `=== true`). `bin/ghost.js` now sets
+  `MAX_TIERS = allowedTiers('mode:ghost-brief')` instead of a hardcoded array,
+  so the Ghost Brief / Executive Brief gate can no longer diverge from the
+  `TIER_POLICY` source of truth (the exact drift fixed in 9.4.1).
+
+- **`test-loop-api-error.js` now runs in CI.** The agent-loop API-error test
+  lived at the repo root and was never part of the `npm test` chain. It is moved
+  to `tests/` and wired in as the final test, so the loop's `ok`/`apiError`
+  result contract is now covered.
+
 ## [9.4.2] - 2026-06-29
 
 ### Fixed

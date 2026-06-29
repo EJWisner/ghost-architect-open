@@ -1,6 +1,6 @@
 /**
  * Ghost Architect — Agent Loop API-Error Test
- * Run: node test-loop-api-error.js
+ * Run: node tests/test-loop-api-error.js
  *
  * Verifies that when the agent loop aborts on an API error, the synthesized
  * result reports ok: false and carries the API error message at the top level
@@ -8,8 +8,8 @@
  * calls — it injects a fake client whose messages.create() always throws.
  */
 
-import { runAgentLoop, __setClientFactoryForTest } from './src/core/agent/loop.js';
-import { AgentMemory }                             from './src/core/agent/memory.js';
+import { runAgentLoop, __setClientFactoryForTest } from '../src/core/agent/loop.js';
+import { AgentMemory }                             from '../src/core/agent/memory.js';
 
 const API_ERROR_MESSAGE = 'Injected API failure: 401 Unauthorized';
 
