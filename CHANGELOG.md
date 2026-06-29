@@ -5,6 +5,22 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.2] - 2026-06-29
+
+### Fixed
+
+- **GitHub Actions job timeout no longer cuts off long Ghost Watcher™ runs.**
+  The Actions job `timeout-minutes` was raised to 360 (GitHub's 6-hour maximum)
+  in both the generator template (`src/watch/github-actions-template.yml`) and
+  the live workflow (`.github/workflows/ghost-watcher.yml`). The template was
+  set to 20 minutes and the live workflow to 90 — the latter matched the batch
+  poll budget (`batch.timeout_minutes: 90`) exactly, leaving no headroom for
+  cleanup and result write, so a large-codebase scan could be killed at the
+  finish line and trigger an unnecessary incomplete-run email. The Actions job
+  is now intentionally not the limiting factor: the batch poll timeout and the
+  store-and-resume logic own time management, and on a batch timeout the run is
+  stored and resumed on the next push, so work is never lost.
+
 ## [9.4.1] - 2026-06-29
 
 ### Fixed

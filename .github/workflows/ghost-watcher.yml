@@ -23,7 +23,11 @@ permissions:
 jobs:
   ghost-watcher:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # GitHub Actions maximum (6 hours). The Actions job should never be the
+    # limiting factor — the batch poll timeout (batch.timeout_minutes) and the
+    # store-and-resume logic handle actual time management. On batch timeout the
+    # run is stored and the next push resumes it, so a long batch never loses work.
+    timeout-minutes: 360
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
