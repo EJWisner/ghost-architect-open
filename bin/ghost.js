@@ -86,6 +86,13 @@ const VERSION   = _require('../package.json').version;
 let TIER = 'open';
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
+// The Max tiers. Single source of truth for Max-only feature gates (Ghost
+// Brief, Executive Brief), kept in lockstep with the 'mode:ghost-brief' policy
+// in src/license/tier-gates.js. Previously two divergent BRIEF_TIERS arrays
+// here wrongly included non-Max 'team'/'enterprise', letting them generate
+// briefs the tier-gates policy and the docs both block.
+const MAX_TIERS = ['pro-max', 'team-max', 'enterprise-max'];
+
 // ── CLI argument parsing ────────────────────────────────────────────────────
 // Supports:
 //   --max-context N             override context cap (will be clamped to tier cap)
@@ -392,7 +399,7 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
 // ── Mode selector ───────────────────────────────────────────────────────────
 
 async function selectMode(codebaseContext, tier = 'open') {
-  const BRIEF_TIERS = ['pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+  const BRIEF_TIERS = MAX_TIERS;
   const WATCH_TIERS = ['team', 'team-max', 'enterprise', 'enterprise-max'];
 
   console.log('\n' + boxen(
@@ -2778,7 +2785,7 @@ if (process.argv.includes('--brief')) {
     process.exit(1);
   }
 
-  const BRIEF_TIERS = ['pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+  const BRIEF_TIERS = MAX_TIERS;
   if (!BRIEF_TIERS.includes(briefTier)) {
     console.error('Ghost Brief requires Ghost Pro Max or higher.');
     console.error('Upgrade at: https://ghostarchitect.dev/upgrade');

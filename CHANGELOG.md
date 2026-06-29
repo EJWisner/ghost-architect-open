@@ -5,6 +5,23 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.1] - 2026-06-29
+
+### Fixed
+
+- **Ghost Brief™ and Executive Brief interactive/CLI gating now Max-only,
+  matching policy and docs.** Two divergent `BRIEF_TIERS` arrays in
+  `bin/ghost.js` (the mode-selector menu and the `--brief` CLI handler) wrongly
+  included non-Max `team` and `enterprise`, so a Team or Enterprise user could
+  generate a Ghost Brief interactively or via `ghost --brief` even though the
+  authoritative `mode:ghost-brief` policy in `src/license/tier-gates.js`, the
+  Ghost Watcher pipeline, and the README/CHANGELOG all restrict it to the Max
+  tiers (`pro-max`, `team-max`, `enterprise-max`). Both arrays are replaced with
+  a single shared `MAX_TIERS` constant. The same `BRIEF_TIERS` array also gated
+  the Executive Brief menu item, so this closes the identical leak there too.
+  `WATCH_TIERS` is unchanged — Ghost Watcher deliberately requires Team or
+  higher, a separate gate from Brief.
+
 ## [9.4.0] - 2026-06-29
 
 ### Added
