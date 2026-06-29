@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.0** Add @ghost-verified annotation system. Developers can mark false positives with @ghost-verified in source files. Ghost Watcher segregates these as Reviewed · Expected Behavior in PR comments and scan files, keeping real findings clean.
+
 **v9.3.9** Add Max tier support to CLI license parser and token validator. Pro Max, Team Max, and Enterprise Max licenses now activate correctly via ghost --activate.
 
 **v9.3.8** Wire Ghost Brief tier gate (Max-tier only: pro-max, team-max, enterprise-max). Wire conflict_verify verifier in Ghost Watcher (opt-in, quick mode, drops false positives). Refactor redactor.js PEM replacement strings to named constants. Fix buildTokenUsage to derive batch rates from estimator.js pricing table. Add detailed_prompts to ghost-watcher.yaml config.

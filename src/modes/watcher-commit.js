@@ -29,6 +29,7 @@ import { extractFindings, generateFindingId } from '../utils/finding-parser.js';
 import { normalizeCandidateToFinding, extractCandidates } from '../core/conflict.js';
 import { narrateReport } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
+import { partitionFindings } from '../watch/ghost-verified.js';
 import { pingWatcherRun } from '../telemetry/pulse.js';
 import { requireTier } from '../license/tier-gates.js';
 import { verifyConflicts } from '../core/agent/verifier.js';
@@ -266,7 +267,27 @@ async function upsertPortalFile(octokit, owner, repo, filePath, content, message
  * Uses GITHUB_TOKEN (provided automatically by GitHub Actions).
  * No-ops gracefully if PR context is not available.
  */
-async function postPRComment({ findings, blastFileCount, briefPromptCount, portalUrl, clean = false }) {
+// Render the "Reviewed · Expected Behavior" section listing findings the dev
+// team marked @ghost-verified. Returns '' when there are none so callers can
+// append unconditionally. Each line carries severity, title, primary file, and
+// the optional reason captured after the marker.
+function buildVerifiedSection(verifiedFindings) {
+  if (!Array.isArray(verifiedFindings) || verifiedFindings.length === 0) return '';
+  const n = verifiedFindings.length;
+  let s = `### ✅ ${n} Reviewed · Expected Behavior\n\n`;
+  s += `These findings were marked \`@ghost-verified\` by the development team and confirmed as expected behavior. No action required.\n\n`;
+  for (const f of verifiedFindings) {
+    const file = Array.isArray(f.files) && f.files.length > 0 ? f.files[0] : null;
+    let line = `  - **${escapeMarkdown(f.severity || 'INFO')}:** ${escapeMarkdown(f.title || 'Untitled finding')}`;
+    if (file) line += ` — \`${escapeMarkdown(file)}\``;
+    if (f.verifiedReason) line += ` _(${escapeMarkdown(f.verifiedReason)})_`;
+    s += line + `\n`;
+  }
+  s += `\n`;
+  return s;
+}
+
+async function postPRComment({ findings, verifiedFindings = [], blastFileCount, briefPromptCount, portalUrl, clean = false }) {
   const prToken = process.env.GHOST_PR_TOKEN || process.env.GITHUB_TOKEN;
   if (!prToken) return;
 
@@ -304,7 +325,9 @@ async function postPRComment({ findings, blastFileCount, briefPromptCount, porta
         ``,
         `**Safe to merge.**`,
       ].join('\n');
-      await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+      const verifiedSection = buildVerifiedSection(verifiedFindings);
+      const finalBody = verifiedSection ? `${body}\n\n${verifiedSection}` : body;
+      await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body: finalBody });
     } catch (err) {
       console.error(`Ghost Watcher: clean PR comment failed (non-fatal): ${err.message}`);
     }
@@ -366,6 +389,8 @@ async function postPRComment({ findings, blastFileCount, briefPromptCount, porta
   if (portalUrl) {
     body += `[Open Ghost Portal to copy prompts into your AI coding tool.](${portalUrl})\n`;
   }
+
+  body += buildVerifiedSection(verifiedFindings);
 
   try {
     const octokit = createOctokit({ auth: prToken });
@@ -1492,12 +1517,25 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   }
 
   // ── Step 7: Merge findings ───────────────────────────────────────────────
-  const allFindings = [
+  const mergedFindings = [
     ...blastFindings.map(f => ({ ...f, source_mode: 'blast' })),
     ...conflictFindings.map(f => ({ ...f, source_mode: 'conflict' })),
   ];
 
-  console.log(`Ghost Watcher: ${allFindings.length} total findings (blast: ${blastFindings.length}, conflict: ${conflictFindings.length})\n`);
+  // @ghost-verified segregation (file-level). Findings whose files carry the
+  // @ghost-verified marker are pulled out of the active set so they stop
+  // nagging on every commit, but are retained in verifiedFindings for the
+  // auditable "Reviewed · Expected Behavior" surface (PR comment + scan file).
+  // allFindings becomes the ACTIVE set so every downstream consumer (brief,
+  // detailed prompts, portal, PR comment, telemetry) uses it unchanged.
+  // See src/watch/ghost-verified.js.
+  const { active: allFindings, verified: verifiedFindings } =
+    partitionFindings(mergedFindings, codebaseContext.fileMap);
+
+  console.log(`Ghost Watcher: ${mergedFindings.length} total findings (blast: ${blastFindings.length}, conflict: ${conflictFindings.length})\n`);
+  if (verifiedFindings.length > 0) {
+    console.log(`Ghost Watcher: ${verifiedFindings.length} finding(s) marked @ghost-verified (reviewed · expected behavior)\n`);
+  }
 
   // ── Step 8: Ghost Brief (Max-tier gated) ─────────────────────────────────
   // Ghost Brief is a Max-tier artifact (pro-max / team-max / enterprise-max).
@@ -1720,6 +1758,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         blastFileCount,
         briefPromptCount,
         findings:    allFindings,
+        verifiedFindings,
         brief:       brief || null,
         tokenUsage:  buildTokenUsage(totalInputTokens, totalOutputTokens),
       };
@@ -1756,7 +1795,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
   // ── Step 10: PR comment ───────────────────────────────────────────────────
   if (watchConfig.notifications?.pr_comment !== false) {
-    await postPRComment({ findings: allFindings, blastFileCount, briefPromptCount, portalUrl, clean: allFindings.length === 0 });
+    await postPRComment({ findings: allFindings, verifiedFindings, blastFileCount, briefPromptCount, portalUrl, clean: allFindings.length === 0 });
   }
 
   // ── Done ──────────────────────────────────────────────────────────────────

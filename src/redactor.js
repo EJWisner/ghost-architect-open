@@ -57,6 +57,10 @@ function parseKeyBlocks(content, beginPattern, endMarker, replacement) {
   return result;
 }
 
+// @ghost-verified: false positive -- variants array contains only real PEM
+// begin/end markers. PRIVATE_KEY_REPLACEMENT and CERTIFICATE_REPLACEMENT are
+// named constants defined separately and are never used as search patterns.
+// Reviewed 2026-06-29.
 function parsePrivateKeyBlocks(content) {
   // Handle all variants: RSA PRIVATE KEY, EC PRIVATE KEY, PRIVATE KEY, etc.
   const variants = [

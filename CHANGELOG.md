@@ -5,6 +5,34 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.0] - 2026-06-29
+
+### Added
+
+- **`@ghost-verified` annotation system for Ghost Watcher™.** Developers can
+  mark a finding's file as reviewed-and-accepted by dropping an in-code comment
+  marker, with an optional reason:
+
+  ```
+  // @ghost-verified
+  // @ghost-verified: legacy adapter is intentional, reviewed 2026-06-29
+  ```
+
+  During a watcher run, findings whose files carry the marker are segregated out
+  of the active set (so they stop nagging on every commit) but are NOT dropped:
+  they surface in a "✅ Reviewed · Expected Behavior" section of the PR comment
+  and under a `verifiedFindings[]` key in the portal scan file, keeping the
+  suppression auditable and reversible. File-level scope; a finding is verified
+  when any of its files carries the marker.
+
+  New module `src/watch/ghost-verified.js` exposes `scanForVerified()` and
+  `partitionFindings()`. Detection uses `indexOf` scanning (not regex),
+  mirroring the stateful PEM/cert parsers in `src/redactor.js`, so it is
+  ReDoS-immune and runs on files of any size. Wired into the Step 7 merge in
+  `src/modes/watcher-commit.js`; every downstream consumer (Ghost Brief,
+  detailed prompts, portal push, PR comment, telemetry) operates on the active
+  set unchanged. Covered by `tests/ghost-verified.smoke.mjs`.
+
 ## [9.3.9] - 2026-06-29
 
 ### Fixed
