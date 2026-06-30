@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.5** Internal admin CLI commands for license management. Portal @ghost-verified renderer showing Reviewed · Expected Behavior section in Findings tab.
+
 **v9.4.4** Fix TIER_CAPS missing trial tier (now explicit 50K, matching Open). Fix narrateConflictReport temperature inconsistency (0 → 0.3, matching report narration family). Add trial upgrade hint.
 
 **v9.4.3** Fix verified findings leaking into Ghost Brief prompts. @ghost-verified findings now correctly excluded from Ghost Brief and detailed prompt generation. Add allowedTiers() helper to tier-gates.js -- MAX_TIERS in bin/ghost.js now derives from policy instead of a hardcoded array, preventing gate drift. Wire test-loop-api-error.js into CI test suite.

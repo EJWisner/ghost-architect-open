@@ -5,6 +5,28 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.5] - 2026-06-30
+
+### Added
+
+- **Internal admin CLI commands for license management.** Founder-only,
+  undocumented flags for operating the license worker from the CLI:
+  `--configure-admin-token` (stores the admin bearer token in the local
+  configstore, masked prompt), `--issue-license --tier <tier> --email <email>
+  [--days <n>]` (mints a license via `/admin/issue`; runs headless when all
+  flags are supplied, prompts otherwise; `--days` defaults to 365), and
+  `--revoke-license --key <humanKey> [--reason <reason>]` (revokes via
+  `/admin/revoke`). All hard-fail with a non-zero exit when the admin token is
+  missing or inputs are invalid. Not shown in `--help`, the interactive menu, or
+  the README; the security boundary is the admin token, not flag obscurity.
+
+- **Ghost Portal @ghost-verified renderer.** The Ghost Watcher™ Findings tab now
+  renders a collapsed "✅ Reviewed · Expected Behavior" section below active
+  findings, populated from the scan file's `verifiedFindings[]`. Findings a
+  developer marked `@ghost-verified` appear here (muted styling, no severity
+  badge, optional reason) instead of cluttering the active list, and the section
+  shows even when all of a commit's findings are verified.
+
 ## [9.4.4] - 2026-06-30
 
 ### Fixed

@@ -61,6 +61,8 @@ import {
   clearLicense,
   hasLicense,
   getLicenseRecord,
+  getAdminToken,
+  saveAdminToken,
 } from '../src/license/store.js';
 import { setActiveLicense, getActiveTier } from '../src/license/session.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
@@ -72,6 +74,16 @@ import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount,
 // env var for local-dev testing against `wrangler dev`.
 const ACTIVATION_ENDPOINT = process.env.GHOST_ACTIVATION_ENDPOINT
   || 'https://license.ghostarchitect.dev/activate';
+
+// Admin license-issuance endpoint. Same override convention as activation so
+// local-dev can point at `wrangler dev`. Used by --issue-license.
+const ADMIN_ISSUE_ENDPOINT = process.env.GHOST_ADMIN_ISSUE_ENDPOINT
+  || 'https://license.ghostarchitect.dev/admin/issue';
+
+// Admin license-revocation endpoint. Same override convention. Used by
+// --revoke-license.
+const ADMIN_REVOKE_ENDPOINT = process.env.GHOST_ADMIN_REVOKE_ENDPOINT
+  || 'https://license.ghostarchitect.dev/admin/revoke';
 
 // VERSION is read dynamically from package.json so `npm version` bumps both.
 const _require = createRequire(import.meta.url);
@@ -119,6 +131,14 @@ function parseArgs(argv) {
     licenseStatus: false,
     licenseClear: false,
     licenseDebug: false,
+    configureAdminToken: false,
+    issueLicense: false,
+    issueTier: null,
+    issueEmail: null,
+    issueDays: null,
+    revokeLicense: false,
+    revokeKey: null,
+    revokeReason: null,
     cleanCache: false,
     skipRedaction: false,
     watcherCommit: false,
@@ -182,6 +202,19 @@ function parseArgs(argv) {
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
     if (a === '--license-debug')    { out.licenseDebug = true; continue; }
+    if (a === '--configure-admin-token') { out.configureAdminToken = true; continue; }
+    if (a === '--issue-license')         { out.issueLicense = true; continue; }
+    if (a === '--tier')              { out.issueTier = argv[++i] || ''; continue; }
+    if (a.startsWith('--tier='))     { out.issueTier = a.slice('--tier='.length); continue; }
+    if (a === '--email')             { out.issueEmail = argv[++i] || ''; continue; }
+    if (a.startsWith('--email='))    { out.issueEmail = a.slice('--email='.length); continue; }
+    if (a === '--days')              { out.issueDays = argv[++i] || ''; continue; }
+    if (a.startsWith('--days='))     { out.issueDays = a.slice('--days='.length); continue; }
+    if (a === '--revoke-license')    { out.revokeLicense = true; continue; }
+    if (a === '--key')               { out.revokeKey = argv[++i] || ''; continue; }
+    if (a.startsWith('--key='))      { out.revokeKey = a.slice('--key='.length); continue; }
+    if (a === '--reason')            { out.revokeReason = argv[++i] || ''; continue; }
+    if (a.startsWith('--reason='))   { out.revokeReason = a.slice('--reason='.length); continue; }
     if (a === '--clean-cache')      { out.cleanCache = true; continue; }
     // Pro+ escape hatch: bypass the fail-closed redaction abort. Honored only
     // on paid tiers by the loader; Open always fails closed regardless.
@@ -1205,6 +1238,239 @@ async function runLicenseClearFlow() {
 }
 
 /**
+ * Admin: store the license-worker admin bearer token locally. Prompts with
+ * masked input so the token is never echoed, and persists it to the configstore
+ * via saveAdminToken. Used by `ghost --configure-admin-token`.
+ */
+async function runConfigureAdminTokenFlow() {
+  console.log('\n' + boxen(
+    chalk.cyan.bold('Configure Admin Token') + '\n\n' +
+    chalk.gray('Paste your Ghost license-worker admin token. It is stored locally in\n') +
+    chalk.gray('your Ghost config and used to issue licenses from this machine.'),
+    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
+  ));
+  const { token } = await inquirer.prompt([{
+    type: 'password',
+    name: 'token',
+    mask: '•',
+    message: chalk.cyan('Admin token:'),
+    theme: inquirerTheme,
+    validate: (v) => (v && v.trim().length > 0) ? true : 'Token cannot be empty.',
+  }]);
+  const trimmed = token.trim();
+  saveAdminToken(trimmed);
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} Admin token saved`) + '\n\n' +
+    chalk.white('Length: ') + chalk.cyan(`${trimmed.length} chars`) + '\n' +
+    chalk.gray('Stored locally. Run `ghost --issue-license` to mint license keys.'),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  console.log('');
+}
+
+// Tiers the admin endpoint accepts for issuance (mirrors the worker's
+// PAYLOAD_VALID_TIERS; 'trial' is not issuable).
+const ISSUABLE_TIERS = ['pro', 'pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+
+// Small red-box error + hard exit, for invalid admin-command flag values.
+function adminFlagError(title, detail) {
+  console.error('\n' + boxen(
+    chalk.red.bold(`${SYM.cross} ${title}`) + '\n\n' + chalk.gray(detail),
+    { padding: 1, borderColor: 'red', borderStyle: 'round' }
+  ));
+  console.log('');
+  process.exit(1);
+}
+
+/**
+ * Admin: issue a license via the license-worker /admin/issue endpoint. Reads
+ * the stored admin token (hard-fails if none). tier/email/days may be supplied
+ * as flags (--tier/--email/--days) for headless use; any of tier/email not
+ * given as a flag is prompted for. days defaults to 365 and is never prompted.
+ * Flag-supplied values are validated and hard-fail on error. POSTs and displays
+ * the returned humanKey. Used by `ghost --issue-license`.
+ */
+async function runIssueLicenseFlow({ tier = null, email = null, days = null } = {}) {
+  const token = getAdminToken();
+  if (!token) {
+    console.error('\n' + boxen(
+      chalk.red.bold(`${SYM.cross} No admin token configured`) + '\n\n' +
+      chalk.gray('Run ') + chalk.cyan('ghost --configure-admin-token') + chalk.gray(' first.'),
+      { padding: 1, borderColor: 'red', borderStyle: 'round' }
+    ));
+    console.log('');
+    process.exit(1);
+  }
+
+  // ── Resolve tier: flag (validated) or prompt ──
+  if (tier != null) {
+    tier = String(tier).trim().toLowerCase();
+    if (!ISSUABLE_TIERS.includes(tier)) {
+      adminFlagError(`Invalid --tier: ${tier}`, `Must be one of: ${ISSUABLE_TIERS.join(', ')}`);
+    }
+  }
+
+  // ── Resolve email: flag (validated) or prompt ──
+  if (email != null) {
+    email = String(email).trim();
+    if (!email.includes('@')) {
+      adminFlagError(`Invalid --email: ${email}`, 'Email must contain @.');
+    }
+  }
+
+  // ── Resolve days: flag (validated) or default 365, never prompted ──
+  let resolvedDays = 365;
+  if (days != null) {
+    const n = Number(days);
+    if (!Number.isInteger(n) || n <= 0) {
+      adminFlagError(`Invalid --days: ${days}`, 'Days must be a positive whole number.');
+    }
+    resolvedDays = n;
+  }
+
+  // ── Prompt only for whatever tier/email wasn't supplied as a flag ──
+  const prompts = [];
+  if (tier == null) {
+    prompts.push({
+      type: 'list', name: 'tier', message: chalk.cyan('License tier:'),
+      theme: inquirerTheme, choices: ISSUABLE_TIERS,
+    });
+  }
+  if (email == null) {
+    prompts.push({
+      type: 'input', name: 'email', message: chalk.cyan('Customer email:'),
+      theme: inquirerTheme,
+      validate: (v) => (v && v.includes('@')) ? true : 'Enter a valid email address.',
+    });
+  }
+  if (prompts.length > 0) {
+    const answers = await inquirer.prompt(prompts);
+    if (tier == null)  tier  = answers.tier;
+    if (email == null) email = answers.email.trim();
+  }
+
+  console.log(chalk.gray(`\nIssuing ${tier} license for ${email} (${resolvedDays} days)...`));
+
+  let resp, body;
+  try {
+    resp = await fetch(ADMIN_ISSUE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        email, tier, days: resolvedDays,
+        actor: 'cli-admin', reason: 'cli-admin-issue', sendEmail: false,
+      }),
+    });
+    body = await resp.json().catch(() => ({}));
+  } catch (err) {
+    console.error(chalk.red(`\n${SYM.cross} Could not reach the license server: ${err.message}\n`));
+    process.exit(1);
+  }
+
+  if (!resp.ok) {
+    const detail = (body && (body.detail || body.error)) || `HTTP ${resp.status}`;
+    const hint = (resp.status === 401 || resp.status === 403)
+      ? 'Admin token rejected. Re-run `ghost --configure-admin-token` with a current token.'
+      : 'Check the inputs and try again.';
+    console.error('\n' + boxen(
+      chalk.red.bold(`${SYM.cross} License issuance failed`) + '\n\n' +
+      chalk.white('Error: ') + chalk.red(detail) + '\n' +
+      chalk.gray(hint),
+      { padding: 1, borderColor: 'red', borderStyle: 'round' }
+    ));
+    console.log('');
+    process.exit(1);
+  }
+
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} License issued`) + '\n\n' +
+    chalk.white('Key:      ') + chalk.cyan.bold(body.humanKey || '(missing)') + '\n' +
+    chalk.white('Tier:     ') + chalk.cyan(body.tier || tier) + '\n' +
+    chalk.white('Customer: ') + chalk.cyan(body.customer || email) + '\n' +
+    chalk.white('Expires:  ') + chalk.cyan((body.expires || '').slice(0, 10) || '(unknown)') + '\n\n' +
+    chalk.gray('Send this key to the customer; they activate with ghost --activate <key>.'),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  console.log('');
+}
+
+/**
+ * Admin: revoke a license via the license-worker /admin/revoke endpoint. Reads
+ * the stored admin token (hard-fails if none). The key may be supplied as a flag
+ * (--key) for headless use, or prompted for if omitted. --reason defaults to
+ * 'admin-revoked' and is never prompted. POSTs and confirms revocation. Used by
+ * `ghost --revoke-license`.
+ */
+async function runRevokeLicenseFlow({ key = null, reason = null } = {}) {
+  const token = getAdminToken();
+  if (!token) {
+    console.error('\n' + boxen(
+      chalk.red.bold(`${SYM.cross} No admin token configured`) + '\n\n' +
+      chalk.gray('Run ') + chalk.cyan('ghost --configure-admin-token') + chalk.gray(' first.'),
+      { padding: 1, borderColor: 'red', borderStyle: 'round' }
+    ));
+    console.log('');
+    process.exit(1);
+  }
+
+  // ── Resolve key: flag (validated) or prompt ──
+  if (key != null) {
+    key = String(key).trim();
+    if (!tryParseKey(key).ok) {
+      adminFlagError(`Invalid --key: ${key}`, 'Must be a valid GA-YYYY-... license key.');
+    }
+  } else {
+    const ans = await inquirer.prompt([{
+      type: 'input', name: 'key', message: chalk.cyan('License key to revoke:'),
+      theme: inquirerTheme,
+      validate: (v) => tryParseKey((v || '').trim()).ok ? true : 'Enter a valid GA-YYYY-... license key.',
+    }]);
+    key = ans.key.trim();
+  }
+
+  // ── Resolve reason: flag or default 'admin-revoked', never prompted ──
+  const revokeReason = (reason != null && String(reason).trim()) ? String(reason).trim() : 'admin-revoked';
+
+  console.log(chalk.gray(`\nRevoking ${key}...`));
+
+  let resp, body;
+  try {
+    resp = await fetch(ADMIN_REVOKE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ humanKey: key, reason: revokeReason, actor: 'ejwisner' }),
+    });
+    body = await resp.json().catch(() => ({}));
+  } catch (err) {
+    console.error(chalk.red(`\n${SYM.cross} Could not reach the license server: ${err.message}\n`));
+    process.exit(1);
+  }
+
+  if (!resp.ok) {
+    const detail = (body && (body.detail || body.error)) || `HTTP ${resp.status}`;
+    const hint = (resp.status === 401 || resp.status === 403)
+      ? 'Admin token rejected. Re-run `ghost --configure-admin-token` with a current token.'
+      : resp.status === 404 ? 'License key not found. Double-check the key.'
+      : 'Check the key and try again.';
+    console.error('\n' + boxen(
+      chalk.red.bold(`${SYM.cross} Revocation failed`) + '\n\n' +
+      chalk.white('Error: ') + chalk.red(detail) + '\n' +
+      chalk.gray(hint),
+      { padding: 1, borderColor: 'red', borderStyle: 'round' }
+    ));
+    console.log('');
+    process.exit(1);
+  }
+
+  console.log('\n' + boxen(
+    chalk.green.bold(`${SYM.check} License ${key} revoked.`) +
+    (body && body.idempotent ? '\n\n' + chalk.gray('(Was already revoked.)') : ''),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+  console.log('');
+}
+
+/**
  * Server-driven promo text fetcher. Reads `promo` and `paywallPromo` fields
  * from /pulse-stats on the signup worker. Worker is the source of truth;
  * change the constants in the worker, redeploy, every Open install on next
@@ -1592,6 +1858,18 @@ async function main() {
   }
   if (cliOpts.licenseClear) {
     await runLicenseClearFlow();
+    process.exit(0);
+  }
+  if (cliOpts.configureAdminToken) {
+    await runConfigureAdminTokenFlow();
+    process.exit(0);
+  }
+  if (cliOpts.issueLicense) {
+    await runIssueLicenseFlow({ tier: cliOpts.issueTier, email: cliOpts.issueEmail, days: cliOpts.issueDays });
+    process.exit(0);
+  }
+  if (cliOpts.revokeLicense) {
+    await runRevokeLicenseFlow({ key: cliOpts.revokeKey, reason: cliOpts.revokeReason });
     process.exit(0);
   }
 

@@ -119,3 +119,25 @@ export function updateLastSeenUtc(newIso) {
 export function clearLicense() {
   write(null);
 }
+
+// ── Admin token ─────────────────────────────────────────────────────────────
+//
+// The Ghost license-worker admin bearer token, stored locally so an operator
+// can issue licenses from this machine via `ghost --issue-license`. Lives under
+// its own configstore key (separate from the customer `license` record).
+// Wrapped in its own read/write pair so the key name stays in one place,
+// mirroring the license helpers above.
+const ADMIN_TOKEN_KEY = 'adminToken';
+
+export function getAdminToken() {
+  const v = getConfig().get(ADMIN_TOKEN_KEY);
+  return (typeof v === 'string' && v.length > 0) ? v : null;
+}
+
+export function saveAdminToken(token) {
+  getConfig().set(ADMIN_TOKEN_KEY, token);
+}
+
+export function clearAdminToken() {
+  getConfig().delete(ADMIN_TOKEN_KEY);
+}
