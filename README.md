@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.6** Fix ghost --configure-admin-token header box rendering before the input prompt.
+
 **v9.4.5** Internal admin CLI commands for license management. Portal @ghost-verified renderer showing Reviewed · Expected Behavior section in Findings tab.
 
 **v9.4.4** Fix TIER_CAPS missing trial tier (now explicit 50K, matching Open). Fix narrateConflictReport temperature inconsistency (0 → 0.3, matching report narration family). Add trial upgrade hint.

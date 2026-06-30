@@ -5,6 +5,17 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.6] - 2026-06-30
+
+### Fixed
+
+- **`ghost --configure-admin-token` header box now renders before the prompt.**
+  The "Configure Admin Token" box was printed synchronously right before the
+  masked `inquirer` prompt, but under inquirer v9's render timing the prompt
+  could initialize before stdout flushed, drawing the box *after* the input. A
+  one-tick event-loop yield (`setImmediate`) after the `console.log` ensures the
+  header is flushed before inquirer takes over the TTY.
+
 ## [9.4.5] - 2026-06-30
 
 ### Added

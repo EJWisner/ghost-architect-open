@@ -1249,6 +1249,11 @@ async function runConfigureAdminTokenFlow() {
     chalk.gray('your Ghost config and used to issue licenses from this machine.'),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
+  // Yield to the event loop so the header box is flushed to the TTY before
+  // inquirer v9 takes over and computes its render baseline. Without this, the
+  // prompt can render ABOVE the box (user sees the masked prompt first, then
+  // the box appears after they submit).
+  await new Promise(resolve => setImmediate(resolve));
   const { token } = await inquirer.prompt([{
     type: 'password',
     name: 'token',
