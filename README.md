@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.9
+- fix: `scanForVerified` now rejects non-source files (`.md`, `.json`, `.yaml`, `.yml`, `.txt`, `.html`) via `SOURCE_EXTENSIONS` allowlist -- closes false-positive verified findings on documentation files that contain the `@ghost-verified` marker as text
+
 **v9.4.8** Add clarifying comment to ghost-watcher.yaml explaining batch.timeout_minutes vs Actions job timeout relationship. Update buildTokenUsage comment to reference getPricing() instead of hardcoded rates.
 
 **v9.4.7** Fix codemaseRoot typo in ghostBrief.js -- codebaseRoot value now correctly passed from all callers instead of falling back to process.cwd(). Fix @ghost-verified self-reference trap -- annotation detection now requires comment-prefix context (// # -- /*), preventing string literals and doc comments from triggering false verified segregation. Adds Python, SQL, CSS comment support.

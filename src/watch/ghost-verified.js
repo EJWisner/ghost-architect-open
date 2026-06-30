@@ -26,6 +26,17 @@ const MARKER = '@ghost-verified';
 // single-line and block comment openers across languages.
 const COMMENT_PREFIXES = ['// ', '# ', '-- ', '/* '];
 
+// File-extension allowlist: only source code files are eligible for the
+// @ghost-verified annotation. Documentation files (.md, .json, .yaml, etc.)
+// frequently contain the marker STRING as documentation text (changelogs,
+// README feature descriptions) and must never be scanned for it.
+const SOURCE_EXTENSIONS = new Set([
+  '.js', '.ts', '.jsx', '.tsx',
+  '.py', '.rb', '.php', '.java',
+  '.go', '.rs', '.css', '.scss',
+  '.sql', '.sh',
+]);
+
 /**
  * Scan a single file's content for the @ghost-verified marker in comment
  * context.
@@ -44,6 +55,13 @@ export function scanForVerified(filePath, fileMap) {
   }
   const content = fileMap[filePath];
   if (typeof content !== 'string' || content.length === 0) {
+    return { verified: false, reason: null };
+  }
+
+  // Only source files are eligible. Non-source files (.md, .json, .yaml, etc.)
+  // may contain the marker as documentation text — never treat them as verified.
+  const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase();
+  if (!SOURCE_EXTENSIONS.has(ext)) {
     return { verified: false, reason: null };
   }
 

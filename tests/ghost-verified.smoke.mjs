@@ -39,6 +39,10 @@ const fileMap = {
   'script.py': '# @ghost-verified: reviewed by data team\nprint(1)\n',
   // SQL comment opener.
   'query.sql': '-- @ghost-verified\nSELECT 1;\n',
+  // Non-source files — must NEVER verify even if they contain the marker string.
+  'CHANGELOG.md': '## v9.4.7\n- Added @ghost-verified comment-context detection\n',
+  'package.json': '{"description":"supports @ghost-verified annotation system"}\n',
+  'ghost-watcher.yaml': 'features:\n  ghost_verified: true # @ghost-verified\n',
 };
 
 // ── Test 1: scanForVerified finds marker with reason ───────────────────────
@@ -135,6 +139,30 @@ console.log('Test 10: SQL -- @ghost-verified verifies');
   const r = scanForVerified('query.sql', fileMap);
   checkEqual('query.sql verified', r.verified, true);
   checkEqual('query.sql reason null', r.reason, null);
+}
+
+// ── Test 11: .md files never verify ────────────────────────────────────────
+console.log('Test 11: .md files containing marker text never verify');
+{
+  const r = scanForVerified('CHANGELOG.md', fileMap);
+  checkEqual('CHANGELOG.md not verified', r.verified, false);
+  checkEqual('CHANGELOG.md reason null', r.reason, null);
+}
+
+// ── Test 12: .json files never verify ──────────────────────────────────────
+console.log('Test 12: .json files containing marker text never verify');
+{
+  const r = scanForVerified('package.json', fileMap);
+  checkEqual('package.json not verified', r.verified, false);
+  checkEqual('package.json reason null', r.reason, null);
+}
+
+// ── Test 13: .yaml files never verify ──────────────────────────────────────
+console.log('Test 13: .yaml files containing marker text never verify');
+{
+  const r = scanForVerified('ghost-watcher.yaml', fileMap);
+  checkEqual('ghost-watcher.yaml not verified', r.verified, false);
+  checkEqual('ghost-watcher.yaml reason null', r.reason, null);
 }
 
 if (failures > 0) {
