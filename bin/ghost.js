@@ -3022,6 +3022,13 @@ async function main() {
   }
 }
 
+// ── Ghost Watcher — cancel handler (marks portal state on Actions cancel) ──
+if (process.argv.includes('--watcher-cancelled')) {
+  const { runWatchCancelled } = await import('../src/modes/watcher-commit.js');
+  await runWatchCancelled();
+  process.exit(0);
+}
+
 // ── Ghost Watcher — headless CI mode ───────────────────────────────────────
 if (process.argv.includes('--watcher-commit')) {
   const { runWatchCommit } = await import('../src/modes/watcher-commit.js');

@@ -5,6 +5,18 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.13] - 2026-06-30
+
+### Fixed
+
+- **GitHub Enterprise Server URL parsing.** enterprise.js and mobile-publish.js now use robust parseRepo from team-sync.js (handles GHES hosts, subpaths, SSH URLs).
+- **Dashboard remainingFindings slice bug.** buildDashboardSidecar slice(count-as-index) replaced with explicit zero-guarded tail slice; Jira export no longer dumps all findings when a project is 100% resolved.
+- **storePendingBatch SHA conflict retry.** Concurrent runs no longer drop pending batch entries on 409 SHA mismatch.
+- **Conflict detection separate POST per chunk.** Each conflict chunk now submits as its own batch POST (sub-900KB), eliminating the 2.41MB combined body that caused hung batches.
+- **Cancel handler.** ghost --watcher-cancelled added; GitHub Actions cancel step pushes status:cancelled to portal so stuck ANALYZING state resolves instead of spinning forever.
+- **Sonnet 5 / Opus 4.7 / 4.8 compatibility.** getSamplingParams guard strips temperature from all API calls when using models that reject sampling parameters. claude-sonnet-5 added to pricing table.
+- **14 conflict-finding cleanups.** getModel renamed to getWatcherModel; stale cap-at-MEDIUM docstrings updated; injectionStaticPattern detector ID standardized; session type discriminator added to conflict.js; slugifyLabel consolidated to shared slugify; MODE_OUTPUT_ESTIMATES forecast modes added; pingWatcherRun JSDoc corrected; trial tier cross-reference comment added; resolveContextCap default source fixed; getFileContent return shape normalized in mobile-publish.js; compare.js keepLandmarks documented; sampling-params and conflict-chunking smoke tests added.
+
 ## [9.4.12] - 2026-06-30
 
 ### Fixed

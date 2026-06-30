@@ -64,3 +64,13 @@ jobs:
             --max-time 10 \
             -d "$PAYLOAD" \
             https://signup.ghostarchitect.dev/watcher-ping || true
+
+      - name: Ghost Watcher cancel handler
+        if: cancelled()
+        run: ghost --watcher-cancelled
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GHOST_LICENSE_KEY: ${{ secrets.GHOST_LICENSE_KEY }}
+          GHOST_PORTAL_REPO: ${{ secrets.GHOST_PORTAL_REPO }}
+          GHOST_PORTAL_TOKEN: ${{ secrets.GHOST_PORTAL_TOKEN }}
+          GHOST_PR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

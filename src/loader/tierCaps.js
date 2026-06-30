@@ -51,7 +51,7 @@ const UPGRADE_HINTS = {
  *   TODO-architect-open-clamp-message-misleading.md for context.
  * @returns {{ effective: number, clamped: boolean, tierCap: number, tier: string }}
  */
-export function resolveContextCap(tier, userRequested, source = 'cli') {
+export function resolveContextCap(tier, userRequested, source = 'default') {
   const normalizedTier = (tier || 'open').toLowerCase();
   const tierCap = TIER_CAPS[normalizedTier] ?? TIER_CAPS.open;
 

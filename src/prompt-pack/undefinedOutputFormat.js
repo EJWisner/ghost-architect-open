@@ -68,10 +68,10 @@
  * Real missing-spec, not perceived looseness.
  *
  * Severity policy:
- *   The LLM returns severity. We trust the call but cap at MEDIUM
- *   (Tier 2 advisory findings should not emit HIGH — those are LLM
- *   judgments, not load-bearing facts). See F-16 in
- *   PROMPT_TRIAGE_FOLLOWUPS.md for revisiting this cap.
+ *   The LLM returns severity. HIGH, MEDIUM, and LOW all pass through
+ *   (v5.3 removed the cap-at-MEDIUM limit — see capSeverity() below).
+ *   HIGH is reserved for prompts that are genuinely broken per the
+ *   severity framework in llmAuditClient.js.
  *
  * Confidence: 60. Same as the three live Tier 2 siblings.
  *

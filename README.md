@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.13** -- fix: enterprise.js + mobile-publish.js use robust GHES-aware parseRepo from team-sync.js; dashboard remainingFindings slice bug fixed (Jira export); storePendingBatch SHA conflict retry; 14 conflict-finding cleanups (stale docstrings, getModel rename, detector ID, session type guard, slugify dedup, MODE_OUTPUT_ESTIMATES forecast modes, Sonnet 5 sampling param guard + pricing, separate POST per conflict chunk, cancel handler for stuck ANALYZING state)
+
 **v9.4.12** -- fix: Conflict Detection now chunks large codebases into sub-900 KB batches to prevent CI upload drops; all chunk findings merged via extractCandidates; conflict-chunking smoke test added and wired into npm test chain
 
 **v9.4.11** -- fix: blast narrator retry (90s timeout, one retry on transient CI connection drop); narratorFailed flag in portal payload; degraded-run warning banner + rerun link in Watch Findings tab; widened SELF_REFUTING_RE to catch "rather than a runtime conflict" and "Runtime impact: none" patterns; values-match regex lookahead fix; self-refuting-filter smoke test wired into npm test chain

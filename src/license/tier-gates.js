@@ -49,6 +49,10 @@ import { getActiveTier } from './session.js';
 // Conflict/Prompt-Triage/Recon/Chat all available, no quota). Audit
 // blocked. PDF watermark + audit block are the two trial-specific
 // behaviors; everything else mirrors Pro.
+// NOTE: Trial tier has Pro-level mode access (all modes, no scan quota) but
+// shares Open's 50K token context cap. See src/loader/tierCaps.js.
+// This is intentional: trial evaluators see the full feature set but
+// not the full context window of a paid Pro subscription.
 const TIER_POLICY = {
   // Modes
   'mode:question':         { open: true,              trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },

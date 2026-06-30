@@ -475,7 +475,20 @@ export async function storePendingBatch(octokit, portalRepo, batchId, metadata =
     const { owner, repo } = splitRepo(portalRepo);
     const { data, sha } = await readPendingFile(octokit, owner, repo);
     data.batches[batchId] = { batchId, ...metadata };
-    await writePendingFile(octokit, owner, repo, data, sha, `ghost: store pending batch ${batchId}`);
+    try {
+      await writePendingFile(octokit, owner, repo, data, sha, `ghost: store pending batch ${batchId}`);
+    } catch (err) {
+      // SHA conflict: another concurrent run updated the pending file between
+      // our read and write. Storing a batch is purely additive, so re-read the
+      // current state, re-apply just our batch entry onto it (never clobbering
+      // what the other run wrote), and retry once with the fresh SHA.
+      const isShaMismatch = err?.status === 409 ||
+        (typeof err?.message === 'string' && err.message.includes('does not match'));
+      if (!isShaMismatch) throw err;
+      const fresh = await readPendingFile(octokit, owner, repo);
+      fresh.data.batches[batchId] = { batchId, ...metadata };
+      await writePendingFile(octokit, owner, repo, fresh.data, fresh.sha, `ghost: store pending batch ${batchId} (retry)`);
+    }
   } catch (err) {
     console.warn(`Ghost Watcher: storePendingBatch failed (non-fatal) — ${err.message}`);
   }

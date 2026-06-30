@@ -149,6 +149,11 @@ export async function runCompareMode() {
 // fuzzy title overlap as a fallback — strictly better than the local
 // 60%-overlap heuristic that compare previously used.
 
+// keepLandmarks: true is intentional for compare mode. Landmarks represent
+// architectural patterns that can change between scans and should appear in
+// resolved/remaining/new counts. Other modes (poi, blast, conflict) exclude
+// landmarks from their sidecar findingCount — this is a known intentional
+// difference between the comparison surface and the sidecar surface.
 function extractFindings(text) {
   return extractFindingsCanonical(text, { keepLandmarks: true });
 }

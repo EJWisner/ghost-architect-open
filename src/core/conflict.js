@@ -387,7 +387,14 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   if (!info.singlePass) {
     const sessionKey     = conflictSessionKey(options.projectLabel || 'default');
-    const existingSession = loadSession(sessionKey);
+    let existingSession = loadSession(sessionKey);
+
+    // Drop a wrong-type session (e.g. a POI session under a colliding key):
+    // it has a different shape and would silently produce an empty report.
+    if (existingSession && existingSession._sessionType && existingSession._sessionType !== 'conflict') {
+      deleteSession(sessionKey);
+      existingSession = null;
+    }
 
     if (existingSession && existingSession.completedPassCount > 0) {
       const action = await onSessionPrompt({
@@ -437,6 +444,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
       // Checkpoint after every pass
       saveSession(sessionKey, {
+        _sessionType:       'conflict',
         projectLabel:       options.projectLabel || 'conflict',
         startedAt:          new Date().toISOString(),
         completedPassCount: passNum,

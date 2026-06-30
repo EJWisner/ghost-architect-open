@@ -24,8 +24,12 @@ const PRICING = {
   // Legacy Opus pricing
   'claude-opus-4-1':   { label: 'Claude Opus 4.1',   inputPerM: 15.00, outputPerM: 75.00 },
   'claude-opus-4':     { label: 'Claude Opus 4',     inputPerM: 15.00, outputPerM: 75.00 },
+  // NOTE: claude-sonnet-5 introductory pricing ($2/$10) expires Aug 31, 2026.
+  // Update to standard pricing ($3/$15) after that date.
   // Sonnet
   'claude-sonnet-4-6': { label: 'Claude Sonnet 4.6', inputPerM:  3.00, outputPerM: 15.00 },
+  // Sonnet 5 (launched June 2026 — introductory pricing through Aug 31, 2026)
+  'claude-sonnet-5':   { label: 'Claude Sonnet 5',   inputPerM:  2.00, outputPerM: 10.00 },
   'claude-sonnet-4-5': { label: 'Claude Sonnet 4.5', inputPerM:  3.00, outputPerM: 15.00 },
   // Haiku
   'claude-haiku-4-5':  { label: 'Claude Haiku 4.5',  inputPerM:  1.00, outputPerM:  5.00 },
@@ -46,6 +50,8 @@ const MODE_OUTPUT_ESTIMATES = {
   recon:         { tokens: 800,  label: 'Recon (sizing only)'     },
   'prompt-triage': { tokens: 400, label: 'Prompt Triage Audit'    },
   audit:         { tokens: 1500, label: 'Inheritance Audit'       },
+  forecast:                { tokens: 1400, label: 'Commit Forecast'  },
+  'fix-forecast-combined': { tokens: 1600, label: 'Fix Forecast'     },
 };
 
 export function getPricing(model) {

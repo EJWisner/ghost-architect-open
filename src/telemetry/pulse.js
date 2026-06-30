@@ -125,7 +125,7 @@ export function pingModeUsage(version, tier, mode) {
  * Sent after every successful Watch run to /watcher-ping on the signup worker.
  *
  * @param {string} version          CLI version e.g. '9.0.9'
- * @param {string} tier             'team' | 'enterprise' | 'team-max' | 'enterprise-max'
+ * @param {string} tier  any Ghost tier string (open/trial/pro/pro-max/team/team-max/enterprise/enterprise-max)
  * @param {object} opts
  * @param {number} opts.findings    total finding count
  * @param {object} opts.severity    { critical, high, medium, low }

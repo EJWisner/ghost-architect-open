@@ -13,6 +13,7 @@
 
 import { createOctokit } from '../utils/octokit-client.js';
 import { getDefaultTeamSync, resolveTeamSync } from '../config.js';
+import { parseRepo } from './team-sync.js';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -22,12 +23,6 @@ import { randomUUID } from 'crypto';
 
 function getOctokit(entry) {
   return createOctokit({ auth: entry.token });
-}
-
-function parseRepo(repoUrl) {
-  const clean = repoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
-  const [owner, repo] = clean.split('/');
-  return { owner, repo };
 }
 
 function resolveSyncEntry(workspace) {

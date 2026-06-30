@@ -415,8 +415,19 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
 // the raw output flows through the unchanged extractFindings / extractCandidates
 // parsers and the unchanged narrator / Ghost Brief / portal / PR-comment path.
 
-function getModel() {
+function getWatcherModel() {
   return getConfig().get('defaultModel') || 'claude-sonnet-4-6';
+}
+
+// Sonnet 5 and newer models do not accept temperature/top_p/top_k parameters.
+// Passing any value (including 0) returns a 400 error. This helper returns
+// only the params that are safe for the active model.
+function getSamplingParams(temperature) {
+  const model = getWatcherModel();
+  if (model.includes('sonnet-5') || model.includes('opus-4-7') || model.includes('opus-4-8') || model.includes('opus-5')) {
+    return {};
+  }
+  return { temperature };
 }
 
 function getRates() {
@@ -540,9 +551,9 @@ function buildConflictPrompts(fileMap, profile, commitSha) {
     return {
       custom_id: sanitizeCustomId(`conflict-p${passNum}-${commitSha}-${Date.now()}`),
       params: {
-        model: getModel(),
+        model: getWatcherModel(),
         max_tokens: 8096,
-        temperature: 0,
+        ...getSamplingParams(0),
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       },
@@ -748,9 +759,9 @@ function buildPromptGenRequests(findings, commitSha, detailById = new Map()) {
     return {
       custom_id: sanitizeCustomId(`prompt-${commitSha}-${i}`),
       params: {
-        model: getModel(),
+        model: getWatcherModel(),
         max_tokens: 4096,
-        temperature: 0,
+        ...getSamplingParams(0),
         system: PROMPT_GEN_SYSTEM,
         messages: [{ role: 'user', content: userMessage }],
       },
@@ -988,6 +999,43 @@ async function pushWatchCommitState(octokit, portalOwner, portalRepoName, repoPa
     );
   } catch (err) {
     console.error(`Ghost Watcher: portal commit-state push failed (non-fatal) — ${err.message}`);
+  }
+}
+
+/**
+ * Entry point for `ghost --watcher-cancelled`. Fired by the GitHub Actions
+ * cancel handler (if: cancelled()). Marks the commit's portal state 'cancelled'
+ * so the customer sees a terminal state instead of a stuck "Analyzing…".
+ * Never throws — a cancel handler must not fail the (already-cancelling) job.
+ */
+export async function runWatchCancelled() {
+  const portalRepoUrl = process.env.GHOST_PORTAL_REPO;
+  const portalToken   = process.env.GHOST_PORTAL_TOKEN;
+  const commitHash    = process.env.GITHUB_SHA;
+  if (!portalRepoUrl || !portalToken || !commitHash) {
+    console.log('Ghost Watcher: run cancelled — no portal config or commit hash; nothing to update.');
+    return;
+  }
+  try {
+    const octokit = createOctokit({ auth: portalToken });
+    const cleanPortal = portalRepoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
+    const [portalOwner, portalRepoName] = cleanPortal.split('/');
+    const repoPath = process.env.GITHUB_REPOSITORY || 'unknown-project';
+    await pushWatchCommitState(octokit, portalOwner, portalRepoName, repoPath, commitHash, {
+      commitHash: process.env.GITHUB_SHA,
+      branch: process.env.GITHUB_REF_NAME || 'unknown',
+      developer: process.env.GITHUB_ACTOR || 'unknown',
+      timestamp: new Date().toISOString(),
+      status: 'cancelled',
+      batchId: null,
+      message: 'Ghost Watcher™ run was cancelled.',
+      findings: [],
+      findingCount: 0,
+      severity: { critical: 0, high: 0, medium: 0, low: 0 },
+    });
+    console.log('Ghost Watcher: run cancelled — portal state updated');
+  } catch (err) {
+    console.error(`Ghost Watcher: cancel handler failed (non-fatal) — ${err.message}`);
   }
 }
 
@@ -1384,7 +1432,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // succeeds but the full submit drops). Resume above already ran — it only
   // does GETs, so it is unaffected by a broken submit path.
   if (watchConfig.scans?.blast_radius !== false || watchConfig.scans?.conflict_detection !== false) {
-    const preflight = await preflightBatchCheck(anthropic, getModel());
+    const preflight = await preflightBatchCheck(anthropic, getWatcherModel());
     if (!preflight.ok) {
       console.error(`Ghost Watcher: Batches API preflight failed — ${preflight.error}`);
       console.error('Ghost Watcher: the Anthropic Batches endpoint is unreachable from this runner ' +
@@ -1440,9 +1488,9 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       blastBatchId = await submitBatch(anthropic, [{
         custom_id: sanitizeCustomId(`blast-${commitSha}-${Date.now()}`),
         params: {
-          model: getModel(),
+          model: getWatcherModel(),
           max_tokens: 8096,
-          temperature: 0,
+          ...getSamplingParams(0),
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },
@@ -1519,13 +1567,22 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   if (watchConfig.scans?.conflict_detection !== false) {
     console.log('Ghost Watcher: running Conflict Detection (batch)...');
     let conflictBatchId = null;
+    let conflictBatchIds = [];
     try {
       const conflictRequests = buildConflictPrompts(codebaseContext.fileMap || {}, profile, commitSha);
       const totalChunks = conflictRequests.length;
       if (totalChunks > 1) {
-        console.log(`Ghost Watcher: Conflict Detection split into ${totalChunks} chunks (body size limit)`);
+        console.log(`Ghost Watcher: Conflict Detection split into ${totalChunks} chunks — submitting as separate batches`);
       }
-      conflictBatchId = await submitBatch(anthropic, conflictRequests);
+      // Submit each chunk as a separate batch POST to stay under 1 MB per request.
+      // Store the first batch ID in conflictBatchId for the storePendingBatch call;
+      // all batch IDs are tracked in conflictBatchIds for polling and merging.
+      conflictBatchIds = [];
+      for (const request of conflictRequests) {
+        const batchId = await submitBatch(anthropic, [request]);
+        conflictBatchIds.push(batchId);
+      }
+      conflictBatchId = conflictBatchIds[0];
     } catch (err) {
       console.error(`Ghost Watcher: Conflict Detection submission failed (non-fatal) — ${err.message}`);
     }
@@ -1538,10 +1595,20 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       });
 
       try {
-        const conflictResults = await pollBatch(anthropic, conflictBatchId, {
-          pollIntervalMs, timeoutMs,
-          onProgress: (p) => console.log(`Ghost Watcher: Conflict Detection — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
-        });
+        // Poll all conflict chunk batches and merge their results.
+        const allConflictResults = [];
+        for (let i = 0; i < conflictBatchIds.length; i++) {
+          const chunkId = conflictBatchIds[i];
+          const label = conflictBatchIds.length > 1
+            ? `Conflict Detection chunk ${i + 1}/${conflictBatchIds.length}`
+            : 'Conflict Detection';
+          const chunkResults = await pollBatch(anthropic, chunkId, {
+            pollIntervalMs, timeoutMs,
+            onProgress: (p) => console.log(`Ghost Watcher: ${label} — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
+          });
+          allConflictResults.push(...chunkResults);
+        }
+        const conflictResults = allConflictResults;
         // Collect output from all chunks — extractCandidates accepts an array
         // and joins them, so conflicts from every chunk are parsed and merged.
         const conflictOutputs = conflictResults.map(r => r.text || '');

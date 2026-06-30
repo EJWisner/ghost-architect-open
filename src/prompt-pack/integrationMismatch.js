@@ -80,9 +80,10 @@
  *     criteria, not declared contract drift.
  *
  * Severity policy:
- *   The LLM returns severity. We trust the call but cap at MEDIUM
- *   (Tier 3 advisory findings should not emit HIGH — those are LLM
- *   judgments, not load-bearing facts). Same cap rule as Tier 2.
+ *   The LLM returns severity. HIGH, MEDIUM, and LOW all pass through
+ *   (v5.3 removed the cap-at-MEDIUM limit — see capSeverity() below).
+ *   HIGH is reserved for prompts that are genuinely broken per the
+ *   severity framework in llmAuditClient.js.
  *
  * Confidence: 65. Slightly higher than Tier 2 (60) because the regex
  * pre-filter eliminates prompts with no integration declarations,

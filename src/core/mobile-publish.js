@@ -22,6 +22,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { extractFindings } from '../utils/finding-parser.js';
+import { parseRepo } from './team-sync.js';
 
 const config = new Configstore('ghost-architect');
 
@@ -48,12 +49,6 @@ function getOctokit() {
   return createOctokit({ auth: cfg.token });
 }
 
-function parseRepo(repoUrl) {
-  const clean = repoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
-  const [owner, repo] = clean.split('/');
-  return { owner, repo };
-}
-
 async function getFileSha(octokit, owner, repo, filePath) {
   try {
     const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
@@ -76,8 +71,9 @@ async function upsertFile(octokit, owner, repo, filePath, content, message) {
 async function getFileContent(octokit, owner, repo, filePath) {
   try {
     const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
-    return JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
-  } catch { return null; }
+    const content = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+    return { content, sha: data.sha };
+  } catch { return { content: null, sha: null }; }
 }
 
 // ── Seat identity ─────────────────────────────────────────────────────────────
@@ -270,8 +266,8 @@ export async function publishProject(projectMeta, scanRecord) {
  * Update the portfolio index.
  */
 async function updateIndex(octokit, owner, repo, slug, payload) {
-  const existing = await getFileContent(octokit, owner, repo, 'index.json') || { projects: [] };
-  const projects = existing.projects || [];
+  const { content: existing } = await getFileContent(octokit, owner, repo, 'index.json');
+  const projects = (existing && existing.projects) || [];
 
   const idx = projects.findIndex(p => p.slug === slug);
   const entry = {
@@ -329,7 +325,7 @@ export async function listPublishedProjects() {
   try {
     const octokit = getOctokit();
     const { owner, repo } = parseRepo(cfg.repo);
-    const index = await getFileContent(octokit, owner, repo, 'index.json');
+    const { content: index } = await getFileContent(octokit, owner, repo, 'index.json');
     return index?.projects || [];
   } catch { return []; }
 }

@@ -18,6 +18,7 @@
  */
 
 import { createOctokit } from '../utils/octokit-client.js';
+import { slugify } from './projects.js';
 import Configstore from 'configstore';
 import fs           from 'fs';
 import path         from 'path';
@@ -197,8 +198,19 @@ export function buildDashboardSidecar(dashboardRows, projectsFullMeta) {
     // is approximate.
     let projectRemaining = [];
     if (meta && Array.isArray(meta.baselineFindings)) {
-      // Skip the first `resolved` baseline entries — approximation.
-      projectRemaining = meta.baselineFindings.slice(row.resolved || 0);
+      // Take the last (baseline - resolved) findings as the remaining set.
+      // slice(count-as-index) was incorrect — it treated a resolved count as
+      // a start index, producing a tail slice unrelated to which findings
+      // are actually unresolved. The correct approximation is to take the
+      // last `remaining` entries (most recent findings are appended, so the
+      // tail is the best available proxy until saveProjectIntelligence writes
+      // actual remainingFindings per the Future improvement note above). The
+      // explicit zero guard avoids slice(-0) returning the full array when a
+      // project is fully resolved.
+      const remainingCount = Math.max(0, (row.baseline || 0) - (row.resolved || 0));
+      projectRemaining = remainingCount > 0
+        ? meta.baselineFindings.slice(-remainingCount)
+        : [];
     }
 
     // Tag each remaining finding with project context for the aggregated
@@ -206,7 +218,7 @@ export function buildDashboardSidecar(dashboardRows, projectsFullMeta) {
     for (let i = 0; i < projectRemaining.length; i++) {
       const f = projectRemaining[i];
       remainingFindings.push({
-        id:          `${slugifyLabel(row.label)}__${i}`,
+        id:          `${slugify(row.label || '')}__${i}`,
         title:       f.title || '(untitled)',
         severity:    f.severity || 'MEDIUM',
         effortHours: f.effortHours || 0,
@@ -255,12 +267,6 @@ export function buildDashboardSidecar(dashboardRows, projectsFullMeta) {
   };
 }
 
-// Internal helper — keep in sync with core/projects.js slugify(), but we
-// duplicate it here so portal-publish.js doesn't have to import from
-// core/projects.js (which would create a circular dependency risk).
-function slugifyLabel(s) {
-  return (s || '').replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
-}
 
 // ── Severity counts from existing markdown for the manifest entry ─────────────
 //

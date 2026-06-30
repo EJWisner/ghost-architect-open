@@ -177,7 +177,7 @@ export async function detect(promptText, filePath, opts = {}) {
       const { line, column } = charIndexToLocation(promptText, charIndex);
 
       findings.push({
-        detector: 'injection/static-pattern',
+        detector: 'injectionStaticPattern',
         severity: 'MEDIUM',
         title: 'Possible prompt injection: ' + pattern.name,
         file: filePath,

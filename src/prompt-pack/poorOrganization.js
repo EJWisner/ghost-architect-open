@@ -65,13 +65,13 @@
  * Real structural friction, not perceived sloppiness.
  *
  * Severity policy:
- *   The LLM returns severity. We trust the call but cap at MEDIUM
- *   (Tier 2 advisory findings should not emit HIGH — those are LLM
- *   judgments, not load-bearing facts). Organization defects skew
+ *   The LLM returns severity. HIGH, MEDIUM, and LOW all pass through
+ *   (v5.3 removed the cap-at-MEDIUM limit — see capSeverity() below).
+ *   HIGH is reserved for prompts that are genuinely broken per the
+ *   severity framework in llmAuditClient.js. Organization defects skew
  *   LOW more than other Tier 2 defects because they degrade quality
  *   without breaking correctness; that's expected, not a tuning
- *   problem. See F-16 in PROMPT_TRIAGE_FOLLOWUPS.md for revisiting
- *   this cap.
+ *   problem.
  *
  * Confidence: 60. Same as the five live Tier 2 siblings.
  *
