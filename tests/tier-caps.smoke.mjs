@@ -27,11 +27,12 @@ function checkEqual(label, actual, expected) {
   }
 }
 
-// ── Test 1: all seven tiers resolve to their advertised caps ───────────────
-console.log('Test 1: all seven tiers return the correct context cap');
+// ── Test 1: all eight tiers resolve to their advertised caps ───────────────
+console.log('Test 1: all eight tiers return the correct context cap');
 {
   const expected = {
     open: 50000,
+    trial: 50000,      // trial shares Open's cap; must be an explicit key, not a fallback
     pro: 100000,
     'pro-max': 100000,
     team: 150000,

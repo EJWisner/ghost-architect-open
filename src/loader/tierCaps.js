@@ -7,6 +7,11 @@ import chalk from 'chalk';
 
 export const TIER_CAPS = {
   open: 50000,
+  // Trial behaves like Pro for mode access but shares Open's context cap.
+  // Must exist explicitly: getActiveTier() can return 'trial', and without this
+  // key getTierCap()/resolveContextCap() fall back to Open's 50K implicitly —
+  // correct value, but only by accident. Make it intentional.
+  trial: 50000,
   pro: 100000,
   team: 150000,
   enterprise: 200000,
@@ -22,6 +27,7 @@ export const TIER_CAPS = {
 
 const UPGRADE_HINTS = {
   open: 'Upgrade to Pro for 100K, Team for 150K, or Enterprise for 200K.',
+  trial: 'Upgrade to Ghost Pro for 100K token context and unlimited scans',
   pro: 'Upgrade to Team for 150K or Enterprise for 200K.',
   team: 'Upgrade to Enterprise for 200K.',
   enterprise: null,

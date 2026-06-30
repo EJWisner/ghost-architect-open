@@ -1817,7 +1817,7 @@ export async function narrateConflictReport(verificationResult, context = {}, on
 
   let report = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 5000, temperature: 0,
+    model: getModel(), max_tokens: 5000, temperature: 0.3,
     messages: [{ role: 'user', content: prompt }],
   });
 

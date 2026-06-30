@@ -5,6 +5,24 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.4] - 2026-06-30
+
+### Fixed
+
+- **`trial` tier now has an explicit context cap.** `TIER_CAPS` in
+  `src/loader/tierCaps.js` had no `trial` key, so a trial license fell back to
+  Open's 50K via the `?? TIER_CAPS.open` default — the right value, but only by
+  accident. `trial: 50000` is now explicit (trial shares Open's context cap; the
+  trial upgrade adds Pro mode access, not context), with a matching
+  `UPGRADE_HINTS` entry, and is locked in by `tests/tier-caps.smoke.mjs`.
+
+- **`narrateConflictReport` temperature aligned with the report-narration
+  family.** It generated prose at `temperature: 0` while every other report
+  narrator (`narrateReportSync` and the render-pass functions) uses `0.3`. The
+  conflict narrator is the conflict-mode sibling of `narrateReport`, so it now
+  uses `0.3` for consistent prose variability. (The 0.2 planning passes and the
+  deterministic executive-summary narrator are intentionally left as-is.)
+
 ## [9.4.3] - 2026-06-29
 
 ### Fixed
