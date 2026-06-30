@@ -2573,7 +2573,7 @@ async function main() {
             findings,
             ghostVersion: briefVersion,
             scanFile:     inputFile,
-            codemaseRoot: process.cwd(),
+            codebaseRoot: process.cwd(),
             tier:         getActiveTier() || 'open',
           });
 
@@ -3115,7 +3115,7 @@ if (process.argv.includes('--brief')) {
       findings,
       ghostVersion: version,
       scanFile: inputFile,
-      codemaseRoot: process.cwd(),
+      codebaseRoot: process.cwd(),
       tier: briefTier
     });
     const { jsonPath, htmlPath } = writeBrief(brief, outputFile, getBranding(profile));

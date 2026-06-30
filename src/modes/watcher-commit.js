@@ -1522,8 +1522,8 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     ...conflictFindings.map(f => ({ ...f, source_mode: 'conflict' })),
   ];
 
-  // @ghost-verified segregation (file-level). Findings whose files carry the
-  // @ghost-verified marker are pulled out of the active set so they stop
+  // The @ghost-verified segregation (file-level). Findings whose files carry
+  // the marker are pulled out of the active set so they stop
   // nagging on every commit, but are retained in verifiedFindings for the
   // auditable "Reviewed · Expected Behavior" surface (PR comment + scan file).
   // allFindings becomes the ACTIVE set so every downstream consumer (brief,

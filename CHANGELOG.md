@@ -5,6 +5,32 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.7] - 2026-06-30
+
+### Fixed
+
+- **`codemaseRoot` typo in `lib/ghostBrief.js` dropped the codebase root for
+  most callers.** `generateBrief` destructured a misspelled `codemaseRoot`
+  param, so every caller passing the correctly-spelled `codebaseRoot` (all three
+  Ghost Watcher™ brief calls and the dashboard brief) had its value silently
+  ignored and fell back to `process.cwd()`. The param is renamed to
+  `codebaseRoot`, and the two callers in `bin/ghost.js` that used the typo are
+  updated, so all six call sites now agree and the real codebase root flows
+  through to the brief's `codebase_root` field.
+
+- **`@ghost-verified` self-reference trap.** `scanForVerified` matched the bare
+  marker string anywhere in a file, so the feature's own implementation (the
+  `MARKER` constant, the PR-comment template text, and doc comments describing
+  the marker) would falsely mark `ghost-verified.js` and `watcher-commit.js` as
+  "verified" when Ghost Watcher™ scanned its own repo. Detection now requires
+  the marker to sit in **comment context** — the text before it must end with a
+  comment opener (`// `, `# `, `-- `, `/* `), which also adds Python/SQL/CSS
+  comment support — and scans every occurrence so a string-literal hit no longer
+  short-circuits a real comment elsewhere. The feature's own doc comments were
+  reworded so they no longer lead with the bare marker. `redactor.js`'s genuine
+  annotation is unaffected. Covered by new cases in
+  `tests/ghost-verified.smoke.mjs`.
+
 ## [9.4.6] - 2026-06-30
 
 ### Fixed

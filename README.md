@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.7** Fix codemaseRoot typo in ghostBrief.js -- codebaseRoot value now correctly passed from all callers instead of falling back to process.cwd(). Fix @ghost-verified self-reference trap -- annotation detection now requires comment-prefix context (// # -- /*), preventing string literals and doc comments from triggering false verified segregation. Adds Python, SQL, CSS comment support.
+
 **v9.4.6** Fix ghost --configure-admin-token header box rendering before the input prompt.
 
 **v9.4.5** Internal admin CLI commands for license management. Portal @ghost-verified renderer showing Reviewed · Expected Behavior section in Findings tab.

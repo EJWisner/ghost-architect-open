@@ -33,6 +33,12 @@ const fileMap = {
   'b.js': 'const y = 2;\n',
   'c.js': '// @ghost-verified\nfoo();\n',
   'empty.js': '',
+  // Marker inside a string literal — must NOT verify (self-reference trap).
+  'literal.js': "const MARKER = '@ghost-verified';\nexport { MARKER };\n",
+  // Python comment opener.
+  'script.py': '# @ghost-verified: reviewed by data team\nprint(1)\n',
+  // SQL comment opener.
+  'query.sql': '-- @ghost-verified\nSELECT 1;\n',
 };
 
 // ── Test 1: scanForVerified finds marker with reason ───────────────────────
@@ -105,6 +111,30 @@ console.log('Test 7: partitionFindings — verified when ANY file matches');
   checkEqual('not active', active.length, 0);
   checkEqual('verified via 3rd file', verified.length, 1);
   checkEqual('bare-marker reason null', verified[0].verifiedReason, null);
+}
+
+// ── Test 8: marker inside a string literal does NOT verify ─────────────────
+console.log('Test 8: marker in a string literal is not a comment, does not verify');
+{
+  const r = scanForVerified('literal.js', fileMap);
+  checkEqual('literal.js not verified', r.verified, false);
+  checkEqual('literal.js reason null', r.reason, null);
+}
+
+// ── Test 9: Python # comment marker verifies ───────────────────────────────
+console.log('Test 9: Python # @ghost-verified verifies');
+{
+  const r = scanForVerified('script.py', fileMap);
+  checkEqual('script.py verified', r.verified, true);
+  checkEqual('script.py reason captured', r.reason, 'reviewed by data team');
+}
+
+// ── Test 10: SQL -- comment marker verifies ────────────────────────────────
+console.log('Test 10: SQL -- @ghost-verified verifies');
+{
+  const r = scanForVerified('query.sql', fileMap);
+  checkEqual('query.sql verified', r.verified, true);
+  checkEqual('query.sql reason null', r.reason, null);
 }
 
 if (failures > 0) {

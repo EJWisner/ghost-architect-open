@@ -1,12 +1,12 @@
 // src/watch/ghost-verified.js
 //
-// @ghost-verified annotation system.
+// The @ghost-verified annotation system.
 //
 // A developer can mark code that Ghost Watcher flagged as reviewed-and-accepted
-// by dropping an in-code comment marker:
+// by adding a comment whose text is the marker, optionally with a reason:
 //
-//   // @ghost-verified
-//   // @ghost-verified: legacy adapter is intentional, reviewed 2026-06-29
+//   Example (bare):    @ghost-verified
+//   Example (reason):  @ghost-verified: legacy adapter is intentional, reviewed 2026-06-29
 //
 // During a watcher run, findings whose files carry this marker are segregated
 // out of the active set (so they stop nagging on every commit) but are NOT
@@ -19,14 +19,23 @@
 
 const MARKER = '@ghost-verified';
 
+// A marker only counts as an annotation when it sits directly after a comment
+// opener. This stops the marker STRING appearing in code (the MARKER constant
+// above, the PR-comment template text in watcher-commit.js, etc.) from falsely
+// verifying a file. indexOf/endsWith only — ReDoS-immune. Supports the common
+// single-line and block comment openers across languages.
+const COMMENT_PREFIXES = ['// ', '# ', '-- ', '/* '];
+
 /**
- * Scan a single file's content for the @ghost-verified marker.
+ * Scan a single file's content for the @ghost-verified marker in comment
+ * context.
  *
  * @param {string} filePath  path key to look up in fileMap
  * @param {Object} fileMap   { path -> content } map (codebaseContext.fileMap)
  * @returns {{ verified: boolean, reason: string|null }}
- *   verified:false (reason:null) if the file is absent from fileMap or has no
- *   marker. When the marker carries an optional ": reason" suffix, reason holds
+ *   verified:false (reason:null) if the file is absent, empty, or only contains
+ *   the marker outside a comment (e.g. inside a string literal). When a
+ *   comment-context marker carries an optional ": reason" suffix, reason holds
  *   the trimmed text up to end-of-line; otherwise reason is null.
  */
 export function scanForVerified(filePath, fileMap) {
@@ -38,26 +47,43 @@ export function scanForVerified(filePath, fileMap) {
     return { verified: false, reason: null };
   }
 
-  const markerIdx = content.indexOf(MARKER);
-  if (markerIdx === -1) {
-    return { verified: false, reason: null };
+  // Scan EVERY occurrence: a file may carry the marker in a string literal on
+  // one line and in a real comment on another. Only a comment-context hit
+  // verifies; the first such hit wins (and supplies the reason).
+  let searchFrom = 0;
+  while (true) {
+    const markerIdx = content.indexOf(MARKER, searchFrom);
+    if (markerIdx === -1) break;
+    searchFrom = markerIdx + MARKER.length;
+
+    // Text from the start of the marker's line up to the marker. If, after
+    // trimming leading whitespace, it ENDS WITH a comment opener, the marker is
+    // in comment context — either on its own comment line or trailing after
+    // code (e.g. `foo();` then a comment). A code string that merely contains
+    // the marker ends with a quote, not a comment opener, so it is skipped.
+    const lineStart = content.lastIndexOf('\n', markerIdx - 1) + 1;
+    const before = content.slice(lineStart, markerIdx).trimStart();
+    if (!COMMENT_PREFIXES.some((prefix) => before.endsWith(prefix))) {
+      continue;
+    }
+
+    // Comment-context hit. Optional reason: text after a ':' immediately
+    // following the marker, up to end of line.
+    let reason = null;
+    const afterMarker = markerIdx + MARKER.length;
+    let lineEnd = content.indexOf('\n', afterMarker);
+    if (lineEnd === -1) lineEnd = content.length;
+    const tail = content.slice(afterMarker, lineEnd);
+    const colonIdx = tail.indexOf(':');
+    if (colonIdx !== -1) {
+      const candidate = tail.slice(colonIdx + 1).trim();
+      if (candidate.length > 0) reason = candidate;
+    }
+
+    return { verified: true, reason };
   }
 
-  // Optional reason: text after a ':' immediately following the marker, up to
-  // the end of that line. "@ghost-verified: foo" -> "foo"; bare marker -> null.
-  let reason = null;
-  const afterMarker = markerIdx + MARKER.length;
-  // Find the end of the marker's line so the reason never bleeds into the next.
-  let lineEnd = content.indexOf('\n', afterMarker);
-  if (lineEnd === -1) lineEnd = content.length;
-  const tail = content.slice(afterMarker, lineEnd);
-  const colonIdx = tail.indexOf(':');
-  if (colonIdx !== -1) {
-    const candidate = tail.slice(colonIdx + 1).trim();
-    if (candidate.length > 0) reason = candidate;
-  }
-
-  return { verified: true, reason };
+  return { verified: false, reason: null };
 }
 
 /**
