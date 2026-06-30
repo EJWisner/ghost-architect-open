@@ -331,6 +331,29 @@ Replace \`tax = price\` with the corrected **base** computation.
 }
 console.log('');
 
+// ── Test 10: FILES_RE path-validation filter rejects junk tokens ────────────
+console.log('Test 10: junk file tokens are rejected by path-validation filter');
+{
+  // Simulate a finding whose Files: line contains the exact junk tokens
+  // seen in the f1506d1 Ghost Watcher run: a bare version string and a
+  // paren-contaminated path. Neither should survive into finding.files[].
+  const junkReport = [
+    '### npm Publish Junk Finding',
+    'Severity: MEDIUM',
+    'Files: 9.4.9, package.json (version field 9.4.9, src/watch/ghost-verified.js',
+    'Effort: 2 hours',
+    'A test finding with junk file tokens.',
+  ].join('\n');
+
+  const findings = extractFindings(junkReport);
+  check('junk finding extracted', findings.length, 1);
+  check('9.4.9 rejected', findings[0].files.includes('9.4.9'), false);
+  check('paren-junk rejected', findings[0].files.some(f => f.includes('(')), false);
+  check('real path kept', findings[0].files.includes('src/watch/ghost-verified.js'), true);
+  check('junk finding file count', findings[0].files.length, 1);
+}
+console.log('');
+
 // Summary
 if (failures > 0) {
   console.log('FAILED — ' + failures + ' assertion(s) did not pass');

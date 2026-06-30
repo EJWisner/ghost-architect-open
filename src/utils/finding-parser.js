@@ -190,7 +190,7 @@ export function extractFindings(reportText, opts = {}) {
 
       // Other non-finding sections (architecture overview, executive summary,
       // recommended fixes, cost breakdown, remediation summary).
-      if (/architecture|summary|recommended|cost breakdown|remediation summary/i.test(t)) {
+      if (/architecture|summary|recommended|cost breakdown|remediation summary|rollback plan|pre-change snapshot|rollback steps|point of no return|who to notify|smoke test after rollback/i.test(t)) {
         inNonFindingSection = true;
         inLandmarkSection = false;
         continue;
@@ -293,7 +293,17 @@ export function extractFindings(reportText, opts = {}) {
         current.files = fim[1].split(/[,;]/)
           .map(f => f.trim().replace(/`/g, '').replace(/\*+/g, '').replace(/^\(|\)$/g, '').trim())
           .filter(Boolean)
-          .filter(f => !/^(none|n\/a|not\s+(specified|applicable))/i.test(f));
+          .filter(f => !/^(none|n\/a|not\s+(specified|applicable))/i.test(f))
+          .filter(f => {
+            // Reject tokens that are not real file paths:
+            // - all-digit-and-dot strings (version strings like "9.4.9")
+            // - tokens with spaces or parentheses ("package.json (version field 9.4.9")
+            // - tokens without a dotted extension or invalid path characters
+            // Mirrors looksLikeFilePath in watcher-commit.js.
+            if (/^[\d.]+$/.test(f)) return false;
+            if (/\s/.test(f) || f.includes('(') || f.includes(')')) return false;
+            return /\.[A-Za-z0-9]+$/.test(f) && /^[\w./@-]+$/.test(f);
+          });
         continue;
       }
 

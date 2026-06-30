@@ -5,6 +5,30 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.10] - 2026-06-30
+
+### Fixed
+
+- **Finding-quality hardening for Ghost Watcher™.** Junk file tokens (bare
+  version strings like `9.4.9`, paren-contaminated paths such as
+  `package.json (version field 9.4.9`) are now rejected from `Files:`
+  extraction in `src/utils/finding-parser.js`. Rollback-plan report sections
+  (Pre-Change Snapshot, Rollback Steps, Point of No Return, Who to Notify,
+  Smoke Test After Rollback) are no longer mis-parsed as findings. Self-refuting
+  conflict findings (the model flags a conflict then states "no actual
+  conflict" / "values match" / "consistent") are dropped before surfacing in
+  `src/modes/watcher-commit.js`. Wired `tests/finding-parser.smoke.mjs` into
+  the npm test chain with a regression test asserting junk tokens are rejected.
+
+## [9.4.9] - 2026-06-30
+
+### Fixed
+
+- **`scanForVerified` rejects non-source files via a `SOURCE_EXTENSIONS`
+  allowlist** (`.md`, `.json`, `.yaml`, `.yml`, `.txt`, `.html`) -- closes
+  false-positive verified findings on documentation files that contain the
+  `@ghost-verified` marker as plain text.
+
 ## [9.4.8] - 2026-06-30
 
 ### Changed

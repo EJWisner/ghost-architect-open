@@ -1494,7 +1494,13 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           console.log(`Ghost Watcher: ${vr.stats.eliminated} false positives eliminated, ${conflictCandidates.length} kept\n`);
         }
 
-        conflictFindings = conflictCandidates.map(normalizeCandidateToFinding);
+        // Drop self-refuting conflict findings: if the model flagged a conflict
+        // and then said "no actual conflict" / "no runtime conflict" / "consistent"
+        // in its own detail text, the finding is noise. Remove before surfacing.
+        const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+conflict|no\s+issue|consistent\b|values\s+match|intentionally\s+different/i;
+        conflictFindings = conflictCandidates
+          .filter(c => !SELF_REFUTING_RE.test(c.evidence || c.description || ''))
+          .map(normalizeCandidateToFinding);
         const conflictUsage = sumBatchUsage(conflictResults);
         totalInputTokens  += conflictUsage.inputTokens;
         totalOutputTokens += conflictUsage.outputTokens;

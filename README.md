@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.10** -- fix: finding quality improvements -- junk file tokens (version strings, paren-contaminated paths) rejected from Files extraction; rollback-plan report sections no longer parsed as findings; self-refuting conflict findings dropped before surfacing; finding-parser smoke test wired into npm test chain
+
 ### v9.4.9
 - fix: `scanForVerified` now rejects non-source files (`.md`, `.json`, `.yaml`, `.yml`, `.txt`, `.html`) via `SOURCE_EXTENSIONS` allowlist -- closes false-positive verified findings on documentation files that contain the `@ghost-verified` marker as text
 
