@@ -125,13 +125,20 @@ export function getCostFraming(totalCost) {
 }
 
 export class SessionCostTracker {
-  constructor() { this.runs = []; }
+  constructor() { this.runs = []; this.stageTotals = {}; }
 
-  record(mode, inputTokens, outputTokens, model) {
+  record(mode, inputTokens, outputTokens, model, stage = 'scan') {
     const pricing = getPricing(model);
     const cost = ((inputTokens  / 1_000_000) * pricing.inputPerM) +
                  ((outputTokens / 1_000_000) * pricing.outputPerM);
-    this.runs.push({ mode, inputTokens, outputTokens, cost });
+    this.runs.push({ mode, inputTokens, outputTokens, model, cost, stage });
+
+    if (!this.stageTotals[stage]) {
+      this.stageTotals[stage] = { inputTokens: 0, outputTokens: 0, cost: 0 };
+    }
+    this.stageTotals[stage].inputTokens += inputTokens;
+    this.stageTotals[stage].outputTokens += outputTokens;
+    this.stageTotals[stage].cost += cost;
   }
 
   get totalCost() {
@@ -142,6 +149,7 @@ export class SessionCostTracker {
     return {
       runs: this.runs,
       totalCost: this.totalCost,
+      byStage: this.stageTotals,
     };
   }
 }

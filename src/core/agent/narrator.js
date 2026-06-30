@@ -33,12 +33,36 @@ import { sanitizeForDebugLog, pruneOldDebugLogs } from './verifier.js';
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
 
+// Models that reject temperature/sampling parameters.
+// Keep in sync with PRICING table in src/core/estimator.js.
+// When adding a new model, verify whether it rejects temperature and update here.
+const MODELS_WITHOUT_TEMPERATURE = new Set([
+  'claude-opus-4-7',
+  'claude-opus-4-8',
+  'claude-sonnet-5',
+  'claude-opus-5',
+]);
+
+// Prefix matches for dated snapshot variants (e.g. claude-sonnet-5-20250601)
+const MODEL_PREFIXES_WITHOUT_TEMPERATURE = [
+  'claude-opus-4-7-',
+  'claude-opus-4-8-',
+  'claude-sonnet-5-',
+  'claude-opus-5-',
+];
+
+function modelRejectsTemperature(model) {
+  if (!model) return false;
+  if (MODELS_WITHOUT_TEMPERATURE.has(model)) return true;
+  return MODEL_PREFIXES_WITHOUT_TEMPERATURE.some(prefix => model.startsWith(prefix));
+}
+
 // Sonnet 5 and newer models do not accept temperature/top_p/top_k parameters.
 // Passing any value (including 0) returns a 400 error. This helper returns
 // only the params that are safe for the active model.
 function getSamplingParams(temperature) {
   const model = getModel();
-  if (model.includes('sonnet-5') || model.includes('opus-4-7') || model.includes('opus-4-8') || model.includes('opus-5')) {
+  if (modelRejectsTemperature(model)) {
     return {}; // newer models use adaptive thinking, no sampling params
   }
   return { temperature };

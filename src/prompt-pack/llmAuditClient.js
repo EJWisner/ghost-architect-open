@@ -175,7 +175,7 @@ process.once('exit', () => {
 let anthropicClient = null;
 let anthropicClientLoadFailed = false;
 
-async function getAnthropicClient() {
+export async function getAnthropicClient() {
   if (anthropicClient) return anthropicClient;
   if (anthropicClientLoadFailed) return null;
   try {

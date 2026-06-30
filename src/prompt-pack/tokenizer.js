@@ -121,43 +121,12 @@ function cacheKey(fn, modelId, text) {
 
 // ── Anthropic API counter ──────────────────────────────────────────────────
 
-// Lazy-loaded Anthropic client. Instantiated on first need so we
-// don't pay the SDK import cost when no Claude prompts are audited.
-let anthropicClient = null;
-let anthropicClientLoadFailed = false;
-
+// Delegate to the single shared Anthropic client owned by llmAuditClient.js
+// so the exact token counter and the Tier 2 audit detectors share one client
+// instance and one failure flag (no separate, uncoordinated singletons).
 async function getAnthropicClient() {
-  if (anthropicClient) return anthropicClient;
-  if (anthropicClientLoadFailed) return null;
-  try {
-    const mod = await import('@anthropic-ai/sdk');
-    // The SDK is CJS with `exports.Anthropic = class`. Dynamic import
-    // from ESM exposes the class as mod.Anthropic. The fallback
-    // (mod.default && mod.default.Anthropic) covers a future bundler
-    // shape where everything is on `default`.
-    const Anthropic = mod.Anthropic || (mod.default && mod.default.Anthropic);
-    if (!Anthropic) {
-      anthropicClientLoadFailed = true;
-      return null;
-    }
-    // The SDK reads ANTHROPIC_API_KEY from env automatically, but Ghost
-    // users typically configure their key via `ghost setup` (configstore)
-    // and never set the env var. Resolve through Ghost's normal key
-    // resolution path so the audit client sees the same key that POI/
-    // Blast/Conflict do. If no key is configured anywhere, the SDK
-    // constructor will throw at call time and our try/catch handles it.
-    const apiKey = resolveApiKey();
-    if (!apiKey) {
-      // No key configured. Don't even instantiate; audit will fail open.
-      anthropicClientLoadFailed = true;
-      return null;
-    }
-    anthropicClient = new Anthropic({ apiKey });
-    return anthropicClient;
-  } catch (err) {
-    anthropicClientLoadFailed = true;
-    return null;
-  }
+  const { getAnthropicClient: getLLMClient } = await import('./llmAuditClient.js');
+  return getLLMClient();
 }
 
 /**

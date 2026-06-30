@@ -12,13 +12,28 @@
 
 // ── Keep in sync with getSamplingParams in src/core/agent/narrator.js ──────
 // ── and src/modes/watcher-commit.js ────────────────────────────────────────
+const MODELS_WITHOUT_TEMPERATURE = new Set([
+  'claude-opus-4-7',
+  'claude-opus-4-8',
+  'claude-sonnet-5',
+  'claude-opus-5',
+]);
+
+const MODEL_PREFIXES_WITHOUT_TEMPERATURE = [
+  'claude-opus-4-7-',
+  'claude-opus-4-8-',
+  'claude-sonnet-5-',
+  'claude-opus-5-',
+];
+
+function modelRejectsTemperature(model) {
+  if (!model) return false;
+  if (MODELS_WITHOUT_TEMPERATURE.has(model)) return true;
+  return MODEL_PREFIXES_WITHOUT_TEMPERATURE.some(prefix => model.startsWith(prefix));
+}
+
 function getSamplingParams(temperature, model) {
-  if (
-    model.includes('sonnet-5') ||
-    model.includes('opus-4-7') ||
-    model.includes('opus-4-8') ||
-    model.includes('opus-5')
-  ) {
+  if (modelRejectsTemperature(model)) {
     return {};
   }
   return { temperature };

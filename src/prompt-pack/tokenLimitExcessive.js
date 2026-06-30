@@ -2,7 +2,7 @@
  * src/prompt-pack/tokenLimitExcessive.js
  *
  * Detector #4: Token limit excessive — approaching context window
- * (Tier 2, hybrid).
+ * (Tier 1, hybrid).
  *
  * Flags prompts that consume a high percentage of the target model's
  * context window without actually overflowing. Distinct from

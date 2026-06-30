@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.14** -- fix: 18 conflict-finding cleanups -- portal-publish parseRepo GHES-aware; shared Anthropic client singleton; capSeverity HIGH enforcement in poorOrganization/poorDocumentation/inefficientFewShot; corrected-file-generator prose filter narrowed; blast-multipass resolveApiKey; findingsFromResults confidence 0-100; dashboard severity null fallback; dedup dead detector ID removed; conflict prompt imports through barrel; tokenLimit tier labels corrected; skipTiers docs; upsertFile encoding contract normalized across 4 files; fileMap refactor in loader; conflict session prefix hardened; SessionCostTracker stage tracking; getSamplingParams explicit allowlist; codemaseRoot test fixture fixed
+
 **v9.4.13** -- fix: enterprise.js + mobile-publish.js use robust GHES-aware parseRepo from team-sync.js; dashboard remainingFindings slice bug fixed (Jira export); storePendingBatch SHA conflict retry; 14 conflict-finding cleanups (stale docstrings, getModel rename, detector ID, session type guard, slugify dedup, MODE_OUTPUT_ESTIMATES forecast modes, Sonnet 5 sampling param guard + pricing, separate POST per conflict chunk, cancel handler for stuck ANALYZING state)
 
 **v9.4.12** -- fix: Conflict Detection now chunks large codebases into sub-900 KB batches to prevent CI upload drops; all chunk findings merged via extractCandidates; conflict-chunking smoke test added and wired into npm test chain

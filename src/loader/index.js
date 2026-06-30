@@ -896,14 +896,15 @@ function buildContext(fileMap) {
 
   // Use the redacted fileMap going forward — modes that read .fileMap directly
   // (e.g. multi-pass POI / Conflict) need redacted content too, not just the
-  // assembled .context string.
-  fileMap = redactedFileMap;
+  // assembled .context string. Bind to a named local rather than reassigning the
+  // parameter so the input vs. redacted-output distinction stays explicit.
+  const activeFileMap = redactedFileMap;
 
   let context = '';
   let fileIndex = [];
   let approxTokens = 0;
 
-  for (const [filePath, content] of Object.entries(fileMap)) {
+  for (const [filePath, content] of Object.entries(activeFileMap)) {
     const approxFileTokens = Math.ceil(content.length / 4);
     if (approxTokens + approxFileTokens > maxTokens) continue;
 
@@ -912,7 +913,7 @@ function buildContext(fileMap) {
     approxTokens += approxFileTokens;
   }
 
-  const totalFiles = Object.keys(fileMap).length;
+  const totalFiles = Object.keys(activeFileMap).length;
   const loadedFiles = fileIndex.length;
 
   // Announce the effective context cap once per scan so users understand what's in play.
@@ -927,5 +928,5 @@ function buildContext(fileMap) {
     console.log(chalk.green(`  ✓ Processed ${loadedFiles} files (~${approxTokens.toLocaleString()} tokens)`));
   }
 
-  return { context, fileIndex, totalFiles, loadedFiles, fileMap };
+  return { context, fileIndex, totalFiles, loadedFiles, fileMap: activeFileMap };
 }

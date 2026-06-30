@@ -23,6 +23,14 @@ import os from 'os';
 
 const LOCAL_SYNC_DIR = path.join(os.homedir(), 'Ghost Architect Reports', 'team-sync');
 
+// Shared content encoder for GitHub API file writes.
+// Buffer → raw bytes; string → UTF-8; object → JSON.stringify then UTF-8.
+function encodeFileContent(content) {
+  if (Buffer.isBuffer(content)) return content.toString('base64');
+  if (typeof content === 'string') return Buffer.from(content, 'utf8').toString('base64');
+  return Buffer.from(JSON.stringify(content, null, 2), 'utf8').toString('base64');
+}
+
 // ── Octokit instance ──────────────────────────────────────────────────────────
 
 function getOctokit(syncEntry) {
@@ -101,7 +109,7 @@ async function getFileSha(octokit, owner, repo, filePath) {
 
 async function upsertFile(octokit, owner, repo, filePath, content, message) {
   const sha = await getFileSha(octokit, owner, repo, filePath);
-  const encoded = Buffer.from(content).toString('base64');
+  const encoded = encodeFileContent(content);
   await octokit.rest.repos.createOrUpdateFileContents({
     owner, repo,
     path: filePath,

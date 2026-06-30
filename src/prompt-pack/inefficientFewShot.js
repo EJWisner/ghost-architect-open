@@ -386,8 +386,7 @@ export async function detect(promptText, filePath, opts = {}) {
  * HIGH was hiding load-bearing signal from users.
  */
 function capSeverity(s) {
-  if (s === 'HIGH' || s === 'MEDIUM' || s === 'LOW') return s;
-  // Defensive: client validated this already, but fall back to LOW
-  // if something slipped through.
+  if (s === 'MEDIUM' || s === 'LOW') return s;
+  if (s === 'HIGH') return 'MEDIUM';
   return 'LOW';
 }

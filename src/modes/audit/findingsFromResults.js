@@ -13,13 +13,13 @@
 //     severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW',
 //     files: string[],
 //     effortHours: number,        // 0 if not estimable
-//     confidence: number | null,  // 0..1
+//     confidence: number | null,  // 0-100 integer (matches finding-parser.js and portal-publish.js)
 //     detail: string,
 //   }
 //
 // Unlike POI/Blast/Conflict which model-generate findings as markdown and
 // parse them out via extractFindings(), Audit's findings are produced
-// programmatically by deterministic analyzers. confidence is high (1.0)
+// programmatically by deterministic analyzers. confidence is high (100)
 // because these are not LLM judgments — they are direct observations from
 // the codebase (manifest files, git history, dependency tree).
 
@@ -83,7 +83,7 @@ export function findingsFromAuditResults(results) {
         severity: 'HIGH',
         files: Array.isArray(f.manifestPaths) ? f.manifestPaths : [],
         effortHours: effortFor('eol_framework'),
-        confidence: 1.0,
+        confidence: 100,
         detail: `${displayName} ${ver} reached end-of-life on ${eolDate}. ${f.note || 'No further security patches or upstream support.'} Upgrade path required before any commercial transfer or new feature work.`,
       });
     }
@@ -123,7 +123,7 @@ export function findingsFromAuditResults(results) {
         severity: sev,
         files: manifestFiles,
         effortHours: effortFor(effortKey, count),
-        confidence: 1.0,
+        confidence: 100,
         detail: `${callout.summary} Affected packages: ${packages.slice(0, 12).join(', ')}${packages.length > 12 ? `, and ${packages.length - 12} more` : ''}.`,
       });
     }
@@ -140,7 +140,7 @@ export function findingsFromAuditResults(results) {
         severity: 'MEDIUM',
         files: [],
         effortHours: effortFor('framework_fragmentation'),
-        confidence: 0.9,
+        confidence: 90,
         detail: typeof surprise === 'string' ? surprise : String(surprise),
       });
     }
@@ -164,7 +164,7 @@ export function findingsFromAuditResults(results) {
         severity: sev,
         files: [],
         effortHours: effortFor('contributor_concentration'),
-        confidence: 1.0,
+        confidence: 100,
         detail: `Codebase shows ${conc} concentration of code authorship. ${busFactor}${calloutText} Knowledge-transfer plan recommended before key contributors depart.`.trim(),
       });
     }

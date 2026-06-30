@@ -84,7 +84,6 @@ const SPECIFIC_DETECTORS = new Set([
   'undefinedOutputFormat',
   'unboundedOutput',
   'injectionStaticPattern',
-  'injection/static-pattern',  // legacy detector ID format
   'inefficientFewShot',
   'tokenLimitContextOverflow',
   'tokenLimitExcessive',

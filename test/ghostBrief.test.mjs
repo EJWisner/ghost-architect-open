@@ -75,7 +75,7 @@ function makeValidBriefInput(prompts) {
     findings: prompts,
     ghostVersion: '7.2.2',
     scanFile: 'ghost-report.json',
-    codemaseRoot: '/tmp/test-codebase'
+    codebaseRoot: '/tmp/test-codebase'
   };
 }
 

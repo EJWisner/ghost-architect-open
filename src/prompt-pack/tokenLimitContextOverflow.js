@@ -1,7 +1,7 @@
 /**
  * src/prompt-pack/tokenLimitContextOverflow.js
  *
- * Detector #3: Token limit context overflow (Tier 2, hybrid).
+ * Detector #3: Token limit context overflow (Tier 1, hybrid).
  *
  * Flags prompts whose token count exceeds the target model's context
  * window. The user already knows when a prompt is over the limit (the

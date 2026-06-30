@@ -24,8 +24,17 @@ import fs           from 'fs';
 import path         from 'path';
 import os           from 'os';
 import { extractFindings, generateFindingId } from '../utils/finding-parser.js';
+import { parseRepo } from './team-sync.js';
 
 const config = new Configstore('ghost-architect');
+
+// Shared content encoder for GitHub API file writes.
+// Buffer → raw bytes; string → UTF-8; object → JSON.stringify then UTF-8.
+function encodeFileContent(content) {
+  if (Buffer.isBuffer(content)) return content.toString('base64');
+  if (typeof content === 'string') return Buffer.from(content, 'utf8').toString('base64');
+  return Buffer.from(JSON.stringify(content, null, 2), 'utf8').toString('base64');
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -50,12 +59,6 @@ function getOctokit() {
   return createOctokit({ auth: cfg.token });
 }
 
-function parseRepo(repoUrl) {
-  const clean = repoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
-  const [owner, repo] = clean.split('/');
-  return { owner, repo };
-}
-
 async function getFileSha(octokit, owner, repo, filePath) {
   try {
     const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
@@ -65,9 +68,7 @@ async function getFileSha(octokit, owner, repo, filePath) {
 
 async function upsertFile(octokit, owner, repo, filePath, content, message) {
   const sha = await getFileSha(octokit, owner, repo, filePath);
-  const encoded = Buffer.isBuffer(content)
-    ? content.toString('base64')
-    : Buffer.from(content).toString('base64');
+  const encoded = encodeFileContent(content);
   await octokit.rest.repos.createOrUpdateFileContents({
     owner, repo,
     path: filePath,
@@ -220,7 +221,7 @@ export function buildDashboardSidecar(dashboardRows, projectsFullMeta) {
       remainingFindings.push({
         id:          `${slugify(row.label || '')}__${i}`,
         title:       f.title || '(untitled)',
-        severity:    f.severity || 'MEDIUM',
+        severity:    f.severity || null,
         effortHours: f.effortHours || 0,
         project:     row.label,
         projectLastScan: row.lastScan,

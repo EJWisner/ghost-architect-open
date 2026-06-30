@@ -162,6 +162,11 @@ const REGISTRY = [
  *                              and Tier 3). Used by the smoke harness to
  *                              avoid live API calls during routine
  *                              detector verification. Default: [].
+ *                              Note: tokenLimitContextOverflow and
+ *                              tokenLimitExcessive are Tier 1 but may make
+ *                              Anthropic API calls for Claude target models
+ *                              (countTokens endpoint). Pass skipTiers: [1, 2]
+ *                              to avoid all API calls.
  *                              opts.verbose - if true, skip the dedup pass
  *                              and return ALL detector findings including
  *                              overlapping duplicates. Default: false.

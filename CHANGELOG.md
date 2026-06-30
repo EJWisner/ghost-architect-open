@@ -5,6 +5,27 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.14] - 2026-06-30
+
+### Fixed
+- **portal-publish.js parseRepo.** Replaced naive github.com-only parser with robust GHES-aware import from team-sync.js.
+- **Shared Anthropic client.** tokenizer.js delegates to llmAuditClient.js getAnthropicClient() -- single singleton, shared failure state.
+- **capSeverity HIGH enforcement.** poorOrganization, poorDocumentation, inefficientFewShot now clamp HIGH to MEDIUM at code level.
+- **corrected-file-generator prose filter.** Removed before/after/it/the/to/in from prose list; added =<> to syntaxChars.
+- **blast-multipass API key.** Uses resolveApiKey() + Sonnet 5 sampling guard.
+- **Audit confidence scale.** findingsFromResults.js corrected from 0..1 float to 0-100 integer.
+- **Dashboard severity null.** buildDashboardSidecar severity fallback changed to null.
+- **dedup dead entry.** Removed stale injection/static-pattern legacy detector ID.
+- **Conflict prompt barrel import.** watcher-commit.js imports through prompts/index.js.
+- **tokenLimit tier labels.** File headers corrected to Tier 1.
+- **skipTiers docs.** runAll updated to note Tier 1 token detectors may make API calls.
+- **upsertFile encoding contract.** Normalized across portal-publish.js, mobile-publish.js, team-sync.js, enterprise.js -- all use shared encodeFileContent helper (Buffer/string/object-aware).
+- **loader fileMap refactor.** buildContext no longer reassigns the fileMap parameter -- introduced activeFileMap for clarity.
+- **Conflict session prefix hardened.** SESSION_PREFIX changed to conflictscan-- to prevent namespace collision with POI sessions.
+- **SessionCostTracker stage tracking.** record() accepts optional stage param; getSummary() exposes byStage cost breakdown.
+- **getSamplingParams explicit allowlist.** Replaced fragile substring matching with MODELS_WITHOUT_TEMPERATURE set and prefix list in narrator.js and watcher-commit.js.
+- **codemaseRoot test fixture.** Fixed typo in test/ghostBrief.test.mjs.
+
 ## [9.4.13] - 2026-06-30
 
 ### Fixed
