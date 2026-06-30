@@ -3,7 +3,7 @@ Ghost Architect dogfood corpus entry
 
 Title:  Points of Interest system prompt (with consultant profile)
 Source: prompts/index.js :: buildSystemPOI(DEFAULT_RATES, SAMPLE_PROFILE)
-Generated: 2026-05-10T15:19:20.168Z
+Generated: 2026-06-30T23:44:02.175Z
 
 This file is a snapshot of a real Ghost Architect system prompt.
 Used as a test fixture for Prompt Triage detectors.

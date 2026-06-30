@@ -3,7 +3,7 @@ Ghost Architect dogfood corpus entry
 
 Title:  Blast Radius system prompt (no profile)
 Source: prompts/index.js :: buildSystemBlast(DEFAULT_RATES, null)
-Generated: 2026-05-10T15:19:20.168Z
+Generated: 2026-06-30T23:44:02.176Z
 
 This file is a snapshot of a real Ghost Architect system prompt.
 Used as a test fixture for Prompt Triage detectors.

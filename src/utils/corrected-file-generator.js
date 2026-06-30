@@ -26,8 +26,8 @@
 //   1. It ends with `:` AND contains no PHP/JS syntax chars ($, {, }, (, ), ;)
 //      — catches "Add validation before setStatus() call:" style headers
 //   2. OR it starts with a common prose word (case-insensitive): this, adds,
-//      ensures, prevents, around, before, after, following, note, warning,
-//      here, which, it, the, to, in, — catches "This adds a safety check..." style
+//      ensures, prevents, around, following, note, warning, here, which
+//      — catches "This adds a safety check..." style
 //
 // Empty lines are preserved as-is (blank lines in code are meaningful).
 // Lines that contain code-syntax characters are always preserved regardless.

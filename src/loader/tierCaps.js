@@ -74,11 +74,13 @@ export function resolveContextCap(tier, userRequested, source = 'default') {
     let msg;
     if (source === 'config') {
       msg = `⚠ Context cap clamped from ${userRequested.toLocaleString()} (from saved settings) to ${tierCap.toLocaleString()} on the ${normalizedTier} tier. Run \`ghost --reconfigure\` to update your default.`;
+    } else if (source === 'default') {
+      // Defensive case: no flag and no saved value, but the resolved default
+      // still exceeds the cap. Word it without naming --max-context, which the
+      // user never passed.
+      msg = `⚠ Default context value ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
     } else {
-      // 'cli' (the common case) or 'default' fallback — both reference --max-context
-      // as the visible source. 'default' is a defensive case that shouldn't occur in
-      // practice (default = 50000 = Open's cap, never exceeds), but the wording is
-      // safe if it ever does.
+      // 'cli' (the common case) references --max-context as the visible source.
       msg = `⚠ --max-context ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
     }
     console.warn(chalk.yellow(msg));

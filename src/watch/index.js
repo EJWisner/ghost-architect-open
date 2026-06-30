@@ -8,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'yaml';
 import { createOctokit } from '../utils/octokit-client.js';
+import { parseRepo } from '../core/team-sync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_TEMPLATE_PATH = path.join(__dirname, 'github-actions-template.yml');
@@ -15,12 +16,6 @@ const WORKFLOW_DEST_PATH     = '.github/workflows/ghost-watcher.yml';
 const WATCH_CONFIG_PATH      = 'ghost-watcher.yaml';
 
 // ── Octokit helpers ───────────────────────────────────────────────────────────
-
-function parseRepo(repoUrl) {
-  const clean = repoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
-  const [owner, repo] = clean.split('/');
-  return { owner, repo };
-}
 
 async function upsertRepoFile(octokit, owner, repo, filePath, content, message) {
   let sha = null;

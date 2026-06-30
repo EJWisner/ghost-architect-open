@@ -89,9 +89,9 @@
  * work." Real demonstrative failure, not perceived gaps.
  *
  * Severity policy:
- *   The LLM returns severity. HIGH, MEDIUM, and LOW all pass through
- *   (v5.3 removed the cap-at-MEDIUM limit — see capSeverity() below).
- *   HIGH is reserved for prompts that are genuinely broken per the
+ *   The LLM returns severity, but capSeverity() below clamps HIGH to
+ *   MEDIUM — these findings must never exceed MEDIUM severity. The LLM
+ *   envelope still reserves HIGH for genuinely broken prompts per the
  *   severity framework in llmAuditClient.js. Inefficient few-shot
  *   findings skew MEDIUM more than LOW because the defect is
  *   typically structural (contradictions, placeholders) rather than
@@ -377,14 +377,8 @@ export async function detect(promptText, filePath, opts = {}) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/**
- * Validate LLM-returned severity. v5.3 removed the cap-at-MEDIUM
- * limit — with proper severity calibration in the envelope (see
- * llmAuditClient.js), the LLM now correctly reserves HIGH for
- * prompts that are genuinely broken (impossible joint satisfaction,
- * context overflow, injection patterns disabling safety). Suppressing
- * HIGH was hiding load-bearing signal from users.
- */
+// Policy: inefficient-few-shot findings must never exceed MEDIUM severity.
+// HIGH is clamped to MEDIUM to prevent over-alerting on style issues.
 function capSeverity(s) {
   if (s === 'MEDIUM' || s === 'LOW') return s;
   if (s === 'HIGH') return 'MEDIUM';

@@ -91,9 +91,9 @@
  * maintainability friction, not perceived sparseness.
  *
  * Severity policy:
- *   The LLM returns severity. HIGH, MEDIUM, and LOW all pass through
- *   (v5.3 removed the cap-at-MEDIUM limit — see capSeverity() below).
- *   HIGH is reserved for prompts that are genuinely broken per the
+ *   The LLM returns severity, but capSeverity() below clamps HIGH to
+ *   MEDIUM — these findings must never exceed MEDIUM severity. The LLM
+ *   envelope still reserves HIGH for genuinely broken prompts per the
  *   severity framework in llmAuditClient.js. Documentation defects skew
  *   LOW more than other Tier 2 defects because they degrade
  *   maintainability rather than break correctness; that's expected,
@@ -390,14 +390,8 @@ export async function detect(promptText, filePath, opts = {}) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/**
- * Validate LLM-returned severity. v5.3 removed the cap-at-MEDIUM
- * limit — with proper severity calibration in the envelope (see
- * llmAuditClient.js), the LLM now correctly reserves HIGH for
- * prompts that are genuinely broken (impossible joint satisfaction,
- * context overflow, injection patterns disabling safety). Suppressing
- * HIGH was hiding load-bearing signal from users.
- */
+// Policy: poor-documentation findings must never exceed MEDIUM severity.
+// HIGH is clamped to MEDIUM to prevent over-alerting on stylistic issues.
 function capSeverity(s) {
   if (s === 'MEDIUM' || s === 'LOW') return s;
   if (s === 'HIGH') return 'MEDIUM';

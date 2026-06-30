@@ -5,6 +5,16 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.15] - 2026-06-30
+
+### Fixed
+- **src/watch/index.js parseRepo.** Replaced naive github.com-only parseRepo with GHES-aware import from team-sync.js -- the last remaining naive parser in the codebase.
+- **resolveContextCap default message.** Warning no longer references --max-context when the source is 'default' (user never passed that flag).
+- **wizard.js dead import.** Removed unused import YAML from wizard.js.
+- **capSeverity docstrings.** poorOrganization, poorDocumentation, inefficientFewShot docstrings corrected to reflect intentional HIGH→MEDIUM policy rather than stale v5.3 cap-removal claim.
+- **corrected-file-generator docstring.** Prose-word list in cleanPatchInstruction header comment aligned to the actual current regex.
+- **prompts-extracted snapshots regenerated.** Conflict prompt snapshots (06-conflict-default.md, 07-conflict-with-profile.md) now reflect current JSON output format instead of stale markdown format.
+
 ## [9.4.14] - 2026-06-30
 
 ### Fixed

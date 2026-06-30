@@ -34,7 +34,6 @@ import os from 'os';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
-import YAML from 'yaml';
 import { slugify, profilePathFor } from './writer.js';
 
 const HEX_COLOR_RE = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
