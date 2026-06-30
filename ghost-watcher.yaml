@@ -17,6 +17,11 @@ ghost_watcher:
     detailed_prompts: true
   batch:
     poll_interval_seconds: 30
+    # 90 minutes is the batch poll timeout -- the actual limiting
+    # factor for large scans. The Actions job timeout (360 min)
+    # ensures GitHub never kills the job prematurely.
+    # Batches exceeding this limit are stored and resumed on
+    # the next push via the store-and-resume flow.
     timeout_minutes: 90
   portal:
     repo: https://github.com/EJWisner/ghost-reports-portal-test

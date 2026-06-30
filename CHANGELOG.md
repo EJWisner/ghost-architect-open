@@ -5,6 +5,20 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.8] - 2026-06-30
+
+### Changed
+
+- **Documentation-only: clarified Ghost Watcher™ timeout relationship and the
+  token-usage rate source.** Added a comment in `ghost-watcher.yaml` above
+  `batch.timeout_minutes: 90` explaining that the batch poll timeout is the
+  actual limiting factor, the 360-minute Actions job timeout only prevents
+  GitHub from killing the job early, and batches exceeding the limit are
+  stored and resumed on the next push. Reworded the `buildTokenUsage` comment
+  in `src/modes/watcher-commit.js` to state that rates come from `getPricing()`
+  multiplied by `BATCH_DISCOUNT` rather than quoting hardcoded dollar amounts.
+  No behavior change.
+
 ## [9.4.7] - 2026-06-30
 
 ### Fixed

@@ -950,8 +950,8 @@ export function sumBatchUsage(results) {
 // standard rates. Standard per-model rates come from getPricing() (the single
 // pricing source of truth); the batch rate is standard * BATCH_DISCOUNT, the
 // same relationship cost-estimator.js uses. Pinned to the watcher-default
-// claude-sonnet-4-6 ($3.00/$15.00 standard → $1.50/$7.50 batch). Cost rounded
-// to 6 dp.
+// claude-sonnet-4-6. Rates from getPricing() in core/estimator.js multiplied
+// by BATCH_DISCOUNT -- no hardcoded values. Cost rounded to 6 dp.
 export function buildTokenUsage(inputTokens, outputTokens) {
   const pricing = getPricing('claude-sonnet-4-6');
   const batchInputRate  = pricing.inputPerM  * BATCH_DISCOUNT;
