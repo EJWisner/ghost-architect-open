@@ -5,6 +5,12 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.12] - 2026-06-30
+
+### Fixed
+
+- **Conflict Detection batch chunking.** Large codebases (>900 KB serialized context) are now split into multiple sub-900 KB batch requests instead of one 2.40 MB POST that caused CI network drops and hung batches. All chunk results are merged via `extractCandidates` before the verifier pass -- no findings dropped. `chunkFileMapForConflict` regression test added and wired into the npm test chain.
+
 ## [9.4.11] - 2026-06-30
 
 ### Fixed

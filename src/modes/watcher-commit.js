@@ -482,22 +482,72 @@ function buildBlastPrompts(codebaseContext, target, profile) {
  * batch-shaped equivalent of the streaming multi-pass scan. Candidates are
  * extracted from the raw output with the unchanged extractCandidates parser.
  */
-function buildConflictPrompts(fileMap, profile) {
-  let context = '';
-  for (const [fp, content] of Object.entries(fileMap || {})) {
-    context += `\n\n=== FILE: ${fp} ===\n${content}`;
+// Target max body size per conflict batch request. Staying under 900 KB
+// gives headroom for the system prompt, JSON envelope, and HTTP headers,
+// keeping the total POST body well under 1 MB to avoid CI network drops.
+const CONFLICT_CHUNK_LIMIT_BYTES = 900 * 1024;
+
+/**
+ * Split fileMap into chunks where each chunk's serialized context stays
+ * under CONFLICT_CHUNK_LIMIT_BYTES. Returns an array of context strings,
+ * one per chunk.
+ */
+function chunkFileMapForConflict(fileMap) {
+  const entries = Object.entries(fileMap || {});
+  const chunks = [];
+  let currentChunk = '';
+  let currentBytes = 0;
+
+  for (const [fp, content] of entries) {
+    const entry = `\n\n=== FILE: ${fp} ===\n${content}`;
+    const entryBytes = Buffer.byteLength(entry, 'utf8');
+
+    // If a single file exceeds the limit, it gets its own chunk.
+    if (currentBytes + entryBytes > CONFLICT_CHUNK_LIMIT_BYTES && currentChunk) {
+      chunks.push(currentChunk);
+      currentChunk = entry;
+      currentBytes = entryBytes;
+    } else {
+      currentChunk += entry;
+      currentBytes += entryBytes;
+    }
   }
-  const totalFiles = Object.keys(fileMap || {}).length;
-  const systemPrompt = buildSystemConflict(profile);
-  const userMessage = buildConflictPrompt({
-    passNum: 1,
-    totalPasses: 1,
-    totalFiles,
-    context,
-    priorContext: '',
-    forecastContext: null,
+  if (currentChunk) chunks.push(currentChunk);
+  return chunks.length ? chunks : [''];
+}
+
+/**
+ * Build one batch request object per chunk.
+ * Uses multi-pass framing when there are multiple chunks so the model
+ * knows to look for cross-file conflicts that span passes.
+ */
+function buildConflictPrompts(fileMap, profile, commitSha) {
+  const contextChunks = chunkFileMapForConflict(fileMap);
+  const totalFiles    = Object.keys(fileMap || {}).length;
+  const totalPasses   = contextChunks.length;
+  const systemPrompt  = buildSystemConflict(profile);
+
+  return contextChunks.map((context, i) => {
+    const passNum     = i + 1;
+    const userMessage = buildConflictPrompt({
+      passNum,
+      totalPasses,
+      totalFiles,
+      context,
+      priorContext: '',
+      forecastContext: null,
+    });
+    return {
+      custom_id: sanitizeCustomId(`conflict-p${passNum}-${commitSha}-${Date.now()}`),
+      params: {
+        model: getModel(),
+        max_tokens: 8096,
+        temperature: 0,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      },
+    };
   });
-  return { systemPrompt, userMessage };
 }
 
 // ── Blast-aware file recovery ──────────────────────────────────────────────────
@@ -1470,17 +1520,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     console.log('Ghost Watcher: running Conflict Detection (batch)...');
     let conflictBatchId = null;
     try {
-      const { systemPrompt, userMessage } = buildConflictPrompts(codebaseContext.fileMap || {}, profile);
-      conflictBatchId = await submitBatch(anthropic, [{
-        custom_id: sanitizeCustomId(`conflict-${commitSha}-${Date.now()}`),
-        params: {
-          model: getModel(),
-          max_tokens: 8096,
-          temperature: 0,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userMessage }],
-        },
-      }]);
+      const conflictRequests = buildConflictPrompts(codebaseContext.fileMap || {}, profile, commitSha);
+      const totalChunks = conflictRequests.length;
+      if (totalChunks > 1) {
+        console.log(`Ghost Watcher: Conflict Detection split into ${totalChunks} chunks (body size limit)`);
+      }
+      conflictBatchId = await submitBatch(anthropic, conflictRequests);
     } catch (err) {
       console.error(`Ghost Watcher: Conflict Detection submission failed (non-fatal) — ${err.message}`);
     }
@@ -1497,8 +1542,10 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           pollIntervalMs, timeoutMs,
           onProgress: (p) => console.log(`Ghost Watcher: Conflict Detection — ${p.status} (${Math.round(p.elapsedMs / 1000)}s)`),
         });
-        const rawConflictOutput = conflictResults[0]?.text || '';
-        let conflictCandidates = extractCandidates([rawConflictOutput]);
+        // Collect output from all chunks — extractCandidates accepts an array
+        // and joins them, so conflicts from every chunk are parsed and merged.
+        const conflictOutputs = conflictResults.map(r => r.text || '');
+        let conflictCandidates = extractCandidates(conflictOutputs);
 
         // Optional verifier pass (opt-in via scans.conflict_verify). Runs the
         // same agent verifier the interactive Conflict mode uses, in 'quick'
