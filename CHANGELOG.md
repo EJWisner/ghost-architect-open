@@ -5,6 +5,15 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.11] - 2026-06-30
+
+### Fixed
+
+- **Blast narrator retry on CI connection drops.** Added 90-second timeout and one automatic retry to the narrator streaming call in `blastFindingsFromRaw`. Transient "Premature close" errors now get a second attempt before falling back to raw findings.
+- **Degraded-run transparency.** `narratorFailed: true` flag added to the portal findings payload when narrator fallback fires. Portal Watch tab now shows an amber warning banner ("Degraded Results on N Commits") with a rerun link when any commit in the filtered set has degraded findings. Applied to both `portal-ejwisner.html` and `portal-template.html`.
+- **Widened self-refuting conflict filter.** `SELF_REFUTING_RE` now catches "rather than a runtime conflict" and "Runtime impact: none" phrasings that the original pattern missed. Fixed `values match` clause with negative lookahead so "values match but will conflict if X changes" is correctly kept as a real finding.
+- **Self-refuting filter smoke test.** `tests/self-refuting-filter.smoke.mjs` added with 16 cases (11 drop, 5 keep) + 3 edge inputs. Wired into the npm test chain.
+
 ## [9.4.10] - 2026-06-30
 
 ### Fixed

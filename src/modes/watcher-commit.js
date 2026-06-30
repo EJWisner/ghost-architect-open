@@ -621,24 +621,41 @@ async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, cod
       ? changedFiles[0]
       : `change set of ${changedFiles.length} files`;
 
-    const narratedReport = await narrateReport(
-      {
-        findings:      rawFindings,
-        findingCount:  rawFindings.length,
-        filesAnalyzed: codebaseContext?.loadedFiles || 0,
-        stepCount:     1,
-        auditTrail:    [],
-      },
-      { projectLabel, mode: 'blast', rates, profile },
-      // Headless — we use the returned narrated text, not the stream.
-      () => {},
-    );
+    // Attempt narration with one retry on transient connection drops.
+    // CI networks occasionally drop streaming connections mid-response
+    // ("Premature close"). One retry covers the vast majority of transient
+    // failures without meaningfully extending the run time.
+    let narratedReport;
+    const narrateWithTimeout = () => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('narrateReport timeout after 90s')), 90000);
+      narrateReport(
+        {
+          findings:      rawFindings,
+          findingCount:  rawFindings.length,
+          filesAnalyzed: codebaseContext?.loadedFiles || 0,
+          stepCount:     1,
+          auditTrail:    [],
+        },
+        { projectLabel, mode: 'blast', rates, profile },
+        () => {},
+      ).then(r => { clearTimeout(timer); resolve(r); })
+       .catch(e => { clearTimeout(timer); reject(e); });
+    });
+
+    try {
+      narratedReport = await narrateWithTimeout();
+    } catch (firstErr) {
+      console.warn(`Ghost Watcher: Blast narrator attempt 1 failed (${firstErr.message}) — retrying in 5s...`);
+      await new Promise(r => setTimeout(r, 5000));
+      narratedReport = await narrateWithTimeout(); // throws on second failure → caught by outer catch
+    }
 
     // Re-enrich the re-parsed result as a guarantee (covers any finding the
     // narrator rendered without a Files line).
     return enrichBlastFindingFiles(extractFindings(narratedReport || rawBlastOutput), sectionFiles);
   } catch (err) {
     console.error(`Ghost Watcher: Blast narrator failed (non-fatal), using raw findings — ${err.message}`);
+    rawFindings._narratorFailed = true;
     return enrichBlastFindingFiles(rawFindings, sectionFiles);
   }
 }
@@ -1497,9 +1514,13 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         // Drop self-refuting conflict findings: if the model flagged a conflict
         // and then said "no actual conflict" / "no runtime conflict" / "consistent"
         // in its own detail text, the finding is noise. Remove before surfacing.
-        const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+conflict|no\s+issue|consistent\b|values\s+match|intentionally\s+different/i;
+        // The `values match` clause carries a negative lookahead so it only
+        // fires for a bare self-refutation ("values match") and NOT for a real
+        // finding that hedges ("values match in current impl but will conflict
+        // if X changes") — the trailing `conflict` assertion keeps it.
+        const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different/i;
         conflictFindings = conflictCandidates
-          .filter(c => !SELF_REFUTING_RE.test(c.evidence || c.description || ''))
+          .filter(c => !SELF_REFUTING_RE.test(c.description || ''))
           .map(normalizeCandidateToFinding);
         const conflictUsage = sumBatchUsage(conflictResults);
         totalInputTokens  += conflictUsage.inputTokens;
@@ -1769,6 +1790,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         },
         blastFileCount,
         briefPromptCount,
+        narratorFailed: !!(allFindings._narratorFailed || blastFindings._narratorFailed),
         findings:    allFindings,
         verifiedFindings,
         brief:       brief || null,
