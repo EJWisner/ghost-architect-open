@@ -5,6 +5,14 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.24] - 2026-07-01
+
+### Fixed
+- **corrected-file-generator syntaxChars.** Added single and double quotes to the syntaxChars regex. Previously a patch line like `case 'foo':` ended with colon and had no recognized syntax chars, causing it to be incorrectly stripped as a prose header. Switch-case labels in patch instructions are now preserved correctly.
+- **Workflow template version.** watch/index.js now replaces the hardcoded "version":"9.0.15" string in the fallback telemetry payload alongside the existing @latest replacement. Cancelled or failed Ghost Watcher runs now report the actual CLI version instead of 9.0.15.
+- **dedup.js selectKeepers consistency.** GENERAL_DETECTORS rank lookup now uses both full detector ID and baseId (split on '/'), matching the behavior of classifyDetector. Prevents incorrect rank-99 fallback if a general detector ever emits a slash-suffixed ID.
+- **dedup.js annotations.** Added @ghost-verified annotations for injectionStaticPattern slash-suffix comment and formatting/roleSeparation sub-detector classification notes.
+
 ## [9.4.23] - 2026-07-01
 
 ### Fixed

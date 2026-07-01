@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.24** -- fix: corrected-file-generator syntaxChars now includes quotes preventing switch-case labels from being stripped as prose; watch/index.js workflow template now replaces hardcoded version 9.0.15 in fallback telemetry payload; dedup.js selectKeepers uses baseId for GENERAL_DETECTORS lookup matching classifyDetector consistency; @ghost-verified annotations added for two latent dedup classification notes
+
 **v9.4.23** -- fix: dedup.js reverts ambiguousInstruction and underspecifiedConstraints to GENERAL_DETECTORS (promotion to SPECIFIC in v9.4.21 caused duplicate findings on overlap with conflictingInstructions); poi.js empty-scan publish payload annotated @ghost-verified
 
 **v9.4.22** -- fix: projects.js saveProjectIntelligence now populates all fields buildPublishPayload reads at top level (resolved, reportText, version, txtFile, mdFile, pdfFile, newFindings); diff-renderer @@ line number calculation verified correct and annotated; prompts-extracted conflict snapshots regenerated to v0.4 content

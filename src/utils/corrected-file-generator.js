@@ -35,7 +35,7 @@
 export function cleanPatchInstruction(raw) {
   if (typeof raw !== 'string') return raw;
   const proseStartRe = /^(?:this|adds|ensures|prevents|around|following|note|warning|here|which)\b/i;
-  const syntaxChars  = /[${}();=<>]/;
+  const syntaxChars  = /[${}();=<>'"]/;
   return raw
     .split('\n')
     .filter(line => {

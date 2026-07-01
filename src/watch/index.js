@@ -145,6 +145,7 @@ export async function enableWatch({ repoUrl, token, watchOptions = {}, version =
 
   const workflowContent = fs.readFileSync(WORKFLOW_TEMPLATE_PATH, 'utf8')
     .replace('ghost-architect-open@latest', `ghost-architect-open@${version}`)
+    .replace('"version":"9.0.15"', `"version":"${version}"`)
     .replace(
       /on:\n  push:\n    branches:\n(      - .+\n)+/,
       `on:\n  push:\n    branches:\n${branchYaml}\n`

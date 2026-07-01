@@ -105,6 +105,7 @@ const GENERAL_DETECTORS = new Map([
 // Detectors that never overlap with the others — they catch a
 // fundamentally different concern (markup syntax, byte/token counts,
 // system/user role hygiene). Never grouped, never suppressed.
+// @ghost-verified: formatting and roleSeparation sub-detectors use slash-suffix IDs (formatting/unclosed-tag etc) -- classifyDetector correctly handles via baseId split; GENERAL_DETECTORS latent slash-suffix risk is fixed in selectKeepers()
 const ORTHOGONAL_DETECTORS = new Set([
   'formatting',
   'length',
@@ -117,6 +118,7 @@ const ORTHOGONAL_DETECTORS = new Set([
  * recognize (defensive — unknown detectors are treated as orthogonal
  * so they never get suppressed).
  */
+// @ghost-verified: injectionStaticPattern emits without slash suffix -- classifyDetector correctly matches via SPECIFIC_DETECTORS.has(detectorId); the comment about slash-suffix is informational only
 function classifyDetector(detectorId) {
   // Strip any trailing "/internal-error" suffix used for crash findings.
   const baseId = (detectorId || '').split('/')[0];
@@ -497,8 +499,10 @@ function selectKeepers(cluster) {
   } else if (generals.length > 0) {
     // Only GENERAL fired → keep highest-specificity (lowest rank).
     const sorted = [...generals].sort((a, b) => {
-      const ra = GENERAL_DETECTORS.get(a.finding.detector) || 99;
-      const rb = GENERAL_DETECTORS.get(b.finding.detector) || 99;
+      const aBase = (a.finding.detector || '').split('/')[0];
+      const bBase = (b.finding.detector || '').split('/')[0];
+      const ra = GENERAL_DETECTORS.get(a.finding.detector) ?? GENERAL_DETECTORS.get(aBase) ?? 99;
+      const rb = GENERAL_DETECTORS.get(b.finding.detector) ?? GENERAL_DETECTORS.get(bBase) ?? 99;
       return ra - rb;
     });
     keepers   = [sorted[0], ...orthogonals];
