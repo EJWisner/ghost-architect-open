@@ -5,6 +5,12 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.26] - 2026-07-01
+
+### Fixed
+- **Blast narrator streaming eliminated.** Ghost Watcher now calls narrateReportSync instead of narrateReport for blast narration. narrateReportSync uses messages.create (blocking, non-streaming) which has no streaming connection drop exposure. Removes the 180s timeout wrapper and retry logic that caused degraded-run emails on CI networks. The degraded-run fallback (raw findings + customer email) is preserved for genuine API failures.
+- **blast-multipass synthesis batch.** The multi-pass blast synthesis call in blast-multipass.js converted from messages.stream to batch API (submit + poll). Consistent with how Blast Radius and Conflict Detection already operate. No client-side timeout risk.
+
 ## [9.4.25] - 2026-07-01
 
 ### Fixed

@@ -27,7 +27,7 @@ import { getDefaultProfileSlug, getConfig, resolveApiKey } from '../config.js';
 import { loadFromPath, setScanOptions } from '../loader/index.js';
 import { extractFindings, generateFindingId } from '../utils/finding-parser.js';
 import { normalizeCandidateToFinding, extractCandidates } from '../core/conflict.js';
-import { narrateReport } from '../core/agent/narrator.js';
+import { narrateReportSync } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
 import { partitionFindings } from '../watch/ghost-verified.js';
 import { pingWatcherRun } from '../telemetry/pulse.js';
@@ -673,34 +673,20 @@ async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, cod
       ? changedFiles[0]
       : `change set of ${changedFiles.length} files`;
 
-    // Attempt narration with one retry on transient connection drops.
-    // CI networks occasionally drop streaming connections mid-response
-    // ("Premature close"). One retry covers the vast majority of transient
-    // failures without meaningfully extending the run time.
-    let narratedReport;
-    const narrateWithTimeout = () => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('narrateReport timeout after 180s')), 180000);
-      narrateReport(
-        {
-          findings:      rawFindings,
-          findingCount:  rawFindings.length,
-          filesAnalyzed: codebaseContext?.loadedFiles || 0,
-          stepCount:     1,
-          auditTrail:    [],
-        },
-        { projectLabel, mode: 'blast', rates, profile },
-        () => {},
-      ).then(r => { clearTimeout(timer); resolve(r); })
-       .catch(e => { clearTimeout(timer); reject(e); });
-    });
-
-    try {
-      narratedReport = await narrateWithTimeout();
-    } catch (firstErr) {
-      console.warn(`Ghost Watcher: Blast narrator attempt 1 failed (${firstErr.message}) — retrying in 5s...`);
-      await new Promise(r => setTimeout(r, 5000));
-      narratedReport = await narrateWithTimeout(); // throws on second failure → caught by outer catch
-    }
+    // narrateReportSync uses messages.create (blocking non-streaming) — no
+    // streaming connection to drop, no timeout wrapper needed. CI networks
+    // that caused streaming timeouts do not affect blocking create calls.
+    // The outer try/catch handles any API failure with raw findings fallback.
+    const narratedReport = await narrateReportSync(
+      {
+        findings:      rawFindings,
+        findingCount:  rawFindings.length,
+        filesAnalyzed: codebaseContext?.loadedFiles || 0,
+        stepCount:     1,
+        auditTrail:    [],
+      },
+      { projectLabel, mode: 'blast', rates, profile },
+    );
 
     // Re-enrich the re-parsed result as a guarantee (covers any finding the
     // narrator rendered without a Files line).

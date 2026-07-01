@@ -139,34 +139,51 @@ Synthesize these into ONE unified Blast Radius report with:
 
 ${combinedResults}`;
 
-  let synthesisOutput = '';
-  const stream = await anthropic.messages.stream({
-    model:      synthesisModel,
-    max_tokens: 8096,
-    ...getSamplingParams(0, synthesisModel),
-    system:     systemPrompt,
-    messages:   [{ role: 'user', content: userMessage }],
+  // Submit synthesis as a batch request — no client-side timeout risk.
+  // Batch API processes on Anthropic's side; we poll until complete.
+  const batch = await anthropic.messages.batches.create({
+    requests: [{
+      custom_id: 'blast-synthesis',
+      params: {
+        model:      synthesisModel,
+        max_tokens: 8096,
+        ...getSamplingParams(0, synthesisModel),
+        system:     systemPrompt,
+        messages:   [{ role: 'user', content: userMessage }],
+      },
+    }],
   });
 
-  for await (const chunk of stream) {
-    if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-      synthesisOutput += chunk.delta.text;
+  // Poll until the batch completes (30s intervals, 20-minute ceiling).
+  let batchResult = null;
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 30000));
+    const status = await anthropic.messages.batches.retrieve(batch.id);
+    if (status.processing_status === 'ended') {
+      batchResult = status;
+      break;
     }
   }
+  if (!batchResult) throw new Error('Blast synthesis batch timed out after 20 minutes');
 
-  // Capture real token usage from the synthesis call.
-  if (onUsage) {
-    try {
-      const synthFinal = await stream.finalMessage();
-      if (synthFinal?.usage) {
+  // Extract the synthesis output from the batch result.
+  let synthesisOutput = '';
+  for await (const item of await anthropic.messages.batches.results(batch.id)) {
+    if (item.custom_id === 'blast-synthesis' && item.result?.type === 'succeeded') {
+      const msg = item.result.message;
+      synthesisOutput = msg.content
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('');
+      // onUsage may be null (default in this function) — guard as the
+      // streaming path did, or an omitted callback would throw here.
+      if (onUsage) {
         onUsage(
-          synthFinal.usage.input_tokens  ?? 0,
-          synthFinal.usage.output_tokens ?? 0,
+          msg.usage?.input_tokens  ?? 0,
+          msg.usage?.output_tokens ?? 0,
           synthesisModel
         );
       }
-    } catch (_) {
-      // Usage capture failed — response already delivered. Non-fatal.
     }
   }
 

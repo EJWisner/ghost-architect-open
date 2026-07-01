@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.26** -- fix: blast narrator switched from streaming to narrateReportSync (blocking messages.create) eliminating streaming timeout failures on CI; blast-multipass synthesis pass converted to batch API; both changes remove the 180s timeout wrapper and retry logic that caused degraded-run emails on large codebases
+
 **v9.4.25** -- fix: SELF_REFUTING_RE extended to catch 'not a concrete conflict', 'no concrete runtime failure path', 'no active cross-file call path' and similar model-generated self-negations that were slipping through the filter; self-refuting-filter smoke test updated with 5 new drop cases
 
 **v9.4.24** -- fix: corrected-file-generator syntaxChars now includes quotes preventing switch-case labels from being stripped as prose; watch/index.js workflow template now replaces hardcoded version 9.0.15 in fallback telemetry payload; dedup.js selectKeepers uses baseId for GENERAL_DETECTORS lookup matching classifyDetector consistency; @ghost-verified annotations added for two latent dedup classification notes
