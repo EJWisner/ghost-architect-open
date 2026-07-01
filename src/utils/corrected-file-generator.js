@@ -566,6 +566,10 @@ function tryMode3(baselineLines, patchLines, reasoning) {
 // are unbalanced (e.g. a config snippet rather than a class file).
 
 function tryMode2N(baselineLines, patchLines) {
+  // Skip signature-shaped patches — Mode 2R/2I handle those; if they failed,
+  // Mode 1 fallback is more appropriate than inserting before the class closer.
+  if (patchLines.length > 0 && looksLikeSignature(patchLines[0])) return null;
+
   // Step 1: Find the class/interface declaration line
   const declRe = /^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait)\s+\w/;
   const declIdx = baselineLines.findIndex(l => declRe.test(l));

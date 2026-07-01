@@ -235,11 +235,22 @@ export function extractCandidates(rawResults) {
   while ((match = fenceRe.exec(combined)) !== null) {
     let parsed;
     try {
-      parsed = JSON.parse(match[1].trim());
+      const raw = match[1].trim();
+      parsed = JSON.parse(raw);
     } catch (err) {
-      // Malformed JSON from this pass — skip and continue
-      console.warn(`[extractCandidates] JSON parse failed: ${err.message}`);
-      continue;
+      // First parse failed — attempt truncation repair before giving up.
+      // The model sometimes hits max_tokens mid-JSON, producing an unterminated
+      // string or object. Try closing the open structures and retrying once.
+      try {
+        const raw = match[1].trim();
+        // Close any open string, then close the conflicts array and root object.
+        const repaired = raw.replace(/,?\s*$/, '') + ']}';
+        parsed = JSON.parse(repaired);
+        console.warn(`[extractCandidates] JSON repaired and parsed successfully`);
+      } catch (repairErr) {
+        console.warn(`[extractCandidates] JSON parse failed: ${err.message}`);
+        continue;
+      }
     }
 
     const conflicts = parsed.conflicts;

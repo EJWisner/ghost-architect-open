@@ -252,7 +252,7 @@
       "ambiguousInstruction": 2,
       "undefinedOutputFormat": 3,
       "poorDocumentation": 3,
-      "output/unbounded": 2
+      "unboundedOutput": 2
     },
     "findings": [
       {
@@ -320,7 +320,7 @@
         }
       },
       {
-        "detector": "output/unbounded",
+        "detector": "unboundedOutput",
         "severity": "LOW",
         "title": "Unbounded output request",
         "location": {
@@ -329,7 +329,7 @@
         }
       },
       {
-        "detector": "output/unbounded",
+        "detector": "unboundedOutput",
         "severity": "LOW",
         "title": "Unbounded output request",
         "location": {
@@ -351,7 +351,7 @@
       "ambiguousInstruction": 1,
       "poorOrganization": 1,
       "poorDocumentation": 3,
-      "output/unbounded": 2
+      "unboundedOutput": 2
     },
     "findings": [
       {
@@ -403,7 +403,7 @@
         }
       },
       {
-        "detector": "output/unbounded",
+        "detector": "unboundedOutput",
         "severity": "LOW",
         "title": "Unbounded output request",
         "location": {
@@ -412,7 +412,7 @@
         }
       },
       {
-        "detector": "output/unbounded",
+        "detector": "unboundedOutput",
         "severity": "LOW",
         "title": "Unbounded output request",
         "location": {

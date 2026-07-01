@@ -70,7 +70,7 @@ export async function detect(promptText, filePath, opts = {}) {
 
   return [
     {
-      detector: 'tokenLimit/contextOverflow',
+      detector: 'tokenLimitContextOverflow',
       severity,
       title: 'Prompt exceeds context window',
       file: filePath,

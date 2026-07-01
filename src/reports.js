@@ -188,14 +188,10 @@ export async function saveReport(content, prefix, label, meta = {}) {
         severity:    f.severity,
         files:       Array.isArray(f.files) ? f.files : [],
         effortHours: typeof f.effortHours === 'number' ? f.effortHours : 0,
-        // Confidence rescale: findingsFromAuditResults produces 0–1 floats;
-        // buildFindingsSidecar and extractFindings produce 0–100 integers.
-        // Detect by magnitude: values <= 1 are float-shaped, multiply by 100.
-        // Edge case: a percentage-shaped confidence of exactly 1 would be
-        // misdetected, but no current source produces this value.
-        confidence:  typeof f.confidence === 'number' && f.confidence <= 1
-                       ? Math.round(f.confidence * 100)
-                       : (typeof f.confidence === 'number' ? f.confidence : 85),
+        // Confidence is an integer 0-100. findingsFromResults was corrected
+        // from 0..1 float to 0-100 integer in v9.4.14 — the float-detection
+        // branch is no longer needed.
+        confidence:  typeof f.confidence === 'number' ? f.confidence : 85,
         detail:      typeof f.detail === 'string' ? f.detail : '',
         fix_direction: f.fix_direction || null,
       }));

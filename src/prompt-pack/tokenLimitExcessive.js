@@ -88,7 +88,7 @@ export async function detect(promptText, filePath, opts = {}) {
 
   return [
     {
-      detector: 'tokenLimit/excessive',
+      detector: 'tokenLimitExcessive',
       severity,
       title: 'Prompt approaching context window',
       file: filePath,

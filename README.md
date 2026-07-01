@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.19** -- fix: tokenLimitContextOverflow and tokenLimitExcessive detector IDs corrected to camelCase (were slash-format, causing dedup misclassification as orthogonal); corrected-file-generator tryMode2N now skips signature-shaped patches; reports.js stale float-detection confidence branch removed; extractCandidates adds truncation-repair retry for malformed JSON fences from max_tokens truncation; dogfood-2026-05-11.json detector IDs updated to unboundedOutput
+
 **v9.4.18** -- fix: integrationMismatch FINDINGS_CAP comment corrected to 10 (was stale at 5 after CC100 change); buildWatchConfig iterations block now opt-in (default null, no iterations key emitted unless caller passes maxIterations) matching v9.3.7 documented intent that no config = no limit
 
 **v9.4.17** -- fix: unboundedOutput detector ID corrected to 'unboundedOutput' (was 'output/unbounded', causing dedup misclassification); buildTokenUsage uses getWatcherModel() instead of hardcoded claude-sonnet-4-6 so cost estimates reflect configured model; integrationMismatch FINDINGS_CAP aligned to 10 matching all sibling detectors; tokenLimit detector tier labels fully aligned to Tier 1; raw telemetry temp file write removed (commitHash/repoHash were unhashed on disk)

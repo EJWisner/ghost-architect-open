@@ -5,6 +5,15 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.19] - 2026-07-01
+
+### Fixed
+- **tokenLimit detector IDs.** tokenLimitContextOverflow and tokenLimitExcessive now emit camelCase detector fields matching the registry id and SPECIFIC_DETECTORS set. The slash-format IDs ('tokenLimit/contextOverflow', 'tokenLimit/excessive') caused classifyDetector() to return 'orthogonal' instead of 'specific', defeating dedup suppression.
+- **corrected-file-generator Mode 2N guard.** tryMode2N now returns null for signature-shaped patches, deferring to the Mode 1 fallback instead of inserting a method body without its signature before the class closer.
+- **reports.js confidence rescale removed.** The stale float-detection branch (<=1 → ×100) was removed. findingsFromResults has produced 0-100 integers since v9.4.14; the branch was dead code with an edge-case risk of misreading 1% confidence as 100%.
+- **extractCandidates JSON truncation repair.** When a conflict batch response is truncated at max_tokens mid-JSON, extractCandidates now attempts a repair (closing open structures with ']}') before falling back to dropping the fence. Recovers partial results from truncated chunks.
+- **dogfood-2026-05-11.json updated.** All 6 stale 'output/unbounded' detector ID references replaced with 'unboundedOutput' to match the v9.4.17 rename.
+
 ## [9.4.18] - 2026-07-01
 
 ### Fixed
