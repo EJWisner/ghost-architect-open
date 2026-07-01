@@ -47,6 +47,7 @@ import { getModel } from '../prompt-pack/models.js';
 import { resetSessionUsage, getSessionUsage } from '../prompt-pack/llmAuditClient.js';
 import { promptProjectLabel, handleProjectIntelligence } from '../projects.js';
 import { isPortalConfigured, publishToPortal } from '../core/portal-publish.js';
+// @ghost-verified: prompt-triage.js imports estimateMultiCallCost, formatCost, formatCostRange, calcActualCost directly from src/core/estimator.js where all four are exported -- the src/estimator.js barrel shim does not re-export these but prompt-triage.js does not use the shim
 import {
   estimateMultiCallCost,
   formatCost,
