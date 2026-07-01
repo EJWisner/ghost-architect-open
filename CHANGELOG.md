@@ -5,6 +5,12 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.18] - 2026-07-01
+
+### Fixed
+- **integrationMismatch cap comment.** Updated JSDoc to reflect FINDINGS_CAP = 10, correcting the stale "5 per prompt" documentation left over from v9.4.17.
+- **buildWatchConfig iterations opt-in.** maxIterations now defaults to null; the iterations block is only emitted when a caller explicitly passes a value. Previously the wizard baked a hidden iterations.max: 5 into every generated ghost-watcher.yaml, silently capping new Watch repos at 5 iterations despite v9.3.7 documenting that no config = no limit.
+
 ## [9.4.17] - 2026-06-30
 
 ### Fixed

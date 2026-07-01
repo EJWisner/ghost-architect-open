@@ -91,10 +91,7 @@
  * shapes to compare. Lower than Tier 1 (70-95) because the final call
  * is still an LLM judgment on whether the shapes genuinely disagree.
  *
- * Findings cap: 5 per prompt. Tighter cap than Tier 2 detectors
- * (which use 10) because prompt-internal integration mismatches
- * cluster — one inconsistent contract usually generates several
- * related findings. After 5 the user has the signal; more is noise.
+ * Findings cap: 10 per prompt. Aligned with all Tier 2/3 sibling detectors.
  */
 
 import { auditPromptForDefect } from './llmAuditClient.js';

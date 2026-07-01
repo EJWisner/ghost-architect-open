@@ -90,7 +90,7 @@ export function buildWatchConfig({
   emailRecipients = [],
   portalRepo     = '',
   profile        = null,
-  maxIterations  = 5,
+  maxIterations  = null,
   exitThreshold  = { max_severity: 'medium' },
 } = {}) {
   const cfg = {
@@ -112,10 +112,7 @@ export function buildWatchConfig({
         pr_comment: prComment,
         ...(emailRecipients.length > 0 ? { email: emailRecipients } : {}),
       },
-      iterations: {
-        max:            maxIterations,
-        exit_threshold: exitThreshold,
-      },
+      ...(maxIterations != null ? { iterations: { max: maxIterations, exit_threshold: exitThreshold } } : {}),
       ...(profile ? { profile } : {}),
       team: { config: 'team.yaml' },
     },

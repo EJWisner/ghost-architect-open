@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.18** -- fix: integrationMismatch FINDINGS_CAP comment corrected to 10 (was stale at 5 after CC100 change); buildWatchConfig iterations block now opt-in (default null, no iterations key emitted unless caller passes maxIterations) matching v9.3.7 documented intent that no config = no limit
+
 **v9.4.17** -- fix: unboundedOutput detector ID corrected to 'unboundedOutput' (was 'output/unbounded', causing dedup misclassification); buildTokenUsage uses getWatcherModel() instead of hardcoded claude-sonnet-4-6 so cost estimates reflect configured model; integrationMismatch FINDINGS_CAP aligned to 10 matching all sibling detectors; tokenLimit detector tier labels fully aligned to Tier 1; raw telemetry temp file write removed (commitHash/repoHash were unhashed on disk)
 
 **v9.4.16** -- fix: getSamplingParams extracted to shared src/utils/sampling-params.js utility -- narrator.js, watcher-commit.js, blast-multipass.js, extractor.js all import from single source; mobile-publish.js reads estimatedHours/Cost from scanRecord.meta fallback; corrected-file-generator Heuristic 1 now checks syntaxChars before stripping colon-terminated lines; conflict.js dead SESSION_PREFIX throw removed; enterprise.js getFileContent renamed to getFileParsed; verifier.js LINE_NUMBER_RE tightened to require explicit line keyword or file:N pattern
