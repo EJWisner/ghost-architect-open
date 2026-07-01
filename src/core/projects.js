@@ -130,7 +130,26 @@ export function saveProjectIntelligence(label, reportText, meta) {
   const scanFile   = `scan-${scanDate.slice(0,10)}-${Date.now()}.json`;
 
   // Save individual scan record
-  const scanRecord = { date: scanDate, findings, meta, reportFile: scanFile };
+  const scanRecord = {
+    date:        scanDate,
+    findings,
+    meta,
+    reportFile:  scanFile,
+    findingCount: findings.length,
+    resolved:    0,
+    reportText:  (meta && meta.reportText)  || '',
+    critical:    (meta && meta.critical)    || 0,
+    high:        (meta && meta.high)        || 0,
+    medium:      (meta && meta.medium)      || 0,
+    low:         (meta && meta.low)         || 0,
+    totalHours:  (meta && meta.totalHours)  || null,
+    totalCost:   (meta && meta.totalCost)   || null,
+    txtFile:     (meta && meta.txtFile)     || null,
+    mdFile:      (meta && meta.mdFile)      || null,
+    pdfFile:     (meta && meta.pdfFile)     || null,
+    version:     (meta && meta.version)     || null,
+    newFindings: (meta && meta.newFindings) || 0,
+  };
   fs.writeFileSync(
     path.join(projectDir(label), scanFile),
     JSON.stringify(scanRecord, null, 2)

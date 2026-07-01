@@ -5,6 +5,13 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.22] - 2026-07-01
+
+### Fixed
+- **projects.js scanRecord fields.** saveProjectIntelligence now writes all fields that buildPublishPayload reads at the top level of the scan record: resolved, reportText, version, txtFile, mdFile, pdfFile, newFindings (sourced from meta). Previously these were undefined when a scan record was loaded from disk, causing the mobile dashboard to show zero findings, zero severity counts, and empty finding lists.
+- **diff-renderer verified.** computeUnifiedDiff @@ line number calculation confirmed correct via multi-hunk test. Separator-skipped lines are correctly applied via aLine += h.skipped before the next hunk flushes. @ghost-verified annotation added.
+- **prompts-extracted snapshots.** Conflict detection snapshots (06-conflict-default.md, 07-conflict-with-profile.md) regenerated to reflect the v0.4 prompt content (STRICT REQUIREMENT, DO NOT FLAG, CONFIDENCE RULE sections).
+
 ## [9.4.21] - 2026-07-01
 
 ### Fixed

@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.22** -- fix: projects.js saveProjectIntelligence now populates all fields buildPublishPayload reads at top level (resolved, reportText, version, txtFile, mdFile, pdfFile, newFindings); diff-renderer @@ line number calculation verified correct and annotated; prompts-extracted conflict snapshots regenerated to v0.4 content
+
 **v9.4.21** -- fix: mobile-publish meta fallbacks for findingCount and severity counts; MODE2_THRESHOLD extracted to named constant; analyst/index.js temperature replaced with getSamplingParams; ambiguousInstruction and underspecifiedConstraints promoted to SPECIFIC_DETECTORS; tokenLimit registry entries flagged mayUseNetwork; GENERAL_DETECTORS stale entries removed; conflict system prompt v0.4 tightened to require concrete runtime impact; @ghost-verified annotations added for 7 intentional design decisions; portal degraded-run banner now shows affected commit SHA
 
 **v9.4.20** -- fix: blast narrator failure now sends degraded-run email instead of raw findings; narrator timeout increased 90s to 180s; extractCandidates adds bad-escape-character JSON repair; dogfood detector IDs corrected; watcher-batch.js preflight uses getSamplingParams; portal commit ID filter added to Findings and Prompts tabs; pulse-stats Cache-Control no-store, cache layer removed

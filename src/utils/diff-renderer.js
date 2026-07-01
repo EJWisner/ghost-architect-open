@@ -246,6 +246,7 @@ export function computeUnifiedDiff(a, b, pathA, pathB) {
 
   // Reconstruct hunk groups (runs between separators) with @@ headers.
   // Track original-file (aLine) and new-file (bLine) positions.
+  // @ghost-verified: the @@ hunk-start numbering is correct for multi-hunk diffs -- separator-skipped lines are applied to aLine/bLine (see `aLine += h.skipped` below) before the next hunk flushes, so hunks after the first get accurate start positions; verified with a two-hunk fixture producing @@ -1,4 +1,4 @@ and @@ -6,5 +6,5 @@
   let aLine = 1;
   let bLine = 1;
   let hunkOps = [];
