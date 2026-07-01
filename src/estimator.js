@@ -79,6 +79,7 @@ export function showActualCost(inputTokens, outputTokens, model) {
  *     ─────────────────────────────────────
  *     Actual cost:                  $2.1277
  */
+// @ghost-verified: showConflictCost reads r.mode which is the correct field name -- core/estimator.js record() stores runs with a mode field; stage is a separate optional field added in v9.4.14, both coexist
 export function showConflictCost(tracker) {
   if (!tracker || tracker.runs.length === 0) return;
 

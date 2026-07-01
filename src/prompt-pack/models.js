@@ -30,6 +30,7 @@
 
 // ── Registry ─────────────────────────────────────────────────────────────
 
+// @ghost-verified: hyphenated model IDs (e.g. claude-opus-4-7) are correct -- Anthropic's API accepts these IDs; the format matches what estimator.js PRICING table and llmAuditClient.js MODEL_RATES use
 const MODELS = [
   // Claude family
   { id: 'claude-opus-4-7',       family: 'anthropic', displayName: 'Claude Opus 4.7',       contextWindow: 200000, tokenizerStrategy: 'heuristic' },

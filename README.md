@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.17** -- fix: unboundedOutput detector ID corrected to 'unboundedOutput' (was 'output/unbounded', causing dedup misclassification); buildTokenUsage uses getWatcherModel() instead of hardcoded claude-sonnet-4-6 so cost estimates reflect configured model; integrationMismatch FINDINGS_CAP aligned to 10 matching all sibling detectors; tokenLimit detector tier labels fully aligned to Tier 1; raw telemetry temp file write removed (commitHash/repoHash were unhashed on disk)
+
 **v9.4.16** -- fix: getSamplingParams extracted to shared src/utils/sampling-params.js utility -- narrator.js, watcher-commit.js, blast-multipass.js, extractor.js all import from single source; mobile-publish.js reads estimatedHours/Cost from scanRecord.meta fallback; corrected-file-generator Heuristic 1 now checks syntaxChars before stripping colon-terminated lines; conflict.js dead SESSION_PREFIX throw removed; enterprise.js getFileContent renamed to getFileParsed; verifier.js LINE_NUMBER_RE tightened to require explicit line keyword or file:N pattern
 
 **v9.4.15** -- fix: src/watch/index.js naive parseRepo replaced with GHES-aware import; resolveContextCap default source message no longer references --max-context flag; wizard.js unused YAML import removed; capSeverity docstrings corrected in poorOrganization/poorDocumentation/inefficientFewShot; corrected-file-generator prose-word docstring aligned to actual regex; prompts-extracted conflict snapshots regenerated to current JSON output format

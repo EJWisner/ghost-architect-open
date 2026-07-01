@@ -534,6 +534,7 @@ function normalizeRates(val) {
  *   - profile.rates = { mid: 150 }  returns { junior: global, mid: 150, senior: global }
  *   - all three declared            returns the profile values verbatim
  */
+// @ghost-verified: mergeRates requires caller to pass globalRates populated from getConfig() -- all production callers (poi.js, blast.js, watcher-commit.js) correctly pass getRates(); the hardcoded defaults are only a fallback for callers that omit globalRates
 export function mergeRates(globalRates, profile) {
   const base = {
     junior: globalRates && Number.isFinite(globalRates.junior) ? globalRates.junior : 85,

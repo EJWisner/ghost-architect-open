@@ -99,7 +99,7 @@
 
 import { auditPromptForDefect } from './llmAuditClient.js';
 
-const FINDINGS_CAP = 5;
+const FINDINGS_CAP = 10;
 
 // ── Regex pre-filter: integration-declaration markers ────────────────────
 

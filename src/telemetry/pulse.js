@@ -135,6 +135,7 @@ export function pingModeUsage(version, tier, mode) {
  * @param {string} opts.repo        GITHUB_REPOSITORY env var (will be hashed)
  * @returns {Promise<void>}         never throws
  */
+// @ghost-verified: /watcher-ping endpoint path is correct and intentional -- watcher-commit.js's temp file write (which used a different path) was removed in v9.4.17; pingWatcherRun is the sole telemetry path
 export function pingWatcherRun(version, tier, opts = {}) {
   return new Promise((resolve) => {
     if (pingDisabled()) { resolve(); return; }

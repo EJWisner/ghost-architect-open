@@ -5,6 +5,15 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.17] - 2026-06-30
+
+### Fixed
+- **unboundedOutput detector ID.** Changed emitted detector field from 'output/unbounded' to 'unboundedOutput' to match the dedup.js SPECIFIC_DETECTORS registry. The mismatch caused classifyDetector() to return 'orthogonal' instead of 'specific', so general findings were not suppressed as intended when unboundedOutput fired on the same range.
+- **buildTokenUsage model.** Now accepts an optional model parameter defaulting to getWatcherModel() instead of a hardcoded 'claude-sonnet-4-6'. Cost estimates in the portal now reflect the actually-configured model.
+- **integrationMismatch FINDINGS_CAP.** Changed from 5 to 10 to match all sibling Tier 2/3 detectors and prevent premature truncation.
+- **tokenLimit tier labels.** Both tokenLimitContextOverflow and tokenLimitExcessive JSDoc sub-headings updated from 'Tier 2 / hybrid' to 'Tier 1 / hybrid' to match the registry and the one-line headers corrected in v9.4.15.
+- **Telemetry privacy.** Removed the raw /tmp/ghost-watcher-telemetry.json temp file write that stored unhashed commitHash and repoHash. The pingWatcherRun() call (which hashes identifiers internally) is the sole telemetry path.
+
 ## [9.4.16] - 2026-06-30
 
 ### Fixed

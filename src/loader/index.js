@@ -805,6 +805,7 @@ function buildContext(fileMap) {
   // appended to the rule set by loadCustomPatterns(). Initial implementation
   // returns an empty array; full feature is sequenced after Stage 3 freemium-
   // to-requireTier conversion. See TODO-architect-redactor-custom-patterns-v7.md.
+  // @ghost-verified: SCAN_OPTIONS.profile is intentionally undefined -- loadCustomPatterns is a stub that always returns [] until custom pattern support is implemented; the undefined profile is an accepted no-op
   const customRules = loadCustomPatterns({ tier: SCAN_OPTIONS.tier, profile: SCAN_OPTIONS.profile });
 
   const redactedFileMap = {};

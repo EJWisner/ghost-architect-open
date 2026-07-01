@@ -11,7 +11,7 @@
  * of model). This detector exists because the most useful warning
  * is the one you can act on BEFORE the API rejects the call.
  *
- * Tier 2 / hybrid:
+ * Tier 1 / hybrid:
  *   For OpenAI prompts, the "API call" is local tiktoken (free, fast).
  *   For Claude prompts, this detector hits the Anthropic API for
  *   ground-truth counts. For Gemini and unknown models, falls back

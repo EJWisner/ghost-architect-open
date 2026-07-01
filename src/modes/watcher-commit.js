@@ -1054,11 +1054,11 @@ export function sumBatchUsage(results) {
 // Anthropic Message Batches API, which bills at BATCH_DISCOUNT (50%) of
 // standard rates. Standard per-model rates come from getPricing() (the single
 // pricing source of truth); the batch rate is standard * BATCH_DISCOUNT, the
-// same relationship cost-estimator.js uses. Pinned to the watcher-default
-// claude-sonnet-4-6. Rates from getPricing() in core/estimator.js multiplied
-// by BATCH_DISCOUNT -- no hardcoded values. Cost rounded to 6 dp.
-export function buildTokenUsage(inputTokens, outputTokens) {
-  const pricing = getPricing('claude-sonnet-4-6');
+// same relationship cost-estimator.js uses. Defaults to the watcher model
+// from getWatcherModel() so cost reflects the actually-configured model.
+// Cost rounded to 6 dp.
+export function buildTokenUsage(inputTokens, outputTokens, model) {
+  const pricing = getPricing(model || getWatcherModel());
   const batchInputRate  = pricing.inputPerM  * BATCH_DISCOUNT;
   const batchOutputRate = pricing.outputPerM * BATCH_DISCOUNT;
   const inCost  = (inputTokens  / 1_000_000) * batchInputRate;
@@ -1941,32 +1941,8 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   console.log(`   Findings: ${allFindings.length} | Brief prompts: ${briefPromptCount} | Exit: 0\n`);
 
   // ── Telemetry ping ────────────────────────────────────────────────────────
-  // Write telemetry to temp file for CI curl step to read
-  const telemetryPayload = {
-    userId:    'ci',
-    version,
-    tier,
-    timestamp: new Date().toISOString(),
-    findings:  allFindings.length,
-    severity: {
-      critical: allFindings.filter(f => f.severity === 'CRITICAL').length,
-      high:     allFindings.filter(f => f.severity === 'HIGH').length,
-      medium:   allFindings.filter(f => f.severity === 'MEDIUM').length,
-      low:      allFindings.filter(f => f.severity === 'LOW').length,
-    },
-    prompts:   briefPromptCount,
-    scans: {
-      blast:    watchConfig.scans?.blast_radius    !== false,
-      conflict: watchConfig.scans?.conflict_detection !== false,
-      brief:    watchConfig.scans?.ghost_brief     !== false,
-    },
-    commitHash: (process.env.GITHUB_SHA || '').slice(0, 16),
-    repoHash:   process.env.GITHUB_REPOSITORY || '',
-  };
-  try {
-    const { writeFileSync } = await import('fs');
-    writeFileSync('/tmp/ghost-watcher-telemetry.json', JSON.stringify(telemetryPayload));
-  } catch (_) { /* non-fatal */ }
+  // pingWatcherRun hashes commit SHA and repo name internally (see pulse.js);
+  // never write raw identifiers to disk for a CI step to forward.
   try {
     await pingWatcherRun(version, tier, {
       findings:  allFindings.length,

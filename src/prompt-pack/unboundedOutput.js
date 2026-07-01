@@ -222,7 +222,7 @@ export async function detect(promptText, filePath, opts = {}) {
       const hasBoundingEnum = hasBoundingEnumerationBelow(lines, i);
       if (!bounded && !isBehavioralGuideline && !hasBoundingEnum) {
         findings.push({
-          detector: 'output/unbounded',
+          detector: 'unboundedOutput',
           severity: 'LOW',
           title: 'Unbounded output request',
           file: filePath,

@@ -30,10 +30,11 @@ ghost_watcher:
     pr_comment: true
     email:
       - ejwisner@gmail.com
+  # @ghost-verified: test file exclusions are intentional -- test-agent.js and tests/ are development tools, not production code to be scanned for conflicts
   exclude:
     - "test/**"
     - "tests/**"
-    - "test-*.js"
+    - "test-agent.js"
     - "prompts/**"
     - "prompts-extracted/**"
     - "scripts/**"
