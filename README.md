@@ -2,6 +2,12 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.30
+- @ghost-verified annotation added to `src/license/clock.js` CLOCK_STATE_KEY (confirmed false positive -- no collision risk in scoped Conf namespace)
+- GitHub Actions template updated to Node.js 24 (eliminates Node 20/22 deprecation warnings on CI runs)
+- Conflict Detection JSON repair extended with two new tiers: trailing-comma sweep (Repair 4) and trailing-comma plus truncation combined (Repair 5) -- catches "Expected ',' or '}'" parse errors from model output
+- Conflict Detection prompt tightened: speculation hard-suppressed at generation (DO NOT FLAG, CONFIDENCE RULE, SEVERITY RULE all updated to eliminate LOW carve-out for hypothetical findings)
+
 **v9.4.29** -- fix: README ghost-watcher.yaml example updated to object form for blast_radius (was plain boolean, users copying the example would silently lose skip_if_message_contains behavior)
 
 **v9.4.28** -- fix: ghost-watcher.yaml and buildWatchConfig skip blast radius on version-tagged release commits (v9./v10./v11. prefix); blast_radius config now uses object form with enabled flag; watcher-commit.js guards handle enabled:false object form; @ghost-verified annotations for corrected-file-generator ensures filter and batch-store Configstore split-access

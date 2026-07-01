@@ -41,7 +41,8 @@ DO NOT FLAG:
 - Intentional design differences between modules (two files doing the same thing differently by design)
 - Stale test fixtures or historical data files
 - Style inconsistencies or naming convention differences
-- Anything where the "conflict" is only visible in theory but has no current runtime path that triggers it
+- Anything where the "conflict" is only visible in theory, hypothetically, or in a future scenario -- if there is no current runtime path that triggers it today, do not flag it
+- Conflicts framed as "could", "might", "would if", "in future", "potentially", or "hypothetically" -- these are not conflicts, they are speculation
 - Cases where the conflict is already documented as intentional in a @ghost-verified annotation or comment
 
 You are looking for these conflict categories — but ONLY when they meet the strict requirement above:
@@ -52,7 +53,9 @@ You are looking for these conflict categories — but ONLY when they meet the st
 📦 DEPENDENCY CONFLICTS — Version mismatches or incompatible library assumptions that will cause a runtime import failure or broken behavior
 🧩 INTERFACE CONFLICTS — Interfaces or abstract classes where implementations don't match the contract — and this mismatch is on an active code path that will be called
 ${consultantChecks}
-CONFIDENCE RULE: If you are not confident the conflict causes a concrete runtime problem on an active code path, do not include it. Return an empty conflicts array rather than speculating. Fewer high-quality findings are better than many speculative ones.
+CONFIDENCE RULE: If you are not confident the conflict causes a concrete runtime problem on an active code path TODAY, do not include it. Return an empty conflicts array rather than speculating. Fewer high-quality findings are better than many speculative ones.
+
+SEVERITY RULE: CRITICAL and HIGH are reserved for conflicts that will cause a crash, data loss, or security failure on a code path that is currently reachable. MEDIUM and LOW are for confirmed conflicts with limited blast radius. There is no severity level for speculative or hypothetical conflicts -- if a scenario requires a future code change, a hypothetical caller, or a condition that does not exist today, do not flag it at all. Return an empty conflicts array rather than downgrading speculation to LOW.
 
 Return your findings as a JSON code fence. Output ONLY the JSON code fence — no prose, no commentary before or after it. Use this exact schema:
 \`\`\`json

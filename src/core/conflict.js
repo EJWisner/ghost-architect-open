@@ -275,6 +275,33 @@ export function extractCandidates(rawResults) {
         } catch (_) {}
       }
 
+      // Repair 4: trailing comma before closing brace or bracket.
+      // Catches "Expected ',' or '}' after property value" errors produced
+      // when the model emits {"key":"value",} or ["item",] -- structurally
+      // complete JSON with an illegal trailing comma. Apply after the escape
+      // sanitization so the input to this repair is already clean.
+      if (!recovered) {
+        try {
+          const sanitized = raw.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+          const detrailed = sanitized.replace(/,(\s*[}\]])/g, '$1');
+          parsed = JSON.parse(detrailed);
+          console.warn(`[extractCandidates] JSON trailing-comma repaired successfully`);
+          recovered = true;
+        } catch (_) {}
+      }
+
+      // Repair 5: trailing comma + truncation combined.
+      if (!recovered) {
+        try {
+          const sanitized = raw.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+          const detrailed = sanitized.replace(/,(\s*[}\]])/g, '$1');
+          const repaired  = detrailed.replace(/,?\s*$/, '') + ']}';
+          parsed = JSON.parse(repaired);
+          console.warn(`[extractCandidates] JSON trailing-comma+truncation repaired successfully`);
+          recovered = true;
+        } catch (_) {}
+      }
+
       if (!recovered) {
         console.warn(`[extractCandidates] JSON parse failed: ${err.message}`);
         continue;

@@ -5,6 +5,12 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+### v9.4.30
+- @ghost-verified annotation added to `src/license/clock.js` CLOCK_STATE_KEY (confirmed false positive -- no collision risk in scoped Conf namespace)
+- GitHub Actions template updated to Node.js 24 (eliminates Node 20/22 deprecation warnings on CI runs)
+- Conflict Detection JSON repair extended with two new tiers: trailing-comma sweep (Repair 4) and trailing-comma plus truncation combined (Repair 5) -- catches "Expected ',' or '}'" parse errors from model output
+- Conflict Detection prompt tightened: speculation hard-suppressed at generation (DO NOT FLAG, CONFIDENCE RULE, SEVERITY RULE all updated to eliminate LOW carve-out for hypothetical findings)
+
 ## [9.4.29] - 2026-07-01
 
 ### Fixed

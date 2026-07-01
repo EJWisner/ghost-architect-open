@@ -57,6 +57,7 @@ const MAX_CONSECUTIVE_OFFLINE = 10;
 
 // Persisted (cross-process) clock state, separate from the `license` record
 // owned by store.js. Shape: { offlineStreak, lastNetworkOkMs }.
+// @ghost-verified: CLOCK_STATE_KEY='clock' lives in the license Conf namespace -- no collision risk with any other module; getConfig() is a scoped Conf store and 'clock' is not used as a key anywhere else in the codebase
 const CLOCK_STATE_KEY = 'clock';
 
 // In-memory cache so we don't hammer worldtimeapi within a single process.
