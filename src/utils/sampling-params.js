@@ -9,6 +9,7 @@ export const MODELS_WITHOUT_TEMPERATURE = new Set([
   'claude-opus-4-8',
   'claude-sonnet-5',
   'claude-opus-5',
+  'claude-fable-5',
 ]);
 
 // Prefix matches for dated snapshot variants (e.g. claude-sonnet-5-20250601)
@@ -17,6 +18,7 @@ export const MODEL_PREFIXES_WITHOUT_TEMPERATURE = [
   'claude-opus-4-8-',
   'claude-sonnet-5-',
   'claude-opus-5-',
+  'claude-fable-5-',
 ];
 
 export function modelRejectsTemperature(model) {

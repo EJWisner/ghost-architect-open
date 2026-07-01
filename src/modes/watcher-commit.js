@@ -25,7 +25,7 @@ import { getPortalConfig, isPortalConfigured } from '../core/portal-publish.js';
 import { loadProfile, getBranding, mergeRates } from '../profile/index.js';
 import { getDefaultProfileSlug, getConfig, resolveApiKey } from '../config.js';
 import { loadFromPath, setScanOptions } from '../loader/index.js';
-import { extractFindings, generateFindingId } from '../utils/finding-parser.js';
+import { extractFindings, generateFindingId, similarFinding } from '../utils/finding-parser.js';
 import { normalizeCandidateToFinding, extractCandidates } from '../core/conflict.js';
 import { narrateReportSync } from '../core/agent/narrator.js';
 import { fromPOI, fromConflict } from '../../lib/ghostBriefAdapter.js';
@@ -978,13 +978,60 @@ async function handleIncompleteRun({ octokitPortal, portalRepoPath, emailRecipie
 // When a batch is in flight the customer should see "analyzing" rather than
 // silence. We push a per-commit state file to the portal data repo keyed by
 // commit hash; when real results arrive the same file is overwritten with the
-// completed entry. (The portal HTML has no Watch tab yet, so this is data-only —
-// the rendering surface is a separate follow-up.)
+// completed entry. The Ghost Portal Watch tab renders these state files as
+// the commits/findings/prompts view.
 //
 // Path: projects/<repoSlug>/scans/watch/commits/<commitHash>.json
 
 function repoSlugFor(repoPath) {
   return (repoPath || 'unknown-project').replace('/', '-').toLowerCase();
+}
+
+// Fetch the most recent completed commit state from the portal repo so the
+// resolved-tracking delta can compare prior findings against the current scan.
+// Returns the parsed state JSON or null if no prior completed run exists.
+async function fetchPriorCommitState(octokit, portalOwner, portalRepoName, repoPath, currentCommitHash, currentBranch) {
+  if (!octokit || !portalOwner || !portalRepoName) return null;
+  try {
+    const dirPath = `projects/${repoSlugFor(repoPath)}/scans/watch/commits`;
+    const { data: entries } = await octokit.rest.repos.getContent({
+      owner: portalOwner, repo: portalRepoName, path: dirPath,
+    });
+    if (!Array.isArray(entries) || entries.length === 0) return null;
+    // Filter to .json state files only.
+    const jsonFiles = entries.filter(e => e.name.endsWith('.json') && e.type === 'file');
+    if (jsonFiles.length === 0) return null;
+    // Fetch all candidate state files (cap at 20 to avoid exhausting API quota
+    // on large repos) and sort by their embedded timestamp field descending so
+    // we always diff against the genuinely most-recent completed run, not an
+    // arbitrary SHA-alphabetical entry.
+    const candidates = jsonFiles.slice(-20);
+    const parsed = [];
+    for (const file of candidates) {
+      try {
+        const { data: fileData } = await octokit.rest.repos.getContent({
+          owner: portalOwner, repo: portalRepoName, path: file.path,
+        });
+        const content = Buffer.from(fileData.content, 'base64').toString('utf8');
+        const state = JSON.parse(content);
+        if (state.status === 'complete' && Array.isArray(state.findings)) {
+          parsed.push(state);
+        }
+      } catch (_) {
+        // Skip unreadable or unparseable files.
+      }
+    }
+    if (parsed.length === 0) return null;
+    // Sort by timestamp descending -- newest completed run first.
+    parsed.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    // Return the newest completed run that is not the current commit
+    // (the current commit's state file may already exist as a pending entry).
+    return parsed.find(s => s.commitHash !== currentCommitHash && s.branch === currentBranch) || null;
+  } catch (_) {
+    // Directory listing failed (repo not set up, permissions, etc.) -- degrade
+    // gracefully. Resolved tracking is best-effort and must never block a run.
+    return null;
+  }
 }
 
 async function pushWatchCommitState(octokit, portalOwner, portalRepoName, repoPath, commitHash, entry) {
@@ -1755,6 +1802,46 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // is the portal DATA layer only and is independent of Step 9's report push.
   if (octokitPortal && portalOwner && portalRepoName) {
     const sevAll = buildSeverityCounts(allFindings);
+
+    // Finding lifecycle delta -- compare current findings against the most
+    // recent completed run to classify each finding as new or carried-over,
+    // and identify findings from the prior run that no longer appear (resolved).
+    // Best-effort: if the prior state fetch fails, we degrade to no lifecycle
+    // data rather than blocking the state write.
+    let resolvedFindings = [];
+    let newFindingIds = [];
+    let priorCommitHash = null;
+    try {
+      const prior = await fetchPriorCommitState(octokitPortal, portalOwner, portalRepoName, repoPath, commitHashFull, branch);
+      if (prior && Array.isArray(prior.findings) && prior.findings.length > 0) {
+        priorCommitHash = prior.commitHash || null;
+        const priorFindings = prior.findings;
+
+        // Classify each current finding as new (no match in prior) or carried.
+        for (const curr of allFindings) {
+          const matched = priorFindings.some(p => similarFinding(curr, p));
+          if (!matched) newFindingIds.push(curr.id);
+        }
+
+        // Classify each prior finding with no current match as resolved.
+        for (const prev of priorFindings) {
+          const stillActive = allFindings.some(c => similarFinding(prev, c));
+          if (!stillActive) {
+            resolvedFindings.push({
+              id:               prev.id,
+              title:            prev.title,
+              severity:         prev.severity,
+              files:            prev.files || [],
+              resolvedInCommit: commitHashFull,
+              resolvedAt:       new Date().toISOString(),
+            });
+          }
+        }
+      }
+    } catch (_) {
+      // Delta computation failed -- degrade gracefully, lifecycle fields stay empty.
+    }
+
     await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, repoPath, commitHashFull, {
       commitHash: commitHashFull, branch, developer: developer.name,
       timestamp: new Date().toISOString(), status: 'complete', batchId: null,
@@ -1762,6 +1849,8 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       findings: allFindings, findingCount: allFindings.length,
       severity: sevAll, prompts: briefPromptCount,
       tokenUsage: buildTokenUsage(totalInputTokens, totalOutputTokens),
+      verifiedFindings, verifiedFindingCount: verifiedFindings.length,
+      resolvedFindings, newFindingIds, priorCommitHash,
     });
   }
   // A completed run resets the consecutive-incomplete-run counter.

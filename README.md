@@ -2,6 +2,15 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.31
+- Finding lifecycle tracking: Ghost Watcher now computes a resolved/new delta on every run -- findings that disappear after a fix are marked Resolved in the portal with the commit they were fixed in; new findings are tracked as first-seen this commit. Branch-filtered so multi-branch repos stay clean.
+- Ghost Portal: Resolved findings section added to Watch tab findings view (both portal-template.html and portal-ejwisner.html) -- collapsible green section showing fixed findings with commit reference
+- verifiedFindings now written to STATE file -- closes gap where @ghost-verified findings disappeared from portal on state-only commits
+- __GHOST_VERSION__ placeholder replaces brittle version-literal .replace() in enableWatch() -- eliminates silent desync risk on future releases
+- claude-fable-5 added to temperature guard (sampling-params.js) and pricing table (estimator.js -- $10/$50 per million tokens)
+- Pricing table completed: claude-opus-4-8 and claude-opus-5 added at $5/$25 per million tokens
+- Wrangler upgraded to 4.106.0 (global)
+
 ### v9.4.30
 - @ghost-verified annotation added to `src/license/clock.js` CLOCK_STATE_KEY (confirmed false positive -- no collision risk in scoped Conf namespace)
 - GitHub Actions template updated to Node.js 24 (eliminates Node 20/22 deprecation warnings on CI runs)

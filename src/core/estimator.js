@@ -18,9 +18,11 @@
 //   - Haiku 4.5: $1 in / $5 out
 const PRICING = {
   // Current Opus generation (post Nov 2025 67% price drop)
+  'claude-opus-4-8':   { label: 'Claude Opus 4.8',   inputPerM:  5.00, outputPerM: 25.00 },
   'claude-opus-4-7':   { label: 'Claude Opus 4.7',   inputPerM:  5.00, outputPerM: 25.00 },
   'claude-opus-4-6':   { label: 'Claude Opus 4.6',   inputPerM:  5.00, outputPerM: 25.00 },
   'claude-opus-4-5':   { label: 'Claude Opus 4.5',   inputPerM:  5.00, outputPerM: 25.00 },
+  'claude-opus-5':     { label: 'Claude Opus 5',     inputPerM:  5.00, outputPerM: 25.00 },
   // Legacy Opus pricing
   'claude-opus-4-1':   { label: 'Claude Opus 4.1',   inputPerM: 15.00, outputPerM: 75.00 },
   'claude-opus-4':     { label: 'Claude Opus 4',     inputPerM: 15.00, outputPerM: 75.00 },
@@ -31,6 +33,8 @@ const PRICING = {
   // Sonnet 5 (launched June 2026 — introductory pricing through Aug 31, 2026)
   'claude-sonnet-5':   { label: 'Claude Sonnet 5',   inputPerM:  2.00, outputPerM: 10.00 },
   'claude-sonnet-4-5': { label: 'Claude Sonnet 4.5', inputPerM:  3.00, outputPerM: 15.00 },
+  // Fable (Mythos-class, generally available)
+  'claude-fable-5':    { label: 'Claude Fable 5',    inputPerM: 10.00, outputPerM: 50.00 },
   // Haiku
   'claude-haiku-4-5':  { label: 'Claude Haiku 4.5',  inputPerM:  1.00, outputPerM:  5.00 },
 };
