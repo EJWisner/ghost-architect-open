@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.29** -- fix: README ghost-watcher.yaml example updated to object form for blast_radius (was plain boolean, users copying the example would silently lose skip_if_message_contains behavior)
+
 **v9.4.28** -- fix: ghost-watcher.yaml and buildWatchConfig skip blast radius on version-tagged release commits (v9./v10./v11. prefix); blast_radius config now uses object form with enabled flag; watcher-commit.js guards handle enabled:false object form; @ghost-verified annotations for corrected-file-generator ensures filter and batch-store Configstore split-access
 
 **v9.4.27** -- fix: blast-multipass.js batch synthesis now handles 'errored' result type explicitly (previously silent empty report on batch failure); @ghost-verified annotations added for 4 confirmed false positives
@@ -1010,7 +1012,12 @@ ghost_watcher:
       - develop
       - 'feature/**'
   scans:
-    blast_radius: true
+    blast_radius:
+      enabled: true
+      skip_if_message_contains:
+        - "v9."
+        - "v10."
+        - "v11."
     conflict_detection: true
     ghost_brief: true
     detailed_prompts: true   # Generate LLM-authored remediation prompts per finding (default: true)

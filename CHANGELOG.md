@@ -5,6 +5,11 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.29] - 2026-07-01
+
+### Fixed
+- **README blast_radius example.** The ghost-watcher.yaml example in README.md now shows the object form with enabled flag and skip_if_message_contains patterns. The plain boolean form silently omits the release-commit blast skip behavior added in v9.4.28.
+
 ## [9.4.28] - 2026-07-01
 
 ### Fixed
