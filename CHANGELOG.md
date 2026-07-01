@@ -5,6 +5,12 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.23] - 2026-07-01
+
+### Fixed
+- **dedup.js GENERAL_DETECTORS restored.** Reverted the v9.4.21 promotion of ambiguousInstruction and underspecifiedConstraints to SPECIFIC_DETECTORS. The detector source files explicitly document these as less-specific fallbacks (ambiguousInstruction defers to conflictingInstructions on overlap). Promoting them to SPECIFIC caused selectKeepers() to emit both findings on overlap, producing duplicate signal. They are now correctly back in GENERAL_DETECTORS at ranks 1 and 2.
+- **poi.js empty-scan payload.** Added @ghost-verified annotation to the intentionally-minimal publish payload in the no-local-save branch. buildPublishPayload fallbacks handle the absent fields correctly for zero-finding scans.
+
 ## [9.4.22] - 2026-07-01
 
 ### Fixed

@@ -492,6 +492,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
     } else if (label) {
+      // @ghost-verified: intentionally minimal payload — no local save means no report text, resolved count, or file refs; buildPublishPayload fallbacks handle absent fields correctly
       // No local save — but still publish to Ghost Mobile if configured
       try {
         const { isPublishConfigured, publishProject } = await import('../core/mobile-publish.js');

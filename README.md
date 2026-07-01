@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.23** -- fix: dedup.js reverts ambiguousInstruction and underspecifiedConstraints to GENERAL_DETECTORS (promotion to SPECIFIC in v9.4.21 caused duplicate findings on overlap with conflictingInstructions); poi.js empty-scan publish payload annotated @ghost-verified
+
 **v9.4.22** -- fix: projects.js saveProjectIntelligence now populates all fields buildPublishPayload reads at top level (resolved, reportText, version, txtFile, mdFile, pdfFile, newFindings); diff-renderer @@ line number calculation verified correct and annotated; prompts-extracted conflict snapshots regenerated to v0.4 content
 
 **v9.4.21** -- fix: mobile-publish meta fallbacks for findingCount and severity counts; MODE2_THRESHOLD extracted to named constant; analyst/index.js temperature replaced with getSamplingParams; ambiguousInstruction and underspecifiedConstraints promoted to SPECIFIC_DETECTORS; tokenLimit registry entries flagged mayUseNetwork; GENERAL_DETECTORS stale entries removed; conflict system prompt v0.4 tightened to require concrete runtime impact; @ghost-verified annotations added for 7 intentional design decisions; portal degraded-run banner now shows affected commit SHA

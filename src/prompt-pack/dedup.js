@@ -87,8 +87,6 @@ const SPECIFIC_DETECTORS = new Set([
   'inefficientFewShot',
   'tokenLimitContextOverflow',
   'tokenLimitExcessive',
-  'ambiguousInstruction',
-  'underspecifiedConstraints',
   'integrationMismatch',       // v5.3: Tier 3 hybrid, narrowly-scoped to declared integration contracts
 ]);
 
@@ -97,6 +95,8 @@ const SPECIFIC_DETECTORS = new Set([
 // overlap with the more-specific defects above. The specificity rank
 // (lower number = more specific, wins on overlap among GENERAL group).
 const GENERAL_DETECTORS = new Map([
+  ['ambiguousInstruction',      1],  // Single-instruction multiple readings
+  ['underspecifiedConstraints', 2],  // Rating scales without rubrics
   ['overloadedPrompt',          3],  // Too many tasks at once
   ['poorOrganization',          4],  // Bad arrangement
   ['poorDocumentation',         5],  // Missing rationale
