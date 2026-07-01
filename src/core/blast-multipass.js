@@ -14,6 +14,7 @@ import { getTierCap }       from '../loader/tierCaps.js';
 import { prioritizeFileMap } from '../prioritizer.js';
 import { runBlastRadius }   from '../analyst/index.js';
 import { getConfig, resolveApiKey } from '../config.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 
 // Blast uses max_tokens: 8096 for output. Leave 20% headroom on top of that
 // for system prompt and framing. Mirrors getPassTokenLimit() in conflict.js.
@@ -127,14 +128,6 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
   const anthropic = new Anthropic({ apiKey: resolveApiKey() });
   const synthesisModel = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 
-  function getBlastMultipassSamplingParams(temperature) {
-    const model = synthesisModel;
-    if (model.includes('sonnet-5') || model.includes('opus-4-7') || model.includes('opus-4-8') || model.includes('opus-5')) {
-      return {};
-    }
-    return { temperature };
-  }
-
   const systemPrompt = `You are a senior software architect synthesizing multiple Blast Radius analysis passes into one unified report. Each pass analyzed a different chunk of the codebase. Your job is to merge them into a single, de-duplicated, priority-ranked Blast Radius + Rollback Plan. Remove duplicates. Merge related findings. Produce one clean report in the same format as a standard Ghost Architect Blast Radius report.`;
 
   const userMessage = `The following are Blast Radius analysis results from ${total} passes over a large codebase. Each pass analyzed a different subset of files. The target files being committed are: ${forecastTarget.join(', ')}.
@@ -150,7 +143,7 @@ ${combinedResults}`;
   const stream = await anthropic.messages.stream({
     model:      synthesisModel,
     max_tokens: 8096,
-    ...getBlastMultipassSamplingParams(0),
+    ...getSamplingParams(0, synthesisModel),
     system:     systemPrompt,
     messages:   [{ role: 'user', content: userMessage }],
   });

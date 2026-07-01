@@ -387,9 +387,6 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   if (!info.singlePass) {
     const sessionKey     = conflictSessionKey(options.projectLabel || 'default');
-    if (!sessionKey.startsWith('conflictscan--')) {
-      throw new Error(`Conflict session key "${sessionKey}" does not use the required "conflictscan--" prefix.`);
-    }
     let existingSession = loadSession(sessionKey);
 
     // Drop a wrong-type session (e.g. a POI session under a colliding key):

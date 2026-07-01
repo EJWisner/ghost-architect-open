@@ -29,44 +29,10 @@ import path from 'path';
 import os from 'os';
 import { getConfig, resolveApiKey } from '../../config.js';
 import { sanitizeForDebugLog, pruneOldDebugLogs } from './verifier.js';
+import { getSamplingParams, modelRejectsTemperature } from '../../utils/sampling-params.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
-
-// Models that reject temperature/sampling parameters.
-// Keep in sync with PRICING table in src/core/estimator.js.
-// When adding a new model, verify whether it rejects temperature and update here.
-const MODELS_WITHOUT_TEMPERATURE = new Set([
-  'claude-opus-4-7',
-  'claude-opus-4-8',
-  'claude-sonnet-5',
-  'claude-opus-5',
-]);
-
-// Prefix matches for dated snapshot variants (e.g. claude-sonnet-5-20250601)
-const MODEL_PREFIXES_WITHOUT_TEMPERATURE = [
-  'claude-opus-4-7-',
-  'claude-opus-4-8-',
-  'claude-sonnet-5-',
-  'claude-opus-5-',
-];
-
-function modelRejectsTemperature(model) {
-  if (!model) return false;
-  if (MODELS_WITHOUT_TEMPERATURE.has(model)) return true;
-  return MODEL_PREFIXES_WITHOUT_TEMPERATURE.some(prefix => model.startsWith(prefix));
-}
-
-// Sonnet 5 and newer models do not accept temperature/top_p/top_k parameters.
-// Passing any value (including 0) returns a 400 error. This helper returns
-// only the params that are safe for the active model.
-function getSamplingParams(temperature) {
-  const model = getModel();
-  if (modelRejectsTemperature(model)) {
-    return {}; // newer models use adaptive thinking, no sampling params
-  }
-  return { temperature };
-}
 
 const DOLLAR = '\u0024';
 
@@ -587,7 +553,7 @@ async function planReportStructure(memoryResult, context = {}) {
     const response = await anthropic.messages.create({
       model: getModel(),
       max_tokens: 3000,
-      ...getSamplingParams(0.2),
+      ...getSamplingParams(0.2, getModel()),
       messages: [{ role: 'user', content: planningPrompt }],
     });
     const text = response.content[0]?.text || '';
@@ -740,7 +706,7 @@ async function planBlastReport(memoryResult, context = {}) {
     const response = await anthropic.messages.create({
       model: getModel(),
       max_tokens: 4000,
-      ...getSamplingParams(0.2),
+      ...getSamplingParams(0.2, getModel()),
       messages: [{ role: 'user', content: planningPrompt }],
     });
     const text = response.content[0]?.text || '';
@@ -1119,7 +1085,7 @@ async function renderBlastReportFromPlan(plan, memoryResult, context = {}, onChu
   const stream = anthropic.messages.stream({
     model:      getModel(),
     max_tokens: 16000,
-    ...getSamplingParams(0.3),
+    ...getSamplingParams(0.3, getModel()),
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1149,7 +1115,7 @@ async function renderReportFromPlan(plan, memoryResult, context = {}, onChunk = 
   const stream = anthropic.messages.stream({
     model:      getModel(),
     max_tokens: 16000,
-    ...getSamplingParams(0.3),
+    ...getSamplingParams(0.3, getModel()),
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1253,7 +1219,7 @@ async function renderSingleFinding(finding, categoryHeader, rates, profile) {
     const apiCall = anthropic.messages.create({
       model: getModel(),
       max_tokens: 800,
-      ...getSamplingParams(0.3),
+      ...getSamplingParams(0.3, getModel()),
       messages: [{ role: 'user', content: prompt }],
     });
     const timeout = new Promise((_, reject) =>
@@ -1565,7 +1531,7 @@ async function renderBlastLegacySinglePass(memoryResult, context = {}, onChunk =
   const stream = anthropic.messages.stream({
     model:      getModel(),
     max_tokens: 16000,
-    ...getSamplingParams(0.3),
+    ...getSamplingParams(0.3, getModel()),
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1646,7 +1612,7 @@ async function renderLegacySinglePass(memoryResult, context = {}, onChunk = () =
   const stream = anthropic.messages.stream({
     model:      getModel(),
     max_tokens: 16000,
-    ...getSamplingParams(0.3),
+    ...getSamplingParams(0.3, getModel()),
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1716,7 +1682,7 @@ export async function narrateReportSync(memoryResult, context = {}) {
   const response = await anthropic.messages.create({
     model:      getModel(),
     max_tokens: 16000,
-    ...getSamplingParams(0.3),
+    ...getSamplingParams(0.3, getModel()),
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1750,7 +1716,7 @@ export async function narrateExecutiveSummary(memoryResult, context = {}) {
   const response = await anthropic.messages.create({
     model:      getModel(),
     max_tokens: 300,
-    ...getSamplingParams(0),
+    ...getSamplingParams(0, getModel()),
     messages:   [{ role: 'user', content: prompt }],
   });
 
@@ -1852,7 +1818,7 @@ export async function narrateConflictReport(verificationResult, context = {}, on
 
   let report = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 5000, ...getSamplingParams(0.3),
+    model: getModel(), max_tokens: 5000, ...getSamplingParams(0.3, getModel()),
     messages: [{ role: 'user', content: prompt }],
   });
 

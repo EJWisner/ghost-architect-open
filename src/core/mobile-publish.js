@@ -197,8 +197,8 @@ function buildPublishPayload(projectMeta, scanRecord) {
       low:            scanRecord.low        || 0,
       // Preserve null/undefined so mobile can distinguish "not parsed" from "zero".
       // Mobile should render null as "—" rather than "$0".
-      estimatedHours: scanRecord.totalHours != null ? scanRecord.totalHours : null,
-      estimatedCost:  scanRecord.totalCost  != null ? scanRecord.totalCost  : null,
+      estimatedHours: scanRecord.totalHours != null ? scanRecord.totalHours : (scanRecord.meta?.totalHours ?? null),
+      estimatedCost:  scanRecord.totalCost  != null ? scanRecord.totalCost  : (scanRecord.meta?.totalCost  ?? null),
     },
 
     baseline: {

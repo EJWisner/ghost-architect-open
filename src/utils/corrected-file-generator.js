@@ -41,8 +41,10 @@ export function cleanPatchInstruction(raw) {
     .filter(line => {
       const t = line.trim();
       if (!t) return true; // preserve blank lines
-      // Heuristic 1: ends with colon → prose header (unconditional)
-      if (t.endsWith(':')) return false;
+      // Heuristic 1: ends with colon AND contains no syntax chars → prose header
+      // (switch-case labels like `case 'foo':`, TypeScript annotations, and
+      // goto labels all end with ':' but contain syntax chars or are valid code)
+      if (t.endsWith(':') && !syntaxChars.test(t)) return false;
       // Heuristic 2: starts with a prose word → explanatory sentence
       if (proseStartRe.test(t) && !syntaxChars.test(t)) return false;
       return true;

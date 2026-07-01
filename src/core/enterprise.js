@@ -57,7 +57,7 @@ async function upsertFile(octokit, owner, repo, filePath, content, message) {
   });
 }
 
-async function getFileContent(octokit, owner, repo, filePath) {
+async function getFileParsed(octokit, owner, repo, filePath) {
   try {
     const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
     return JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
@@ -66,7 +66,7 @@ async function getFileContent(octokit, owner, repo, filePath) {
 
 // Fetch parsed content and its SHA together in a single request. The SHA is
 // required for a compare-and-swap write: it must correspond to the exact
-// content we read, which a separate getFileContent + getFileSha pair cannot
+// content we read, which a separate getFileParsed + getFileSha pair cannot
 // guarantee. Returns { content: null, sha: null } when the file is absent.
 async function getFileWithSha(octokit, owner, repo, filePath) {
   try {
@@ -158,7 +158,7 @@ export async function getOrgConfig(workspace) {
   if (!entry) return null;
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  return await getFileContent(octokit, owner, repo, 'org/config.json');
+  return await getFileParsed(octokit, owner, repo, 'org/config.json');
 }
 
 /**
@@ -201,7 +201,7 @@ export async function getSeats(workspace) {
   if (!entry) return [];
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  const data = await getFileContent(octokit, owner, repo, 'org/seats.json');
+  const data = await getFileParsed(octokit, owner, repo, 'org/seats.json');
   return data?.seats || [];
 }
 
@@ -331,7 +331,7 @@ export async function promoteSeat(targetSeatId, workspace) {
   const entry = resolveSyncEntry(workspace);
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  const existing = await getFileContent(octokit, owner, repo, 'org/seats.json');
+  const existing = await getFileParsed(octokit, owner, repo, 'org/seats.json');
   const seats = existing?.seats || [];
   const seat = seats.find(s => s.seatId === targetSeatId);
   if (!seat) throw new Error(`Seat not found: ${targetSeatId}`);
@@ -351,7 +351,7 @@ export async function removeSeat(targetSeatId, workspace) {
   const entry = resolveSyncEntry(workspace);
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  const existing = await getFileContent(octokit, owner, repo, 'org/seats.json');
+  const existing = await getFileParsed(octokit, owner, repo, 'org/seats.json');
   const seats = (existing?.seats || []).filter(s => s.seatId !== targetSeatId);
   await upsertFile(octokit, owner, repo, 'org/seats.json', { seats }, `enterprise: remove ${targetSeatId}`);
 }
@@ -429,7 +429,7 @@ export async function appendAuditEvent(event, workspace) {
   try {
     const octokit = getOctokit(entry);
     const { owner, repo } = parseRepo(entry.repo);
-    const existing = await getFileContent(octokit, owner, repo, 'org/audit.json');
+    const existing = await getFileParsed(octokit, owner, repo, 'org/audit.json');
     const events = existing?.events || [];
     events.push({
       ...event,
@@ -489,7 +489,7 @@ export async function getAuditLog(workspace) {
   if (!entry) return [];
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  const data = await getFileContent(octokit, owner, repo, 'org/audit.json');
+  const data = await getFileParsed(octokit, owner, repo, 'org/audit.json');
   return data?.events || [];
 }
 

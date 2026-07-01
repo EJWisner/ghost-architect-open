@@ -16,6 +16,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getConfig, resolveApiKey } from '../config.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 
 let client = null;
 
@@ -88,7 +89,7 @@ export async function extractProfile(text) {
     response = await anthropic.messages.create({
       model: getModel(),
       max_tokens: 1500,
-      temperature: 0,
+      ...getSamplingParams(0, getModel()),
       system: EXTRACTION_SYSTEM,
       messages: [
         {

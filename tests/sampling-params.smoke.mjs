@@ -1,44 +1,15 @@
 /**
- * Ghost Architect™ — getSamplingParams smoke test
+ * Ghost Architect™ — sampling-params smoke test
  *
- * Guards the model-aware sampling-parameter filter. Newer models (Sonnet 5,
- * Opus 4.7/4.8, and any future opus-5) reject temperature/top_p/top_k with a
- * 400, so getSamplingParams returns {} for them and { temperature } for every
- * other model. The function is defined INLINE in src/core/agent/narrator.js
- * AND src/modes/watcher-commit.js (not exported), so the logic is REPLICATED
- * here verbatim. If you change either getSamplingParams, change it here too —
- * all three copies MUST stay in sync.
+ * Guards the shared model-aware sampling-parameter filter in
+ * src/utils/sampling-params.js. Newer models (Sonnet 5, Opus 4.7/4.8, and any
+ * future opus-5) reject temperature/top_p/top_k with a 400, so getSamplingParams
+ * returns {} for them and { temperature } for every other model. narrator.js,
+ * watcher-commit.js, blast-multipass.js, and extractor.js all import this single
+ * source of truth — this test exercises it directly.
  */
 
-// ── Keep in sync with getSamplingParams in src/core/agent/narrator.js ──────
-// ── and src/modes/watcher-commit.js ────────────────────────────────────────
-const MODELS_WITHOUT_TEMPERATURE = new Set([
-  'claude-opus-4-7',
-  'claude-opus-4-8',
-  'claude-sonnet-5',
-  'claude-opus-5',
-]);
-
-const MODEL_PREFIXES_WITHOUT_TEMPERATURE = [
-  'claude-opus-4-7-',
-  'claude-opus-4-8-',
-  'claude-sonnet-5-',
-  'claude-opus-5-',
-];
-
-function modelRejectsTemperature(model) {
-  if (!model) return false;
-  if (MODELS_WITHOUT_TEMPERATURE.has(model)) return true;
-  return MODEL_PREFIXES_WITHOUT_TEMPERATURE.some(prefix => model.startsWith(prefix));
-}
-
-function getSamplingParams(temperature, model) {
-  if (modelRejectsTemperature(model)) {
-    return {};
-  }
-  return { temperature };
-}
-// ── end replicated block ────────────────────────────────────────────────────
+import { getSamplingParams, modelRejectsTemperature } from '../src/utils/sampling-params.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -72,6 +43,21 @@ console.log('Test 2: temperature passed through for models that accept it');
   check('claude-sonnet-4-6 @ 0   → {temperature:0}',   getSamplingParams(0,   'claude-sonnet-4-6'), { temperature: 0 });
   check('claude-haiku-4-5 @ 0.3  → {temperature:0.3}', getSamplingParams(0.3, 'claude-haiku-4-5'),  { temperature: 0.3 });
   check('claude-opus-4-6 @ 0     → {temperature:0}',   getSamplingParams(0,   'claude-opus-4-6'),   { temperature: 0 });
+}
+console.log('');
+
+// ── Test 3: modelRejectsTemperature predicate (exact + prefix + edges) ──────
+console.log('Test 3: modelRejectsTemperature predicate');
+{
+  check('exact claude-sonnet-5 → true',            modelRejectsTemperature('claude-sonnet-5'),         true);
+  check('exact claude-opus-4-7 → true',            modelRejectsTemperature('claude-opus-4-7'),         true);
+  check('prefix claude-sonnet-5-20250601 → true',  modelRejectsTemperature('claude-sonnet-5-20250601'), true);
+  check('prefix claude-opus-4-8-preview → true',   modelRejectsTemperature('claude-opus-4-8-preview'),  true);
+  check('claude-sonnet-4-6 → false',               modelRejectsTemperature('claude-sonnet-4-6'),       false);
+  check('claude-opus-4-6 → false',                 modelRejectsTemperature('claude-opus-4-6'),         false);
+  check('null → false',                            modelRejectsTemperature(null),                      false);
+  check('undefined → false',                       modelRejectsTemperature(undefined),                 false);
+  check('empty string → false',                    modelRejectsTemperature(''),                        false);
 }
 console.log('');
 

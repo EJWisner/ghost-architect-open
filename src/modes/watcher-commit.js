@@ -37,6 +37,7 @@ import { getPricing } from '../core/estimator.js';
 import { BATCH_DISCOUNT } from '../lib/cost-estimator.js';
 import { buildSystemBlast } from '../../prompts/index.js';
 import { buildSystemConflict, buildConflictPrompt } from '../../prompts/index.js';
+import { getSamplingParams, modelRejectsTemperature } from '../utils/sampling-params.js';
 import {
   submitBatch,
   preflightBatchCheck,
@@ -419,41 +420,6 @@ function getWatcherModel() {
   return getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 }
 
-// Models that reject temperature/sampling parameters.
-// Keep in sync with PRICING table in src/core/estimator.js.
-// When adding a new model, verify whether it rejects temperature and update here.
-const MODELS_WITHOUT_TEMPERATURE = new Set([
-  'claude-opus-4-7',
-  'claude-opus-4-8',
-  'claude-sonnet-5',
-  'claude-opus-5',
-]);
-
-// Prefix matches for dated snapshot variants (e.g. claude-sonnet-5-20250601)
-const MODEL_PREFIXES_WITHOUT_TEMPERATURE = [
-  'claude-opus-4-7-',
-  'claude-opus-4-8-',
-  'claude-sonnet-5-',
-  'claude-opus-5-',
-];
-
-function modelRejectsTemperature(model) {
-  if (!model) return false;
-  if (MODELS_WITHOUT_TEMPERATURE.has(model)) return true;
-  return MODEL_PREFIXES_WITHOUT_TEMPERATURE.some(prefix => model.startsWith(prefix));
-}
-
-// Sonnet 5 and newer models do not accept temperature/top_p/top_k parameters.
-// Passing any value (including 0) returns a 400 error. This helper returns
-// only the params that are safe for the active model.
-function getSamplingParams(temperature) {
-  const model = getWatcherModel();
-  if (modelRejectsTemperature(model)) {
-    return {};
-  }
-  return { temperature };
-}
-
 function getRates() {
   const cfg = getConfig();
   return {
@@ -577,7 +543,7 @@ function buildConflictPrompts(fileMap, profile, commitSha) {
       params: {
         model: getWatcherModel(),
         max_tokens: 8096,
-        ...getSamplingParams(0),
+        ...getSamplingParams(0, getWatcherModel()),
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       },
@@ -785,7 +751,7 @@ function buildPromptGenRequests(findings, commitSha, detailById = new Map()) {
       params: {
         model: getWatcherModel(),
         max_tokens: 4096,
-        ...getSamplingParams(0),
+        ...getSamplingParams(0, getWatcherModel()),
         system: PROMPT_GEN_SYSTEM,
         messages: [{ role: 'user', content: userMessage }],
       },
@@ -1514,7 +1480,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         params: {
           model: getWatcherModel(),
           max_tokens: 8096,
-          ...getSamplingParams(0),
+          ...getSamplingParams(0, getWatcherModel()),
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },

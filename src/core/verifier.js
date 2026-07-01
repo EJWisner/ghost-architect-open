@@ -57,7 +57,9 @@ const BACKTICK_RE = /`([^`\n]+?)`/g;
 //   file.php:42-55
 //   line 42
 //   lines 42-55
-const LINE_NUMBER_RE = /(?:^|\s|[:.])(?:lines?\s+)?(\d{1,4})(?:[\u2013\-](\d{1,4}))?(?=\b|[.,\s])/gi;
+// Require explicit 'line(s)' keyword or file:N pattern to avoid matching
+// cost ranges ($400-$800), effort ranges (2-4 hours), and version numbers.
+const LINE_NUMBER_RE = /(?:(?:^|\s|[:.])\blines?\s+|[a-zA-Z0-9._-]+[:.])(\d{1,4})(?:[\u2013\-](\d{1,4}))?(?=\b|[.,\s])/gi;
 
 // Common English words that look like method names but aren't code claims
 const COMMON_WORDS = new Set([

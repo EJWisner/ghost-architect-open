@@ -5,6 +5,16 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.16] - 2026-06-30
+
+### Fixed
+- **Shared sampling-params utility.** Extracted getSamplingParams, modelRejectsTemperature, MODELS_WITHOUT_TEMPERATURE, and MODEL_PREFIXES_WITHOUT_TEMPERATURE into src/utils/sampling-params.js. narrator.js, watcher-commit.js, blast-multipass.js, and extractor.js all import from this single source -- eliminates three divergent copies and ensures all API callers correctly strip temperature for Sonnet 5 / Opus 4.7 / 4.8.
+- **mobile-publish estimatedHours/Cost fallback.** buildPublishPayload now reads from scanRecord.meta.totalHours/totalCost when the top-level fields are absent, so the mobile app correctly shows cost estimates instead of always displaying dashes.
+- **corrected-file-generator Heuristic 1.** Colon-terminated lines are now only stripped as prose headers when they contain no syntax characters -- switch-case labels, TypeScript annotations, and goto labels are preserved.
+- **conflict.js dead guard removed.** Unreachable SESSION_PREFIX throw removed; _sessionType check is the sole collision guard.
+- **enterprise.js getFileParsed.** Renamed getFileContent to getFileParsed to distinguish from getFileWithSha and prevent future confusion.
+- **verifier.js LINE_NUMBER_RE tightened.** Now requires explicit line/lines keyword or file:N pattern -- cost ranges and effort ranges no longer produce false line-number citations.
+
 ## [9.4.15] - 2026-06-30
 
 ### Fixed
