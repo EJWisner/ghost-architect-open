@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.27** -- fix: blast-multipass.js batch synthesis now handles 'errored' result type explicitly (previously silent empty report on batch failure); @ghost-verified annotations added for 4 confirmed false positives
+
 **v9.4.26** -- fix: blast narrator switched from streaming to narrateReportSync (blocking messages.create) eliminating streaming timeout failures on CI; blast-multipass synthesis pass converted to batch API; both changes remove the 180s timeout wrapper and retry logic that caused degraded-run emails on large codebases
 
 **v9.4.25** -- fix: SELF_REFUTING_RE extended to catch 'not a concrete conflict', 'no concrete runtime failure path', 'no active cross-file call path' and similar model-generated self-negations that were slipping through the filter; self-refuting-filter smoke test updated with 5 new drop cases

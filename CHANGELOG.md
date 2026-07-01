@@ -5,6 +5,12 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.27] - 2026-07-01
+
+### Fixed
+- **blast-multipass errored result handling.** The batch synthesis results loop now explicitly checks for result.type === 'errored' and throws with error details. Previously a failed synthesis batch request silently returned an empty report string with no error surfaced, causing a blank report to be saved to disk.
+- **@ghost-verified annotations.** Added 4 annotations for confirmed false positives: getSamplingParams batch params shape, onUsage null-default guard, batch-submit formatClockTime import, getBranding logo_path consistency.
+
 ## [9.4.26] - 2026-07-01
 
 ### Fixed

@@ -593,6 +593,7 @@ function toStringArray(val) {
  *   confidentiality — from branding.confidentiality, falls back to
  *                     'Confidential — Prepared for [companyName] engagement use'
  */
+// @ghost-verified: logo_path key is consistent between writer.js renderProfileYaml and index.js getBranding -- no conflict
 export function getBranding(profile) {
   if (!profile || typeof profile !== 'object') return null;
 

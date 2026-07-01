@@ -81,6 +81,7 @@ export function getBlastPassInfo(fileMap, tier = 'open') {
 //   onSynthesisStart()
 //
 export async function runMultipassBlast(patchedContext, forecastTarget, options = {}) {
+  // @ghost-verified: onUsage=null default is safe -- every call site guards with if (onUsage) before invoking
   const { tier = 'open', profile, forecastMode, onPassStart, onPassComplete, onSynthesisStart, onUsage = null } = options;
 
   const fileMap = patchedContext.fileMap || {};
@@ -147,6 +148,7 @@ ${combinedResults}`;
       params: {
         model:      synthesisModel,
         max_tokens: 8096,
+        // @ghost-verified: getSamplingParams returns only {} or {temperature} -- no extra fields that batch API would reject
         ...getSamplingParams(0, synthesisModel),
         system:     systemPrompt,
         messages:   [{ role: 'user', content: userMessage }],
@@ -169,20 +171,25 @@ ${combinedResults}`;
   // Extract the synthesis output from the batch result.
   let synthesisOutput = '';
   for await (const item of await anthropic.messages.batches.results(batch.id)) {
-    if (item.custom_id === 'blast-synthesis' && item.result?.type === 'succeeded') {
-      const msg = item.result.message;
-      synthesisOutput = msg.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('');
-      // onUsage may be null (default in this function) — guard as the
-      // streaming path did, or an omitted callback would throw here.
-      if (onUsage) {
-        onUsage(
-          msg.usage?.input_tokens  ?? 0,
-          msg.usage?.output_tokens ?? 0,
-          synthesisModel
-        );
+    if (item.custom_id === 'blast-synthesis') {
+      if (item.result?.type === 'errored') {
+        throw new Error(`Blast synthesis batch request failed: ${JSON.stringify(item.result.error)}`);
+      }
+      if (item.result?.type === 'succeeded') {
+        const msg = item.result.message;
+        synthesisOutput = msg.content
+          .filter(b => b.type === 'text')
+          .map(b => b.text)
+          .join('');
+        // onUsage may be null (default in this function) — guard as the
+        // streaming path did, or an omitted callback would throw here.
+        if (onUsage) {
+          onUsage(
+            msg.usage?.input_tokens  ?? 0,
+            msg.usage?.output_tokens ?? 0,
+            synthesisModel
+          );
+        }
       }
     }
   }
