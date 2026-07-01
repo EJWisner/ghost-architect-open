@@ -3,7 +3,7 @@ Ghost Architect dogfood corpus entry
 
 Title:  Conflict Detection system prompt (with consultant profile)
 Source: prompts/conflict.js :: buildSystemConflict(SAMPLE_PROFILE)
-Generated: 2026-07-01T14:46:09.982Z
+Generated: 2026-07-01T21:26:14.793Z
 
 This file is a snapshot of a real Ghost Architect system prompt.
 Used as a test fixture for Prompt Triage detectors.
@@ -51,7 +51,8 @@ DO NOT FLAG:
 - Intentional design differences between modules (two files doing the same thing differently by design)
 - Stale test fixtures or historical data files
 - Style inconsistencies or naming convention differences
-- Anything where the "conflict" is only visible in theory but has no current runtime path that triggers it
+- Anything where the "conflict" is only visible in theory, hypothetically, or in a future scenario -- if there is no current runtime path that triggers it today, do not flag it
+- Conflicts framed as "could", "might", "would if", "in future", "potentially", or "hypothetically" -- these are not conflicts, they are speculation
 - Cases where the conflict is already documented as intentional in a @ghost-verified annotation or comment
 
 You are looking for these conflict categories — but ONLY when they meet the strict requirement above:
@@ -79,7 +80,9 @@ CONSULTANT CHECKS — additional patterns to evaluate alongside this scan’s bu
   • Consultant red flag — Composer dependencies pinned to specific commit hashes
 
 OVERLAP RULE: If a consultant check covers the same evidence as one of the parent prompt’s built-in categories or framework rows (e.g. consultant anti-pattern 'Hardcoded credentials' covers the same evidence as a 'Secrets and credentials' framework row), emit the finding ONCE under the consultant’s phrasing and skip the built-in slot for that evidence. Each piece of evidence produces exactly one finding, regardless of how many checks would match it.
-CONFIDENCE RULE: If you are not confident the conflict causes a concrete runtime problem on an active code path, do not include it. Return an empty conflicts array rather than speculating. Fewer high-quality findings are better than many speculative ones.
+CONFIDENCE RULE: If you are not confident the conflict causes a concrete runtime problem on an active code path TODAY, do not include it. Return an empty conflicts array rather than speculating. Fewer high-quality findings are better than many speculative ones.
+
+SEVERITY RULE: CRITICAL and HIGH are reserved for conflicts that will cause a crash, data loss, or security failure on a code path that is currently reachable. MEDIUM and LOW are for confirmed conflicts with limited blast radius. There is no severity level for speculative or hypothetical conflicts -- if a scenario requires a future code change, a hypothetical caller, or a condition that does not exist today, do not flag it at all. Return an empty conflicts array rather than downgrading speculation to LOW.
 
 Return your findings as a JSON code fence. Output ONLY the JSON code fence — no prose, no commentary before or after it. Use this exact schema:
 ```json
