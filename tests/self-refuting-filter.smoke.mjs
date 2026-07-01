@@ -15,7 +15,7 @@
  */
 
 // ── REPLICATED from src/modes/watcher-commit.js (keep in sync) ──────────────
-const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different/i;
+const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+(\w+\s+){0,3}conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|no\s+concrete\s+(runtime\s+)?(conflict|failure|impact)|no\s+active\s+\S+(\s+\S+){0,4}\s+(call\s+)?path|no\s+\S+(\s+\S+){0,3}\s+failure\s+path|consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different/i;
 
 // Mirror the production filter predicate: keep when test() is false.
 const isDropped = (description) => SELF_REFUTING_RE.test(description || '');
@@ -50,6 +50,11 @@ console.log('Test 1: self-refuting descriptions are DROPPED');
     'values match',
     'intentionally different',
     'these are consistent across modules',
+    'Not a concrete runtime conflict.',
+    'Not a concrete conflict.',
+    'No concrete runtime failure path.',
+    'No active cross-file call path exists.',
+    'No concrete failure path exists.',
   ];
   for (const s of SHOULD_DROP) {
     check(`drop: ${JSON.stringify(s)}`, isDropped(s), true);

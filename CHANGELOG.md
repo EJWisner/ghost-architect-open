@@ -5,6 +5,11 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.25] - 2026-07-01
+
+### Fixed
+- **SELF_REFUTING_RE extended.** The self-refuting conflict filter now catches model-generated self-negations with adjectives between key words (e.g. 'not a concrete runtime conflict', 'no concrete failure path', 'no active cross-file call path exists'). Previously the regex required adjacent words and missed these phrasings. Five new test cases added to self-refuting-filter.smoke.mjs. Both the production regex in watcher-commit.js and the replicated copy in the smoke test are kept in sync.
+
 ## [9.4.24] - 2026-07-01
 
 ### Fixed

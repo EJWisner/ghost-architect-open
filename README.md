@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.25** -- fix: SELF_REFUTING_RE extended to catch 'not a concrete conflict', 'no concrete runtime failure path', 'no active cross-file call path' and similar model-generated self-negations that were slipping through the filter; self-refuting-filter smoke test updated with 5 new drop cases
+
 **v9.4.24** -- fix: corrected-file-generator syntaxChars now includes quotes preventing switch-case labels from being stripped as prose; watch/index.js workflow template now replaces hardcoded version 9.0.15 in fallback telemetry payload; dedup.js selectKeepers uses baseId for GENERAL_DETECTORS lookup matching classifyDetector consistency; @ghost-verified annotations added for two latent dedup classification notes
 
 **v9.4.23** -- fix: dedup.js reverts ambiguousInstruction and underspecifiedConstraints to GENERAL_DETECTORS (promotion to SPECIFIC in v9.4.21 caused duplicate findings on overlap with conflictingInstructions); poi.js empty-scan publish payload annotated @ghost-verified
