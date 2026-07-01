@@ -134,7 +134,7 @@ function mapBaselineFindings(baselineFindings) {
  * This is what the mobile app reads.
  */
 function buildPublishPayload(projectMeta, scanRecord) {
-  const current  = scanRecord.findingCount || 0;
+  const current  = scanRecord.findingCount ?? scanRecord.meta?.findingCount ?? 0;
   const baseline    = projectMeta.baselineCount || 0;
   const hasBaseline = baseline > 0 && baseline !== current;
 
@@ -191,10 +191,10 @@ function buildPublishPayload(projectMeta, scanRecord) {
 
     summary: {
       totalFindings:  current,
-      critical:       scanRecord.critical   || 0,
-      high:           scanRecord.high       || 0,
-      medium:         scanRecord.medium     || 0,
-      low:            scanRecord.low        || 0,
+      critical:       scanRecord.critical   ?? scanRecord.meta?.critical   ?? 0,
+      high:           scanRecord.high       ?? scanRecord.meta?.high       ?? 0,
+      medium:         scanRecord.medium     ?? scanRecord.meta?.medium     ?? 0,
+      low:            scanRecord.low        ?? scanRecord.meta?.low        ?? 0,
       // Preserve null/undefined so mobile can distinguish "not parsed" from "zero".
       // Mobile should render null as "—" rather than "$0".
       estimatedHours: scanRecord.totalHours != null ? scanRecord.totalHours : (scanRecord.meta?.totalHours ?? null),

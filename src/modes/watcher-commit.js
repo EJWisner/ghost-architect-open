@@ -33,6 +33,7 @@ import { partitionFindings } from '../watch/ghost-verified.js';
 import { pingWatcherRun } from '../telemetry/pulse.js';
 import { requireTier } from '../license/tier-gates.js';
 import { verifyConflicts } from '../core/agent/verifier.js';
+// @ghost-verified: watcher-commit.js imports from both src/estimator.js (CLI display layer) and src/core/estimator.js (pricing logic) intentionally -- these are separate modules with different responsibilities
 import { getPricing } from '../core/estimator.js';
 import { BATCH_DISCOUNT } from '../lib/cost-estimator.js';
 import { buildSystemBlast } from '../../prompts/index.js';
@@ -762,6 +763,7 @@ function buildPromptGenRequests(findings, commitSha, detailById = new Map()) {
 // Replace each finding's prompt with the matching batch result text, matched by
 // the numeric index in the result custom_id. Only successful, non-empty results
 // replace the templated prompt; anything else keeps its original prompt.
+// @ghost-verified: exported for unit testing -- internal callers are the prompts-resume path and Step 8e detailed prompts
 export function enrichFindingsWithPrompts(findings, results) {
   if (!Array.isArray(findings) || !Array.isArray(results)) return findings;
   const textByIndex = new Map();

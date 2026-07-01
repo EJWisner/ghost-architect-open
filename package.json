@@ -1,7 +1,7 @@
 {
   "name": "ghost-architect-open",
   "private": false,
-  "version": "9.4.20",
+  "version": "9.4.21",
   "description": "AI-powered codebase archaeology: understand what you inherited",
   "author": "Ghost Architect",
   "license": "SEE LICENSE IN LICENSE",

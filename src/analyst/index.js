@@ -8,6 +8,7 @@ import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { mergeRates } from '../profile/index.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 
 let client = null;
 
@@ -60,7 +61,7 @@ export function buildQuestionRequest(codebaseContext, conversationHistory, userM
   return {
     model:       getModel(),
     max_tokens:  4096,
-    temperature: 0,
+    ...getSamplingParams(0, getModel()),
     system:      SYSTEM_CHAT,
     messages:    contextualMessages,
   };
@@ -123,7 +124,7 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
     ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
     : '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, temperature: 0.3, system: buildSystemPOI(rates, options.profile),
+    model: getModel(), max_tokens: 8096, ...getSamplingParams(0.3, getModel()), system: buildSystemPOI(rates, options.profile),
     messages: [{ role: 'user', content: `${profileReminder}Perform a full Points of Interest scan on this codebase:\n\n${codebaseContext.context}` }]
   });
 
@@ -283,7 +284,7 @@ export function buildBlastRequest(codebaseContext, target, options = {}) {
   return {
     model:      getModel(),
     max_tokens: 8096,
-    temperature: 0,
+    ...getSamplingParams(0, getModel()),
     system:     systemPrompt,
     messages:   [{ role: 'user', content: userMessage }],
     targets,
@@ -349,6 +350,7 @@ export async function processBlastRawOutput(rawOutput, {
   if (onUsage && narratedReport) {
     const narratorInputEst  = Math.ceil(rawOutput.length / 4);
     const narratorOutputEst = Math.ceil(narratedReport.length / 4);
+    // @ghost-verified: the stage argument passed to onUsage in processBlastRawOutput is intentionally dropped -- stage is baked into each tracker lambda (scan/verify/narrate); the 4th arg is a no-op by design
     onUsage(narratorInputEst, narratorOutputEst, getModel(), 'narrate');
   }
 
@@ -436,7 +438,7 @@ export async function runAuditSynthesis(analyzerOutputs, options = {}) {
     const response = await anthropic.messages.create({
       model: options.model || getModel(),
       max_tokens: 3000,
-      temperature: 0.2,
+      ...getSamplingParams(0.2, options.model || getModel()),
       system: AUDIT_ROADMAP_SYSTEM,
       messages: [{ role: 'user', content: userMessage }],
     });

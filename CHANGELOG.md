@@ -5,6 +5,18 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.21] - 2026-07-01
+
+### Fixed
+- **mobile-publish findingCount.** buildPublishPayload now reads findingCount and severity counts from scanRecord.meta fallback. Mobile portfolio dashboard no longer shows zero findings.
+- **MODE2_THRESHOLD constant.** Extracted magic number 0.70 to named constant in corrected-file-generator.js.
+- **analyst/index.js temperature guard.** All stream calls now use getSamplingParams instead of hardcoded temperature values.
+- **dedup.js SPECIFIC_DETECTORS.** Promoted ambiguousInstruction and underspecifiedConstraints to SPECIFIC; removed their stale GENERAL_DETECTORS entries.
+- **tokenLimit mayUseNetwork flag.** tokenLimitContextOverflow and tokenLimitExcessive registry entries now carry mayUseNetwork: true.
+- **Conflict Detection prompt v0.4.** Tightened to require concrete runtime impact before flagging. Added STRICT REQUIREMENT list, DO NOT FLAG list, per-category runtime qualifiers, and CONFIDENCE RULE. Reduces false positive noise significantly.
+- **@ghost-verified annotations.** Added 7 annotations for intentional design decisions that were recurring as false positives: capSeverity policy split, estimator dual-path import, compare.js keepLandmarks, enrichFindingsWithPrompts export, onUsage stage drop, fix_direction two-value confidence, audit/index.js CLI layer imports.
+- **Portal degraded-run banner.** Now shows the affected commit short SHA(s) so customers know exactly which commit had the narrator failure.
+
 ## [9.4.20] - 2026-07-01
 
 ### Fixed

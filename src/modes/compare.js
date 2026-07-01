@@ -154,6 +154,7 @@ export async function runCompareMode() {
 // resolved/remaining/new counts. Other modes (poi, blast, conflict) exclude
 // landmarks from their sidecar findingCount — this is a known intentional
 // difference between the comparison surface and the sidecar surface.
+// @ghost-verified: keepLandmarks: true is intentional for compare mode -- landmarks appear in resolved/remaining/new counts; this intentionally differs from sidecar findingCount which excludes landmarks
 function extractFindings(text) {
   return extractFindingsCanonical(text, { keepLandmarks: true });
 }

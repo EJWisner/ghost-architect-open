@@ -592,6 +592,7 @@ export async function auditPromptForDefect(params) {
 // Per-million-token rates in USD. Conservative numbers; if Anthropic
 // updates pricing, update here. Rates only used for the informational
 // pre-scan estimate — actual billing comes from Anthropic.
+// @ghost-verified: the capSeverity HIGH→MEDIUM split across detectors is intentional policy -- poorOrganization/poorDocumentation/inefficientFewShot cap at MEDIUM by design; siblings allow HIGH per v5.3 policy documented in each detector file
 const MODEL_RATES = {
   'claude-opus-4-7':   { input: 5.00, output: 25.00 },
   'claude-opus-4-6':   { input: 5.00, output: 25.00 },

@@ -38,6 +38,7 @@ import { runRoadmapStub } from './roadmapStub.js';
 import { DEAL_TIERS } from './severityRecast.js';
 import { buildAuditReport } from './reportBuilder.js';
 import { saveReport } from '../../reports.js';
+// @ghost-verified: these imports resolve to src/projects.js and src/estimator.js (CLI layer wrappers) not src/core/ -- intentional, audit mode uses CLI display functions
 import { promptProjectLabel } from '../../projects.js';
 import { showAuditCostEstimate, showActualCost } from '../../estimator.js';
 import { getConfig } from '../../config.js';

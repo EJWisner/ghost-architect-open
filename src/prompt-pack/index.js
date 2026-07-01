@@ -118,8 +118,8 @@ const REGISTRY = [
   { id: 'unboundedOutput',     tier: 1, module: unboundedOutput },
   { id: 'injectionStaticPattern', tier: 1, module: injectionStaticPattern },
   { id: 'roleSeparation',      tier: 1, module: roleSeparation },
-  { id: 'tokenLimitContextOverflow', tier: 1, module: tokenLimitContextOverflow, requiresTargetModel: true },
-  { id: 'tokenLimitExcessive',       tier: 1, module: tokenLimitExcessive,       requiresTargetModel: true },
+  { id: 'tokenLimitContextOverflow', tier: 1, module: tokenLimitContextOverflow, requiresTargetModel: true, mayUseNetwork: true },
+  { id: 'tokenLimitExcessive',       tier: 1, module: tokenLimitExcessive,       requiresTargetModel: true, mayUseNetwork: true },
 
   // Tier 2: LLM judgment required. Each detector sends the prompt to
   // a model and uses the model's judgment as the answer. Costs money.

@@ -208,6 +208,7 @@ function findMethodEnd(baselineLines, sigMatchIdx) {
 // Returns null if no line scores ≥ 0.80.
 
 const MODE1_THRESHOLD = 0.80;
+const MODE2_THRESHOLD = 0.70; // Lower than Mode 1 — sig lines are shorter and fuzzier
 
 function tryMode1(baselineLines, patchLines) {
   if (patchLines.length === 0) return null;
@@ -285,7 +286,7 @@ function tryMode2R(baselineLines, patchLines) {
   scores.sort((a, b) => b.score - a.score);
   const best = scores[0];
   // Lower threshold than Mode 1 (0.70 vs 0.80) — sig lines are shorter
-  if (best.score < 0.70) return null;
+  if (best.score < MODE2_THRESHOLD) return null;
 
   // Walk forward from sig match to find the { that opens the body.
   // Track paren depth so braces inside parameter lists are ignored.
@@ -333,7 +334,7 @@ function tryMode2R(baselineLines, patchLines) {
     ];
   }
 
-  const confidence = scores.filter(s => s.score >= 0.70).length === 1 ? 'high' : 'medium';
+  const confidence = scores.filter(s => s.score >= MODE2_THRESHOLD).length === 1 ? 'high' : 'medium';
   const notes = confidence === 'medium'
     ? `Signature replaced at highest-similarity match (line ${best.idx + 1}). ` +
       `Similar signatures also found — verify scope.`
@@ -381,7 +382,7 @@ function tryMode2I(baselineLines, patchLines) {
   }));
   scores.sort((a, b) => b.score - a.score);
   const best = scores[0];
-  if (best.score < 0.70) return null;
+  if (best.score < MODE2_THRESHOLD) return null;
 
   // Find the opening brace
   let parenDepth = 0;
@@ -404,7 +405,7 @@ function tryMode2I(baselineLines, patchLines) {
     ...baselineLines.slice(braceLineIdx + 1),      // original body preserved
   ];
 
-  const confidence = scores.filter(s => s.score >= 0.70).length === 1 ? 'medium' : 'low';
+  const confidence = scores.filter(s => s.score >= MODE2_THRESHOLD).length === 1 ? 'medium' : 'low';
   const notes = `Patch inserted at top of '${patchLines[0].trim().slice(0, 40)}' body ` +
     `based on truncation sentinel. Review insertion point before applying.`;
 

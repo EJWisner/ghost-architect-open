@@ -211,6 +211,7 @@ export function extractCandidates(rawResults) {
     return 'MEDIUM'; // default
   }
 
+  // @ghost-verified: fix_direction confidence is intentionally two-value (high|medium) -- the conflict system prompt only emits these two values; low is not a valid output per the prompt schema
   function buildFixDirection(fd, files) {
     if (!fd || typeof fd !== 'object') return null;
     const targetFiles = Array.isArray(fd.target_files)
