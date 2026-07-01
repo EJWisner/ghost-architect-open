@@ -40,6 +40,7 @@ const KEY = 'pendingBatches';
  */
 export function getPendingBatches() {
   try {
+    // @ghost-verified: split Configstore access with portal-publish.js is safe -- both use different keys (pendingBatches vs portalPublish), configstore writes atomically via write-file-atomic, and the two write paths (scan submission vs configuration) do not race in practice
     const raw = getConfig().get(KEY);
     return Array.isArray(raw) ? raw : [];
   } catch {

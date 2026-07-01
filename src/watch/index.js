@@ -99,7 +99,14 @@ export function buildWatchConfig({
       enabled: true,
       trigger: { branches },
       scans: {
-        blast_radius:       blastRadius,
+        blast_radius: blastRadius === false ? false : {
+          enabled: true,
+          skip_if_message_contains: [
+            'v9.',
+            'v10.',
+            'v11.',
+          ],
+        },
         conflict_detection: conflictDetection,
         ghost_brief:        ghostBrief,
         conflict_verify:    conflictVerify,

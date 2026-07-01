@@ -5,6 +5,14 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.28] - 2026-07-01
+
+### Fixed
+- **Blast radius skip on release commits.** ghost-watcher.yaml and buildWatchConfig now skip blast radius when the commit message starts with a version prefix (v9., v10., v11.). Release commits produce blast impact-analysis noise rather than actionable findings. Conflict Detection and Ghost Brief still run on all commits.
+- **blast_radius config object form.** buildWatchConfig now emits blast_radius as an object with enabled flag and skip_if_message_contains patterns instead of a plain boolean. Regenerating ghost-watcher.yaml no longer reverts the skip config.
+- **enabled:false object form wired.** All three blast_radius guard sites in watcher-commit.js now check blast_radius?.enabled !== false in addition to blast_radius !== false, so an object-form config with enabled:false correctly disables blast.
+- **@ghost-verified annotations.** Added for corrected-file-generator 'ensures' prose filter (syntaxChars guard already protects real code lines) and batch-store Configstore split-access (different keys, atomic writes, non-racing paths).
+
 ## [9.4.27] - 2026-07-01
 
 ### Fixed

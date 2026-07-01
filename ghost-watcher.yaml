@@ -9,7 +9,12 @@ ghost_watcher:
       - bugfix/**
       - v7-unified
   scans:
-    blast_radius: true
+    blast_radius:
+      enabled: true
+      skip_if_message_contains:
+        - "v9."
+        - "v10."
+        - "v11."
     conflict_detection: true
     ghost_brief: true
     conflict_verify: false

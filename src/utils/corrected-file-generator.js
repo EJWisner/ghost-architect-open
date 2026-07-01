@@ -34,6 +34,7 @@
 //
 export function cleanPatchInstruction(raw) {
   if (typeof raw !== 'string') return raw;
+  // @ghost-verified: 'ensures' in proseStartRe is safe -- lines like ensures($condition) contain '(' which is in syntaxChars and are preserved; the syntaxChars guard protects all real code lines
   const proseStartRe = /^(?:this|adds|ensures|prevents|around|following|note|warning|here|which)\b/i;
   const syntaxChars  = /[${}();=<>'"]/;
   return raw

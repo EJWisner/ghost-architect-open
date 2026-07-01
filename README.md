@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.28** -- fix: ghost-watcher.yaml and buildWatchConfig skip blast radius on version-tagged release commits (v9./v10./v11. prefix); blast_radius config now uses object form with enabled flag; watcher-commit.js guards handle enabled:false object form; @ghost-verified annotations for corrected-file-generator ensures filter and batch-store Configstore split-access
+
 **v9.4.27** -- fix: blast-multipass.js batch synthesis now handles 'errored' result type explicitly (previously silent empty report on batch failure); @ghost-verified annotations added for 4 confirmed false positives
 
 **v9.4.26** -- fix: blast narrator switched from streaming to narrateReportSync (blocking messages.create) eliminating streaming timeout failures on CI; blast-multipass synthesis pass converted to batch API; both changes remove the 180s timeout wrapper and retry logic that caused degraded-run emails on large codebases

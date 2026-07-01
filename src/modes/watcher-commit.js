@@ -1431,7 +1431,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // nothing we can submit, exit cleanly) from a payload-size failure (tiny POST
   // succeeds but the full submit drops). Resume above already ran — it only
   // does GETs, so it is unaffected by a broken submit path.
-  if (watchConfig.scans?.blast_radius !== false || watchConfig.scans?.conflict_detection !== false) {
+  if ((watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false) || watchConfig.scans?.conflict_detection !== false) {
     const preflight = await preflightBatchCheck(anthropic, getWatcherModel());
     if (!preflight.ok) {
       console.error(`Ghost Watcher: Batches API preflight failed — ${preflight.error}`);
@@ -1480,7 +1480,25 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   let totalInputTokens  = 0;
   let totalOutputTokens = 0;
 
-  if (watchConfig.scans?.blast_radius !== false) {
+  // Release commits (version bumps, changelog/badge updates) don't need a
+  // Blast Radius pass. Skip it when the commit message matches a configured
+  // pattern. Prefer a workflow-exported env var; fall back to git, mirroring
+  // the [ghost-skip] check in Step 1b (GitHub Actions does not export the
+  // commit message as an env var by default).
+  let commitMessage = process.env.GITHUB_COMMIT_MESSAGE || process.env.COMMIT_MESSAGE || '';
+  if (!commitMessage) {
+    try {
+      const { execSync } = await import('child_process');
+      commitMessage = execSync('git log -1 --format=%B', { cwd: repoRoot, encoding: 'utf8' }).trim();
+    } catch { /* git unavailable — leave empty, no skip */ }
+  }
+  const blastSkipPatterns = watchConfig.scans?.blast_radius?.skip_if_message_contains || [];
+  const skipBlast = blastSkipPatterns.some(p => commitMessage.toLowerCase().includes(p.toLowerCase()));
+  if (skipBlast) {
+    console.log('Ghost Watcher: skipping Blast Radius — commit message matches a configured skip pattern.');
+  }
+
+  if (watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast) {
     console.log('Ghost Watcher: running Blast Radius (batch)...');
     let blastBatchId = null;
     try {
@@ -1976,7 +1994,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       },
       prompts:   briefPromptCount,
       scans: {
-        blast:    watchConfig.scans?.blast_radius    !== false,
+        blast:    watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false,
         conflict: watchConfig.scans?.conflict_detection !== false,
         brief:    watchConfig.scans?.ghost_brief     !== false,
       },
