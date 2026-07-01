@@ -678,7 +678,7 @@ async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, cod
     // failures without meaningfully extending the run time.
     let narratedReport;
     const narrateWithTimeout = () => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('narrateReport timeout after 90s')), 90000);
+      const timer = setTimeout(() => reject(new Error('narrateReport timeout after 180s')), 180000);
       narrateReport(
         {
           findings:      rawFindings,
@@ -895,6 +895,28 @@ function emailSetupWarning({ repo }) {
       `</ol>\n` +
       `<p>Ghost Watcher™ will continue attempting to deliver results automatically. Your pending scans are safe on Anthropic's servers.</p>\n` +
       `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+  };
+}
+
+function emailDegradedRun({ repo, shortSha, portalSlug }) {
+  const repoDisplay = escapeHtml(repo);
+  const shaDisplay  = escapeHtml(shortSha);
+  const portalUrl   = portalSlug
+    ? `https://ghostarchitect.dev/portal-${escapeHtml(portalSlug)}.html#watch`
+    : null;
+  return {
+    subject: `Ghost Watcher™ — scan needs attention (${repoDisplay} @ ${shaDisplay})`,
+    html:
+      `<p>Ghost Watcher™ ran on <strong>${repoDisplay}</strong> at commit ` +
+      `<code>${shaDisplay}</code> but encountered an issue generating the ` +
+      `full analysis (the blast narrator timed out).</p>\n` +
+      `<p>Your codebase was scanned successfully. To get the complete ` +
+      `analysis, please re-run the workflow manually or push a new commit.</p>\n` +
+      (portalUrl
+        ? `<p><a href="${portalUrl}">View partial results in Ghost Portal →</a></p>\n`
+        : '') +
+      `<p style="color:#888;font-size:12px;">Ghost Watcher™ · ` +
+      `<a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
@@ -1668,6 +1690,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     console.log(`Ghost Watcher: ${verifiedFindings.length} finding(s) marked @ghost-verified (reviewed · expected behavior)\n`);
   }
 
+  // Hoisted so the Step 8c email gate can branch on it. The blast narrator sets
+  // _narratorFailed on the raw findings when it times out; partitionFindings
+  // returns a fresh `allFindings` array that may not carry the flag, so we OR
+  // against blastFindings too (mirrors the portal manifest flag below).
+  const narratorFailed = !!(allFindings._narratorFailed || blastFindings._narratorFailed);
+
   // ── Step 8: Ghost Brief (Max-tier gated) ─────────────────────────────────
   // Ghost Brief is a Max-tier artifact (pro-max / team-max / enterprise-max).
   // requireTier('mode:ghost-brief') is the single source of truth. Non-Max
@@ -1733,39 +1761,45 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // A completed run resets the consecutive-incomplete-run counter.
   await resetIncompleteRuns(octokitPortal, portalRepoPath);
 
-  // ── Step 8c: Findings email ───────────────────────────────────────────────
-  // One or more findings — email the customer a summary with per-finding detail.
+  // ── Step 8c: Findings, degraded-run, or clean-scan email ──────────────────
   // Fire-and-forget; never blocks the portal push that follows.
-  if (allFindings.length > 0) {
+  if (emailRecipients.length > 0) {
     try {
-      const sev = buildSeverityCounts(allFindings);
-      const eFindings = emailFindings({
-        repo:          repoPath,
-        shortSha:      commitSha,
-        findingsCount: allFindings.length,
-        criticalCount: sev.critical,
-        highCount:     sev.high,
-        mediumCount:   sev.medium,
-        lowCount:      sev.low,
-        findings:      allFindings,
-        portalSlug:    portalSlug || repoOwner,
-      });
-      await sendWatcherEmail(emailRecipients, eFindings.subject, eFindings.html);
-    } catch (_) { /* email never blocks */ }
-  }
-
-  // ── Step 8d: Clean scan email ─────────────────────────────────────────────
-  // Zero findings across both scans — tell the customer the commit is clean.
-  // Fire-and-forget; never blocks the portal push that follows.
-  if (allFindings.length === 0) {
-    try {
-      const eClean = emailCleanScan({
-        repo: repoPath,
-        shortSha: commitSha,
-        fileCount: codebaseContext.loadedFiles || 0,
-        portalSlug: portalSlug || repoOwner,
-      });
-      await sendWatcherEmail(emailRecipients, eClean.subject, eClean.html);
+      if (narratorFailed) {
+        // Blast narrator timed out — send a simple degraded-run notice instead
+        // of raw unnarrated findings, which would be confusing to customers.
+        const eDegraded = emailDegradedRun({
+          repo:       repoPath,
+          shortSha:   commitSha,
+          portalSlug: portalSlug || repoOwner,
+        });
+        await sendWatcherEmail(emailRecipients, eDegraded.subject, eDegraded.html);
+      } else if (allFindings.length > 0) {
+        // One or more findings — email a summary with per-finding detail.
+        const sev = buildSeverityCounts(allFindings);
+        const eFindings = emailFindings({
+          repo:          repoPath,
+          shortSha:      commitSha,
+          findingsCount: allFindings.length,
+          criticalCount: sev.critical,
+          highCount:     sev.high,
+          mediumCount:   sev.medium,
+          lowCount:      sev.low,
+          findings:      allFindings,
+          portalSlug:    portalSlug || repoOwner,
+        });
+        await sendWatcherEmail(emailRecipients, eFindings.subject, eFindings.html);
+      } else {
+        // ── Step 8d: Clean scan email ─────────────────────────────────────
+        // Zero findings across both scans — tell the customer the commit is clean.
+        const eClean = emailCleanScan({
+          repo:       repoPath,
+          shortSha:   commitSha,
+          fileCount:  codebaseContext.loadedFiles || 0,
+          portalSlug: portalSlug || repoOwner,
+        });
+        await sendWatcherEmail(emailRecipients, eClean.subject, eClean.html);
+      }
     } catch (_) { /* email never blocks */ }
   }
 
@@ -1894,7 +1928,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         },
         blastFileCount,
         briefPromptCount,
-        narratorFailed: !!(allFindings._narratorFailed || blastFindings._narratorFailed),
+        narratorFailed,
         findings:    allFindings,
         verifiedFindings,
         brief:       brief || null,

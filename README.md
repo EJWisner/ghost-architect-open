@@ -2,6 +2,8 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+**v9.4.20** -- fix: blast narrator failure now sends degraded-run email instead of raw findings; narrator timeout increased 90s to 180s; extractCandidates adds bad-escape-character JSON repair; dogfood detector IDs corrected; watcher-batch.js preflight uses getSamplingParams; portal commit ID filter added to Findings and Prompts tabs; pulse-stats Cache-Control no-store, cache layer removed
+
 **v9.4.19** -- fix: tokenLimitContextOverflow and tokenLimitExcessive detector IDs corrected to camelCase (were slash-format, causing dedup misclassification as orthogonal); corrected-file-generator tryMode2N now skips signature-shaped patches; reports.js stale float-detection confidence branch removed; extractCandidates adds truncation-repair retry for malformed JSON fences from max_tokens truncation; dogfood-2026-05-11.json detector IDs updated to unboundedOutput
 
 **v9.4.18** -- fix: integrationMismatch FINDINGS_CAP comment corrected to 10 (was stale at 5 after CC100 change); buildWatchConfig iterations block now opt-in (default null, no iterations key emitted unless caller passes maxIterations) matching v9.3.7 documented intent that no config = no limit

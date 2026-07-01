@@ -21,7 +21,7 @@
       "conflictingInstructions": 1,
       "undefinedOutputFormat": 2,
       "poorDocumentation": 3,
-      "length/excessive": 1
+      "tokenLimitExcessive": 1
     },
     "findings": [
       {
@@ -97,7 +97,7 @@
         }
       },
       {
-        "detector": "length/excessive",
+        "detector": "tokenLimitExcessive",
         "severity": "LOW",
         "title": "Excessive prompt length",
         "location": null
@@ -118,7 +118,7 @@
       "undefinedOutputFormat": 2,
       "poorOrganization": 3,
       "poorDocumentation": 3,
-      "length/excessive": 1
+      "tokenLimitExcessive": 1
     },
     "findings": [
       {
@@ -234,7 +234,7 @@
         }
       },
       {
-        "detector": "length/excessive",
+        "detector": "tokenLimitExcessive",
         "severity": "LOW",
         "title": "Excessive prompt length",
         "location": null

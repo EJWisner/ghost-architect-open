@@ -5,6 +5,17 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.20] - 2026-07-01
+
+### Fixed
+- **Narrator failure email.** When the blast narrator times out, Ghost Watcher now sends a degraded-run notice email instead of raw unnarrated blast findings. Customers see a clear message to rerun rather than confusing impact-analysis output.
+- **Blast narrator timeout.** Increased from 90s to 180s to reduce timeout frequency on CI runners.
+- **extractCandidates JSON escape repair.** Added a second repair tier that sanitizes invalid backslash escape sequences before falling back to dropping the fence. Recovers partial conflict results from responses containing regex patterns or other non-standard escapes.
+- **dogfood detector IDs.** Replaced stale 'length/excessive' with 'tokenLimitExcessive' in audit-reports/dogfood-2026-05-11.json.
+- **watcher-batch.js preflight.** preflightBatchCheck now spreads getSamplingParams into the preflight request for consistency with actual batch requests.
+- **Portal commit ID filter.** Findings and Prompts tabs now show commit selector pills when multiple commits are in the date range. Selecting a commit scopes both tabs to that commit's data. Implemented in both portal-ejwisner.html and portal-template.html.
+- **pulse-stats Cache-Control.** Removed Cloudflare Cache API layer from handlePulseStats and set Cache-Control: no-store so every request hits the live worker. Eliminates the edge-cache delay after signup-worker deploys.
+
 ## [9.4.19] - 2026-07-01
 
 ### Fixed

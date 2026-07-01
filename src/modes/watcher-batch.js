@@ -35,6 +35,8 @@
  * type is 'succeeded' | 'errored' | 'canceled' | 'expired'.
  */
 
+import { getSamplingParams } from '../utils/sampling-params.js';
+
 // ── Pending-batch state file (in the portal repo) ──────────────────────────────
 //
 // The portal repo holds a single JSON file tracking incomplete batches plus the
@@ -290,6 +292,7 @@ export async function preflightBatchCheck(clientOrKey, model) {
     params: {
       model: model || 'claude-sonnet-4-6',
       max_tokens: 1,
+      ...getSamplingParams(0, model || 'claude-sonnet-4-6'),
       messages: [{ role: 'user', content: 'ping' }],
     },
   }];

@@ -238,16 +238,43 @@ export function extractCandidates(rawResults) {
       const raw = match[1].trim();
       parsed = JSON.parse(raw);
     } catch (err) {
-      // First parse failed — attempt truncation repair before giving up.
-      // The model sometimes hits max_tokens mid-JSON, producing an unterminated
-      // string or object. Try closing the open structures and retrying once.
-      try {
-        const raw = match[1].trim();
-        // Close any open string, then close the conflicts array and root object.
-        const repaired = raw.replace(/,?\s*$/, '') + ']}';
-        parsed = JSON.parse(repaired);
-        console.warn(`[extractCandidates] JSON repaired and parsed successfully`);
-      } catch (repairErr) {
+      // First parse failed — attempt repairs before giving up.
+      const raw = match[1].trim();
+      let recovered = false;
+
+      // Repair 1: truncation repair (model hit max_tokens mid-JSON, producing
+      // an unterminated string or object). Close the open structures and retry.
+      if (!recovered) {
+        try {
+          const repaired = raw.replace(/,?\s*$/, '') + ']}';
+          parsed = JSON.parse(repaired);
+          console.warn(`[extractCandidates] JSON truncation repaired successfully`);
+          recovered = true;
+        } catch (_) {}
+      }
+
+      // Repair 2: bad escape character (model emitted invalid \x sequences)
+      if (!recovered) {
+        try {
+          const sanitized = raw.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+          parsed = JSON.parse(sanitized);
+          console.warn(`[extractCandidates] JSON escape sanitized successfully`);
+          recovered = true;
+        } catch (_) {}
+      }
+
+      // Repair 3: truncation + escape sanitization combined
+      if (!recovered) {
+        try {
+          const sanitized = raw.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+          const repaired  = sanitized.replace(/,?\s*$/, '') + ']}';
+          parsed = JSON.parse(repaired);
+          console.warn(`[extractCandidates] JSON truncation+escape repaired successfully`);
+          recovered = true;
+        } catch (_) {}
+      }
+
+      if (!recovered) {
         console.warn(`[extractCandidates] JSON parse failed: ${err.message}`);
         continue;
       }
