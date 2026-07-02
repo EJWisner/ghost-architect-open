@@ -32,9 +32,24 @@ function loadProjectMeta(label) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
+// Atomic JSON write -- serialize to a temp file then rename over the target.
+// rename(2) within one filesystem is atomic: a reader sees either the complete
+// old file or the complete new file, never a partial write.
+// A crash leaves only a stray .tmp file; the real target is untouched.
+function atomicWriteJson(filePath, data) {
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* best-effort cleanup */ }
+    throw err;
+  }
+}
+
 function saveProjectMeta(label, meta) {
   ensureProjectsDir();
-  fs.writeFileSync(path.join(projectDir(label), 'project.json'), JSON.stringify(meta, null, 2));
+  atomicWriteJson(path.join(projectDir(label), 'project.json'), meta);
 }
 
 // ── Public: list projects ─────────────────────────────────────────────────────
@@ -150,10 +165,7 @@ export function saveProjectIntelligence(label, reportText, meta) {
     version:     (meta && meta.version)     || null,
     newFindings: (meta && meta.newFindings) || 0,
   };
-  fs.writeFileSync(
-    path.join(projectDir(label), scanFile),
-    JSON.stringify(scanRecord, null, 2)
-  );
+  atomicWriteJson(path.join(projectDir(label), scanFile), scanRecord);
 
   if (!existing) {
     // First scan — establish baseline

@@ -178,7 +178,15 @@ export async function enableWatch({ repoUrl, token, watchOptions = {}, version =
     );
     workflowPushed = true;
   } catch (err) {
-    // workflow scope not available — customer must add manually
+    // Only a genuine missing-workflow-scope 403 means the customer must add
+    // the workflow manually. Any other error (401 auth, 404 repo not found,
+    // 409 conflict, 429 rate limit, network, 5xx) is a real failure and must
+    // NOT be disguised as a scope problem -- re-throw it so the caller sees
+    // the actual error.
+    const status = err.status || (err.response && err.response.status);
+    const msg = (err.message || '').toLowerCase();
+    const isWorkflowScopeError = status === 403 && msg.includes('workflow') && msg.includes('scope');
+    if (!isWorkflowScopeError) throw err;
     workflowPushed = false;
   }
 

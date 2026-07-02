@@ -35,6 +35,12 @@ export function isContextOverflow(err) {
   const status = err.status;
   // Only 400s (or status-less errors, where message matching is all we have).
   if (status !== 400 && status !== undefined) return false;
+  // Billing and usage-limit 400s can also mention "tokens" + "limit"/"exceed"
+  // (e.g. "usage limit exceeded"). They are NOT context overflows -- let them
+  // fall through to the billing handler in friendlyError().
+  if (msg.includes('usage limit') || msg.includes('billing limit') || msg.includes('regain access')) {
+    return false;
+  }
 
   if (msg.includes('prompt is too long') ||
       msg.includes('maximum context') ||

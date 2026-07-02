@@ -1610,7 +1610,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       } catch (err) {
         if (err instanceof BatchTimeoutError) {
           // Batch is already stored; the next push will resume it. Exit gracefully.
-          await handleIncompleteRun({ octokitPortal, portalRepoPath, emailRecipients, repo: repoPath, shortSha: commitSha });
+          try {
+            await handleIncompleteRun({ octokitPortal, portalRepoPath, emailRecipients, repo: repoPath, shortSha: commitSha });
+          } catch (notifyErr) {
+            // Incomplete-run notification is best-effort -- must never throw or it breaks the always-exit-0 contract
+            console.error(`Ghost Watcher: incomplete-run notification failed (non-fatal) -- ${notifyErr.message}`);
+          }
           console.log('👻 Ghost Watcher™ — run incomplete; results will be delivered on the next push. Exit: 0\n');
           process.exit(0);
         } else if (err instanceof BatchAllFailedError) {
@@ -1708,7 +1713,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         console.log(`Ghost Watcher: Conflict Detection complete — ${conflictFindings.length} findings\n`);
       } catch (err) {
         if (err instanceof BatchTimeoutError) {
-          await handleIncompleteRun({ octokitPortal, portalRepoPath, emailRecipients, repo: repoPath, shortSha: commitSha });
+          try {
+            await handleIncompleteRun({ octokitPortal, portalRepoPath, emailRecipients, repo: repoPath, shortSha: commitSha });
+          } catch (notifyErr) {
+            // Incomplete-run notification is best-effort -- must never throw or it breaks the always-exit-0 contract
+            console.error(`Ghost Watcher: incomplete-run notification failed (non-fatal) -- ${notifyErr.message}`);
+          }
           console.log('👻 Ghost Watcher™ — run incomplete; results will be delivered on the next push. Exit: 0\n');
           process.exit(0);
         } else if (err instanceof BatchAllFailedError) {

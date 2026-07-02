@@ -36,6 +36,19 @@ export function createOctokit({ auth, ...extraConfig } = {}) {
   return new Octokit({
     auth,
     ...extraConfig,
+    // Notify-only throttle callbacks -- return false so the plugin does NOT
+    // auto-retry. The manual retry loop in loader/index.js stays authoritative
+    // for backoff, wait times, and the user-facing continue/stop prompt.
+    throttle: {
+      onRateLimit: (retryAfter, options) => {
+        console.warn(`GitHub rate limit hit for ${options.method} ${options.url} — waiting ${retryAfter}s (handled by caller)`);
+        return false;
+      },
+      onSecondaryRateLimit: (retryAfter, options) => {
+        console.warn(`GitHub secondary rate limit hit for ${options.method} ${options.url} — aborting request`);
+        return false;
+      },
+    },
     request: {
       log: {
         debug: () => {},

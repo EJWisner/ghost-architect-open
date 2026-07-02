@@ -573,6 +573,7 @@ async function loadFromGitHub() {
     const baseFetchText = `Fetching ${Math.min(filteredFiles.length, fetchCap)} files from ${selectedFolders.length} folder(s)...`;
     let fetched = 0;
     let stoppedEarly = false;
+    let rateLimitHits = 0;
 
     for (let i = 0; i < total; i++) {
       const file = filesToFetch[i];
@@ -586,9 +587,8 @@ async function loadFromGitHub() {
       }
       // Inner retry loop: a rate-limited file is retried after a wait; any
       // other error skips the file (preserving prior best-effort behavior).
-      // After 3 consecutive rate-limit hits on the SAME file, hand the user
+      // After 3 cumulative rate-limit hits across the fetch, hand the user
       // the choice to keep waiting or stop and keep the partial scan.
-      let rateLimitHits = 0;
       while (true) {
         try {
           const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: file.sha });
@@ -604,7 +604,10 @@ async function loadFromGitHub() {
           }
           break; // fetched (or intentionally skipped) — move to next file
         } catch (err) {
-          if (!isRateLimitError(err)) break; // non-rate-limit error: skip this file
+          if (!isRateLimitError(err)) {
+            console.log(chalk.gray(`  ⚠ Skipped ${file.path} — fetch error: ${err.message}`));
+            break;
+          }
 
           rateLimitHits++;
           if (rateLimitHits >= 3) {

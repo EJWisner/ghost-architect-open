@@ -56,6 +56,16 @@ export function findPendingBatch(id) {
   return getPendingBatches().find(b => b && b.id === id) || null;
 }
 
+// Central read-modify-write helper. Re-reads the list immediately before
+// writing to minimise the cross-process lost-update window. fn receives the
+// current list and returns the new list to persist.
+function mutatePendingBatches(fn) {
+  const current = getPendingBatches(); // fresh read
+  const updated = fn(current);
+  getConfig().set(KEY, updated);
+  return updated;
+}
+
 /**
  * Append a pending batch. If an entry with the same id already exists it is
  * replaced (last-write-wins) so a re-submit can't duplicate.
@@ -64,9 +74,7 @@ export function addPendingBatch(entry) {
   if (!entry || !entry.id) {
     throw new Error('batch-store: addPendingBatch requires an entry with an id.');
   }
-  const list = getPendingBatches().filter(b => b && b.id !== entry.id);
-  list.push(entry);
-  getConfig().set(KEY, list);
+  mutatePendingBatches(list => [...list.filter(b => b && b.id !== entry.id), entry]);
   return entry;
 }
 
@@ -76,12 +84,16 @@ export function addPendingBatch(entry) {
  */
 export function updatePendingBatch(id, patch = {}) {
   if (!id) return null;
-  const list = getPendingBatches();
-  const idx = list.findIndex(b => b && b.id === id);
-  if (idx === -1) return null;
-  list[idx] = { ...list[idx], ...patch };
-  getConfig().set(KEY, list);
-  return list[idx];
+  let updated = null;
+  mutatePendingBatches(list => {
+    const idx = list.findIndex(b => b && b.id === id);
+    if (idx === -1) return list;
+    const next = [...list];
+    next[idx] = { ...next[idx], ...patch };
+    updated = next[idx];
+    return next;
+  });
+  return updated;
 }
 
 /**
@@ -89,6 +101,5 @@ export function updatePendingBatch(id, patch = {}) {
  */
 export function removePendingBatch(id) {
   if (!id) return;
-  const list = getPendingBatches().filter(b => b && b.id !== id);
-  getConfig().set(KEY, list);
+  mutatePendingBatches(list => list.filter(b => b && b.id !== id));
 }
