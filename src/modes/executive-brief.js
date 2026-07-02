@@ -331,6 +331,15 @@ function renderPdf(payload) {
   fs.writeFileSync(tmpData, JSON.stringify(payload), 'utf8');
   try {
     execFileSync('python3', ['-c', PY_RENDERER, tmpData, pdfPath], { stdio: 'pipe' });
+  } catch (err) {
+    const stderr = err.stderr ? err.stderr.toString().trim() : '';
+    if (err.code === 'ENOENT') {
+      throw new Error('PDF generation requires python3, which was not found on PATH. Install Python 3 and try again.');
+    }
+    if (/No module named ['"]?reportlab/.test(stderr)) {
+      throw new Error('PDF generation requires the Python "reportlab" package. Install it with: pip3 install reportlab');
+    }
+    throw new Error(`PDF generation failed (python3 exited ${err.status ?? 'non-zero'}).\n${stderr || '(no stderr captured)'}`);
   } finally {
     try { fs.unlinkSync(tmpData); } catch { /* ignore */ }
   }

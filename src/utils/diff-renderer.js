@@ -246,7 +246,8 @@ export function computeUnifiedDiff(a, b, pathA, pathB) {
 
   // Reconstruct hunk groups (runs between separators) with @@ headers.
   // Track original-file (aLine) and new-file (bLine) positions.
-  // @ghost-verified: the @@ hunk-start numbering is correct for multi-hunk diffs -- separator-skipped lines are applied to aLine/bLine (see `aLine += h.skipped` below) before the next hunk flushes, so hunks after the first get accurate start positions; verified with a two-hunk fixture producing @@ -1,4 +1,4 @@ and @@ -6,5 +6,5 @@
+  // Hunk numbering: aLine/bLine are seeded past leading context (leadingSkip)
+  // so @@ starts are correct even when the first change is deep in the file.
   let aLine = 1;
   let bLine = 1;
   let hunkOps = [];
@@ -268,23 +269,16 @@ export function computeUnifiedDiff(a, b, pathA, pathB) {
     hunkOps = [];
   }
 
-  // Replay the full ops (not collapsed) to get accurate line numbers.
-  // collapseToHunks only gives us context-windowed view; we need raw ops
-  // for @@ numbering, then apply the separator positions to split hunks.
+  // Replay the collapsed hunks linearly, tracking a/b line positions to build
+  // the @@ headers. Each non-separator entry maps to a diff op.
   //
-  // Strategy: identify separator positions from collapseToHunks, then
-  // replay the full ops list splitting at those gaps.
-  const separatorPositions = new Set();
-  let opIdx = 0;
-  for (const h of hunks) {
-    if (h.type === 'separator') separatorPositions.add(opIdx);
-    else opIdx++;
-  }
-
-  // Replay full ops, splitting into hunks at separator boundaries.
-  // We use the collapseToHunks result directly: iterate hunks linearly.
-  // Each non-separator entry maps to a diff op.
-  aLine = 1; bLine = 1; hunkOps = [];
+  // Seed aLine/bLine past any leading context ops that precede the first hunk.
+  // collapseToHunks emits no leading separator, so without this seed the first
+  // hunk's @@ start is wrong whenever the first change is not within CONTEXT_LINES
+  // of the file start.
+  const firstHunkOp = hunks.find(h => h.type !== 'separator');
+  const leadingSkip = firstHunkOp ? ops.indexOf(firstHunkOp) : 0;
+  aLine = 1 + leadingSkip; bLine = 1 + leadingSkip; hunkOps = [];
   let inHunk = false;
 
   for (const h of hunks) {
