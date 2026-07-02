@@ -5,6 +5,31 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.35] -- 2026-07-02
+
+### Fixed
+Ghost scanned Ghost. POI self-audit identified and resolved 13 latent findings across error handling, concurrency, and silent failure paths -- none affecting the happy path, all affecting edge-case reliability.
+
+- Always-exit-0 CI contract: handleIncompleteRun wrapped in try/catch at both BatchTimeoutError sites
+- Billing-limit error classification: isContextOverflow no longer misclassifies spend-cap 400s
+- GitHub workflow-scope error: enableWatch re-throws non-scope errors instead of misleading advice
+- Atomic project writes: saveProjectMeta and scan records use temp+rename to survive crashes
+- Batch-store lost-update: mutatePendingBatches centralizes read-modify-write with fresh re-read
+- Rate-limit retry: cumulative counter across files, non-rate-limit skips now logged
+- Octokit throttle callbacks: notify-only, manual retry loop stays authoritative
+- Portal-write SHA retry: upsertPortalFile retries up to 4x on 409/422 conflicts
+- Pending-file concurrency: mutatePendingFile helper covers all 5 portal-file mutators
+- Enrichment index fallback: post-narration re-enrich uses position-based fallback when title lookup misses
+- PDF stderr surfacing: python3 ENOENT and reportlab missing now produce actionable error messages
+- Diff hunk numbering: leading-offset underflow fixed, @@ starts correct for deep-in-file changes
+- Sonnet-5 pricing auto-switch: getPricing auto-returns standard rate from Sep 1 2026, no manual edit needed
+- Enterprise org-file CAS: all four org mutators now use bounded SHA-conflict retry via mutateOrgFile
+
+### Added
+- tests/diff-renderer-hunk-numbering.smoke.mjs -- regression fixture for hunk-start underflow
+- tests/estimator-sonnet5-pricing.smoke.mjs -- guards Sonnet-5 intro/standard pricing switch
+- tests/enterprise-org-concurrency.smoke.mjs -- CAS retry fixture, retry path confirmed exercised
+
 ### v9.4.34
 - @ghost-verified annotation added to tokenizer.js countTokensExactImpl delegation -- Gemini/unknown cache-namespace isolation is an intentional performance trade-off, not a conflict
 - SELF_REFUTING_RE extended with two new patterns: "not a runtime failure" and "performance issue, not a correctness" -- post-generation filter now catches self-refuting findings that slip past the prompt-side DO NOT FLAG rule

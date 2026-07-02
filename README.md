@@ -2,6 +2,13 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.35
+- POI self-audit: Ghost scanned Ghost and resolved 13 latent edge-case findings across error handling, concurrency, and silent-failure paths -- none affecting the happy path
+- Reliability: always-exit-0 CI contract hardened; billing-limit 400s no longer misclassified as context overflow; enableWatch re-throws non-scope GitHub errors instead of misleading advice; PDF generation surfaces actionable python3/reportlab errors
+- Concurrency: atomic temp+rename project writes; bounded SHA-conflict retry for portal files, pending-batch files, and all four enterprise org files
+- Correctness: diff hunk-numbering underflow fixed (@@ starts correct for deep-in-file changes); Sonnet-5 pricing auto-switches to standard rate from Sep 1 2026 (no manual edit)
+- Added 3 regression fixtures (hunk numbering, Sonnet-5 pricing, enterprise concurrency); test suite now 28 tests
+
 ### v9.4.34
 - @ghost-verified annotation added to tokenizer.js countTokensExactImpl delegation -- Gemini/unknown cache-namespace isolation is an intentional performance trade-off, not a conflict
 - SELF_REFUTING_RE extended with two new patterns: "not a runtime failure" and "performance issue, not a correctness" -- post-generation filter now catches self-refuting findings that slip past the prompt-side DO NOT FLAG rule
