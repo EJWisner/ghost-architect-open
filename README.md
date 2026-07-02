@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.36
+- forecast-overlay: resolveContextCap() return value was used as a number instead of extracting .effective, so the tier context cap was silently never enforced on large forecast change sets -- fixed by reading .effective. Caught by Ghost Watcher on the v9.4.35 release commit.
+
 ### v9.4.35
 - POI self-audit: Ghost scanned Ghost and resolved 13 latent edge-case findings across error handling, concurrency, and silent-failure paths -- none affecting the happy path
 - Reliability: always-exit-0 CI contract hardened; billing-limit 400s no longer misclassified as context overflow; enableWatch re-throws non-scope GitHub errors instead of misleading advice; PDF generation surfaces actionable python3/reportlab errors

@@ -5,6 +5,11 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.36] -- 2026-07-02
+
+### Fixed
+- forecast-overlay.js: resolveContextCap() return object was used as a number instead of extracting .effective -- tier context cap was silently never enforced on large change sets. Ghost Watcher caught this on the v9.4.35 release commit (run #94, finding #1). Fixed by extracting .effective so the budget loop correctly stops adding files at the tier ceiling.
+
 ## [9.4.35] -- 2026-07-02
 
 ### Fixed
