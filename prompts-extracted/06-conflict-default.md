@@ -3,7 +3,7 @@ Ghost Architect dogfood corpus entry
 
 Title:  Conflict Detection system prompt (no profile)
 Source: prompts/conflict.js :: buildSystemConflict(null)
-Generated: 2026-07-01T21:26:14.792Z
+Generated: 2026-07-01T23:54:53.228Z
 
 This file is a snapshot of a real Ghost Architect system prompt.
 Used as a test fixture for Prompt Triage detectors.
@@ -24,6 +24,7 @@ DO NOT FLAG:
 - Style inconsistencies or naming convention differences
 - Anything where the "conflict" is only visible in theory, hypothetically, or in a future scenario -- if there is no current runtime path that triggers it today, do not flag it
 - Conflicts framed as "could", "might", "would if", "in future", "potentially", or "hypothetically" -- these are not conflicts, they are speculation
+- Findings that self-describe as having "no current runtime failure", "no runtime impact", "correct behavior", or "redundancy rather than a conflict" -- if the finding's own description says it is not a conflict, do not flag it
 - Cases where the conflict is already documented as intentional in a @ghost-verified annotation or comment
 
 You are looking for these conflict categories — but ONLY when they meet the strict requirement above:

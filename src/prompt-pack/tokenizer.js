@@ -41,7 +41,6 @@
  */
 
 import { getModel } from './models.js';
-import { resolveApiKey } from '../config.js';
 
 // Approximate chars-per-token for English prose. Used by the heuristic
 // fallback. Matches the constant in length.js so the two stay in sync.
@@ -282,8 +281,11 @@ async function countTokensExactImpl(safeText, modelId) {
     };
   }
 
-  // OpenAI: tiktoken is already exact. Defer to countTokens().
+  // OpenAI: tiktoken is already exact. Call countTokensImpl() directly
+  // rather than countTokens() so the result is not stored in the 'fast'
+  // cache -- countTokensExact's own wrapper handles caching under 'exact'.
+  // This keeps the two cache namespaces genuinely isolated.
   // Gemini: heuristic (no offline tokenizer, no SDK call this session).
-  // Test entries with tiktoken strategy: tiktoken via countTokens().
-  return countTokens(safeText, modelId);
+  // Test entries with tiktoken strategy: tiktoken via countTokensImpl().
+  return countTokensImpl(safeText, modelId);
 }
