@@ -340,7 +340,7 @@ export async function buildForecastOverlay(baselineContext, proposedDir, opts = 
 
   // ── Step 4: Rebuild context string from patched fileMap ──────────────────
   // Mirrors the token-budget loop in loader/index.js exactly.
-  const maxTokens  = resolveContextCap(tier);
+  const maxTokens  = resolveContextCap(tier).effective;
   let   context    = '';
   const fileIndex  = [];
   let   approxTokens = 0;
