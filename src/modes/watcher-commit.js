@@ -1697,7 +1697,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         // fires for a bare self-refutation ("values match") and NOT for a real
         // finding that hedges ("values match in current impl but will conflict
         // if X changes") — the trailing `conflict` assertion keeps it.
-        const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+(\w+\s+){0,3}conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|no\s+concrete\s+(runtime\s+)?(conflict|failure|impact)|no\s+active\s+\S+(\s+\S+){0,4}\s+(call\s+)?path|no\s+\S+(\s+\S+){0,3}\s+failure\s+path|consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different/i;
+        const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+(\w+\s+){0,3}conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|no\s+concrete\s+(runtime\s+)?(conflict|failure|impact)|no\s+active\s+\S+(\s+\S+){0,4}\s+(call\s+)?path|no\s+\S+(\s+\S+){0,3}\s+failure\s+path|consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different|not\s+a\s+runtime\s+failure|performance\s+issue[,\s]+not\s+a\s+correctness/i;
         conflictFindings = conflictCandidates
           .filter(c => !SELF_REFUTING_RE.test(c.description || ''))
           .map(normalizeCandidateToFinding);

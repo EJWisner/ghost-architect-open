@@ -281,6 +281,7 @@ async function countTokensExactImpl(safeText, modelId) {
     };
   }
 
+  // @ghost-verified: countTokensExact routes Gemini/unknown through countTokensImpl -- the 'exact' and 'fast' cache namespaces are intentionally isolated; a redundant heuristic recomputation for Gemini is a documented performance trade-off, not a conflict or correctness issue
   // OpenAI: tiktoken is already exact. Call countTokensImpl() directly
   // rather than countTokens() so the result is not stored in the 'fast'
   // cache -- countTokensExact's own wrapper handles caching under 'exact'.
