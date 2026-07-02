@@ -26,8 +26,9 @@ const PRICING = {
   // Legacy Opus pricing
   'claude-opus-4-1':   { label: 'Claude Opus 4.1',   inputPerM: 15.00, outputPerM: 75.00 },
   'claude-opus-4':     { label: 'Claude Opus 4',     inputPerM: 15.00, outputPerM: 75.00 },
-  // NOTE: claude-sonnet-5 introductory pricing ($2/$10) expires Aug 31, 2026.
-  // Update to standard pricing ($3/$15) after that date.
+  // claude-sonnet-5 introductory pricing ($2/$10) runs through Aug 31, 2026 (UTC).
+  // Standard pricing ($3/$15) applies from Sep 1, 2026 onward.
+  // getPricing() auto-switches -- no manual edit needed after the cutoff.
   // Sonnet
   'claude-sonnet-4-6': { label: 'Claude Sonnet 4.6', inputPerM:  3.00, outputPerM: 15.00 },
   // Sonnet 5 (launched June 2026 — introductory pricing through Aug 31, 2026)
@@ -58,8 +59,15 @@ const MODE_OUTPUT_ESTIMATES = {
   'fix-forecast-combined': { tokens: 1600, label: 'Fix Forecast'     },
 };
 
-export function getPricing(model) {
-  return PRICING[model] || PRICING['claude-sonnet-4-6'];
+export function getPricing(model, now = new Date()) {
+  const entry = PRICING[model] || PRICING['claude-sonnet-4-6'];
+  // Sonnet 5 introductory pricing ($2/$10) runs through Aug 31 2026 (UTC).
+  // Auto-switch to standard pricing ($3/$15) from Sep 1 2026 onward so the
+  // estimator never silently under-quotes once the promo ends.
+  if (model === 'claude-sonnet-5' && now >= new Date('2026-09-01T00:00:00Z')) {
+    return { ...entry, inputPerM: 3.00, outputPerM: 15.00 };
+  }
+  return entry;
 }
 
 /**
