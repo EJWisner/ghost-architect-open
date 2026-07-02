@@ -241,25 +241,40 @@ function emailToSlug(email) {
  *
  * Path: projects/<projectSlug>/scans/watch/<developerSlug>/<filename>
  */
-async function upsertPortalFile(octokit, owner, repo, filePath, content, message) {
-  // Get existing sha for conditional update
-  let sha = null;
-  try {
-    const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
-    sha = data.sha;
-  } catch { /* file does not exist yet — create it */ }
-
+async function upsertPortalFile(octokit, owner, repo, filePath, content, message, maxAttempts = 4) {
+  // Encode content once -- only the sha re-fetch and PUT repeat on conflict.
   const encoded = Buffer.isBuffer(content)
     ? content.toString('base64')
     : Buffer.from(typeof content === 'string' ? content : JSON.stringify(content, null, 2)).toString('base64');
-
-  await octokit.rest.repos.createOrUpdateFileContents({
-    owner, repo,
-    path: filePath,
-    message,
-    content: encoded,
-    ...(sha ? { sha } : {}),
-  });
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Re-fetch the current sha on every attempt so a stale sha never blocks the write.
+    let sha = null;
+    try {
+      const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
+      sha = data.sha;
+    } catch (e) {
+      // Only a true 404 means the file does not exist yet -- re-throw everything else
+      // (auth, rate-limit, network) so we do not blindly attempt a create over an existing file.
+      if (e?.status !== 404) throw e;
+    }
+    try {
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner, repo,
+        path: filePath,
+        message,
+        content: encoded,
+        ...(sha ? { sha } : {}),
+      });
+      return;
+    } catch (err) {
+      const isConflict = err?.status === 409 || err?.status === 422 ||
+        (typeof err?.message === 'string' && err.message.includes('does not match'));
+      if (!isConflict || attempt === maxAttempts) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 // ── PR comment ────────────────────────────────────────────────────────────────
@@ -630,9 +645,20 @@ function extractBlastSectionFiles(rawBlastOutput) {
 // narrator already produced) and recompute the id to reflect the primary file.
 function enrichBlastFindingFiles(findings, sectionFiles) {
   if (!findings || !sectionFiles || sectionFiles.size === 0) return findings;
-  for (const f of findings) {
+  // Index fallback: when the narrator rewords titles, the title-keyed lookup misses.
+  // Fall back to position-based matching when finding count === section count
+  // (count-equality gate ensures we only use index when structure is 1:1 -- no mismatch risk).
+  const orderedSections = Array.from(sectionFiles.values());
+  const useIndexFallback = findings.length === orderedSections.length;
+  for (let i = 0; i < findings.length; i++) {
+    const f = findings[i];
     if (f.files && f.files.length) continue;
-    const files = sectionFiles.get(normalizeSectionKey(f.title || ''));
+    // Primary: title-keyed lookup
+    let files = sectionFiles.get(normalizeSectionKey(f.title || ''));
+    // Fallback: position-based when title lookup misses and counts match
+    if ((!files || !files.length) && useIndexFallback) {
+      files = orderedSections[i];
+    }
     if (files && files.length) { f.files = [...files]; f.id = generateFindingId(f); }
   }
   return findings;

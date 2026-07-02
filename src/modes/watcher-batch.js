@@ -461,6 +461,29 @@ export async function cancelBatch(clientOrKey, batchId) {
 
 // ── Public: pending-batch persistence (in the portal repo) ─────────────────────
 
+// Read-modify-write the portal pending file with bounded SHA-conflict retry.
+// applyFn mutates the freshest data in place each attempt.
+// Returns the written data object so callers that need the post-write state can read it.
+async function mutatePendingFile(octokit, owner, repo, applyFn, message, maxAttempts = 4) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { data, sha } = await readPendingFile(octokit, owner, repo);
+    const changed = applyFn(data);
+    if (changed === false) return data; // applyFn signalled no change -- skip the write
+    try {
+      await writePendingFile(octokit, owner, repo, data, sha,
+        attempt === 1 ? message : `${message} (retry ${attempt - 1})`);
+      return data;
+    } catch (err) {
+      const isShaMismatch = err?.status === 409 ||
+        (typeof err?.message === 'string' && err.message.includes('does not match'));
+      if (!isShaMismatch || attempt === maxAttempts) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Record a pending batch in the portal repo so a future run can resume it.
  * Never throws — logs a warning on failure.
@@ -476,22 +499,11 @@ export async function storePendingBatch(octokit, portalRepo, batchId, metadata =
   try {
     if (!octokit || !portalRepo || !batchId) return;
     const { owner, repo } = splitRepo(portalRepo);
-    const { data, sha } = await readPendingFile(octokit, owner, repo);
-    data.batches[batchId] = { batchId, ...metadata };
-    try {
-      await writePendingFile(octokit, owner, repo, data, sha, `ghost: store pending batch ${batchId}`);
-    } catch (err) {
-      // SHA conflict: another concurrent run updated the pending file between
-      // our read and write. Storing a batch is purely additive, so re-read the
-      // current state, re-apply just our batch entry onto it (never clobbering
-      // what the other run wrote), and retry once with the fresh SHA.
-      const isShaMismatch = err?.status === 409 ||
-        (typeof err?.message === 'string' && err.message.includes('does not match'));
-      if (!isShaMismatch) throw err;
-      const fresh = await readPendingFile(octokit, owner, repo);
-      fresh.data.batches[batchId] = { batchId, ...metadata };
-      await writePendingFile(octokit, owner, repo, fresh.data, fresh.sha, `ghost: store pending batch ${batchId} (retry)`);
-    }
+    await mutatePendingFile(
+      octokit, owner, repo,
+      (d) => { d.batches[batchId] = { batchId, ...metadata }; },
+      `ghost-watcher: store batch ${batchId}`
+    );
   } catch (err) {
     console.warn(`Ghost Watcher: storePendingBatch failed (non-fatal) — ${err.message}`);
   }
@@ -543,11 +555,11 @@ export async function clearPendingBatch(octokit, portalRepo, batchId) {
   try {
     if (!octokit || !portalRepo || !batchId) return;
     const { owner, repo } = splitRepo(portalRepo);
-    const { data, sha } = await readPendingFile(octokit, owner, repo);
-    if (data.batches && Object.prototype.hasOwnProperty.call(data.batches, batchId)) {
-      delete data.batches[batchId];
-      await writePendingFile(octokit, owner, repo, data, sha, `ghost: clear pending batch ${batchId}`);
-    }
+    await mutatePendingFile(
+      octokit, owner, repo,
+      (d) => { if (d.batches) delete d.batches[batchId]; },
+      `ghost-watcher: clear batch ${batchId}`
+    );
   } catch (err) {
     console.warn(`Ghost Watcher: clearPendingBatch failed (non-fatal) — ${err.message}`);
   }
@@ -581,11 +593,12 @@ export async function incrementIncompleteRuns(octokit, portalRepo) {
   try {
     if (!octokit || !portalRepo) return 0;
     const { owner, repo } = splitRepo(portalRepo);
-    const { data, sha } = await readPendingFile(octokit, owner, repo);
-    data.consecutiveIncompleteRuns = (data.consecutiveIncompleteRuns || 0) + 1;
-    await writePendingFile(octokit, owner, repo, data, sha,
-      `ghost: incomplete run ${data.consecutiveIncompleteRuns}`);
-    return data.consecutiveIncompleteRuns;
+    const written = await mutatePendingFile(
+      octokit, owner, repo,
+      (d) => { d.consecutiveIncompleteRuns = (d.consecutiveIncompleteRuns || 0) + 1; },
+      `ghost-watcher: increment incomplete runs`
+    );
+    return written.consecutiveIncompleteRuns;
   } catch {
     return 0;
   }
@@ -599,11 +612,11 @@ export async function resetIncompleteRuns(octokit, portalRepo) {
   try {
     if (!octokit || !portalRepo) return;
     const { owner, repo } = splitRepo(portalRepo);
-    const { data, sha } = await readPendingFile(octokit, owner, repo);
-    if ((data.consecutiveIncompleteRuns || 0) !== 0) {
-      data.consecutiveIncompleteRuns = 0;
-      await writePendingFile(octokit, owner, repo, data, sha, 'ghost: reset incomplete run counter');
-    }
+    await mutatePendingFile(
+      octokit, owner, repo,
+      (d) => { if ((d.consecutiveIncompleteRuns || 0) === 0) return false; d.consecutiveIncompleteRuns = 0; },
+      `ghost-watcher: reset incomplete runs`
+    );
   } catch {
     /* never throws */
   }
@@ -616,9 +629,11 @@ export async function markSetupWarningSent(octokit, portalRepo) {
   try {
     if (!octokit || !portalRepo) return;
     const { owner, repo } = splitRepo(portalRepo);
-    const { data, sha } = await readPendingFile(octokit, owner, repo);
-    data.hasReceivedSetupWarning = true;
-    await writePendingFile(octokit, owner, repo, data, sha, 'ghost: setup warning sent');
+    await mutatePendingFile(
+      octokit, owner, repo,
+      (d) => { d.hasReceivedSetupWarning = true; },
+      `ghost-watcher: setup warning sent`
+    );
   } catch {
     /* never throws */
   }
