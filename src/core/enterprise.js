@@ -78,6 +78,33 @@ async function getFileWithSha(octokit, owner, repo, filePath) {
   } catch { return { content: null, sha: null }; }
 }
 
+// Read-modify-write an org file with bounded SHA-conflict retry.
+// Uses getFileWithSha so the sha always corresponds to the content we read --
+// a separate getFileParsed + getFileSha pair cannot guarantee this (see above comment).
+// applyFn receives the current parsed content and returns the new content to write.
+// Returns the written content. Throws on non-conflict errors or after maxAttempts.
+async function mutateOrgFile(octokit, owner, repo, filePath, applyFn, message, maxAttempts = 4) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { content, sha } = await getFileWithSha(octokit, owner, repo, filePath);
+    const next = applyFn(content);
+    try {
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner, repo, path: filePath, message,
+        content: encodeFileContent(next),
+        ...(sha ? { sha } : {}),
+      });
+      return next;
+    } catch (err) {
+      const isConflict = err?.status === 409 || err?.status === 422 ||
+        (typeof err?.message === 'string' && err.message.includes('does not match'));
+      if (!isConflict || attempt === maxAttempts) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 // ── Seat identity ─────────────────────────────────────────────────────────────
 
 function getSeatId() {
@@ -174,11 +201,9 @@ export async function saveOrgConfig(config, workspace) {
   if (!entry) throw new Error('No team sync configured.');
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  await upsertFile(octokit, owner, repo, 'org/config.json', {
-    ...config,
-    updatedAt: new Date().toISOString(),
-    updatedBy: getSeatId(),
-  }, 'enterprise: update org config');
+  await mutateOrgFile(octokit, owner, repo, 'org/config.json',
+    () => ({ ...config, updatedAt: new Date().toISOString(), updatedBy: getSeatId() }),
+    'enterprise: update org config');
 }
 
 /**
@@ -331,12 +356,15 @@ export async function promoteSeat(targetSeatId, workspace) {
   const entry = resolveSyncEntry(workspace);
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  const existing = await getFileParsed(octokit, owner, repo, 'org/seats.json');
-  const seats = existing?.seats || [];
-  const seat = seats.find(s => s.seatId === targetSeatId);
-  if (!seat) throw new Error(`Seat not found: ${targetSeatId}`);
-  seat.role = 'admin';
-  await upsertFile(octokit, owner, repo, 'org/seats.json', { seats }, `enterprise: promote ${targetSeatId} to admin`);
+  await mutateOrgFile(octokit, owner, repo, 'org/seats.json',
+    (c) => {
+      const seats = c?.seats || [];
+      const seat = seats.find(s => s.seatId === targetSeatId);
+      if (!seat) throw new Error(`Seat not found: ${targetSeatId}`);
+      seat.role = 'admin';
+      return { seats };
+    },
+    `enterprise: promote ${targetSeatId} to admin`);
 }
 
 /**
@@ -351,9 +379,9 @@ export async function removeSeat(targetSeatId, workspace) {
   const entry = resolveSyncEntry(workspace);
   const octokit = getOctokit(entry);
   const { owner, repo } = parseRepo(entry.repo);
-  const existing = await getFileParsed(octokit, owner, repo, 'org/seats.json');
-  const seats = (existing?.seats || []).filter(s => s.seatId !== targetSeatId);
-  await upsertFile(octokit, owner, repo, 'org/seats.json', { seats }, `enterprise: remove ${targetSeatId}`);
+  await mutateOrgFile(octokit, owner, repo, 'org/seats.json',
+    (c) => ({ seats: (c?.seats || []).filter(s => s.seatId !== targetSeatId) }),
+    `enterprise: remove ${targetSeatId}`);
 }
 
 // ── Audit log ─────────────────────────────────────────────────────────────────
@@ -429,16 +457,15 @@ export async function appendAuditEvent(event, workspace) {
   try {
     const octokit = getOctokit(entry);
     const { owner, repo } = parseRepo(entry.repo);
-    const existing = await getFileParsed(octokit, owner, repo, 'org/audit.json');
-    const events = existing?.events || [];
-    events.push({
-      ...event,
-      seatId: getSeatId(),
-      timestamp: new Date().toISOString(),
-    });
-    // Keep last 1000 events
-    const trimmed = events.slice(-1000);
-    await upsertFile(octokit, owner, repo, 'org/audit.json', { events: trimmed }, 'enterprise: audit log');
+    await mutateOrgFile(octokit, owner, repo, 'org/audit.json',
+      (c) => ({
+        events: [...(c?.events || []), {
+          ...event,
+          seatId: getSeatId(),
+          timestamp: new Date().toISOString(),
+        }].slice(-1000),
+      }),
+      'enterprise: audit log');
 
     // Audit event landed — reset the consecutive-failure streak and clear the
     // on-disk marker so a future invocation doesn't re-surface a stale outage.
