@@ -5,6 +5,14 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.37] -- 2026-07-03
+
+### Fixed
+- Count reconciled: v9.4.35 POI self-audit resolved 14 findings (not 13 -- corrected in CHANGELOG and README)
+
+### Added
+- tests/forecast-context-cap.smoke.mjs -- regression fixture for resolveContextCap .effective extraction (CC-87 fix); asserts .effective is a positive number per tier and that the object itself is not directly usable as a number
+
 ## [9.4.36] -- 2026-07-02
 
 ### Fixed
@@ -13,7 +21,7 @@ and the project adheres to semantic versioning.
 ## [9.4.35] -- 2026-07-02
 
 ### Fixed
-Ghost scanned Ghost. POI self-audit identified and resolved 13 latent findings across error handling, concurrency, and silent failure paths -- none affecting the happy path, all affecting edge-case reliability.
+Ghost scanned Ghost. POI self-audit identified and resolved 14 latent findings across error handling, concurrency, and silent failure paths -- none affecting the happy path, all affecting edge-case reliability.
 
 - Always-exit-0 CI contract: handleIncompleteRun wrapped in try/catch at both BatchTimeoutError sites
 - Billing-limit error classification: isContextOverflow no longer misclassifies spend-cap 400s

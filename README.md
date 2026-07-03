@@ -2,11 +2,15 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.37
+- Count reconciled: the v9.4.35 POI self-audit resolved 14 findings (not 13) -- corrected in CHANGELOG and README
+- Added tests/forecast-context-cap.smoke.mjs -- regression fixture for the resolveContextCap .effective extraction (the v9.4.36 fix); test suite now 29 tests
+
 ### v9.4.36
 - forecast-overlay: resolveContextCap() return value was used as a number instead of extracting .effective, so the tier context cap was silently never enforced on large forecast change sets -- fixed by reading .effective. Caught by Ghost Watcher on the v9.4.35 release commit.
 
 ### v9.4.35
-- POI self-audit: Ghost scanned Ghost and resolved 13 latent edge-case findings across error handling, concurrency, and silent-failure paths -- none affecting the happy path
+- POI self-audit: Ghost scanned Ghost and resolved 14 latent edge-case findings across error handling, concurrency, and silent-failure paths -- none affecting the happy path
 - Reliability: always-exit-0 CI contract hardened; billing-limit 400s no longer misclassified as context overflow; enableWatch re-throws non-scope GitHub errors instead of misleading advice; PDF generation surfaces actionable python3/reportlab errors
 - Concurrency: atomic temp+rename project writes; bounded SHA-conflict retry for portal files, pending-batch files, and all four enterprise org files
 - Correctness: diff hunk-numbering underflow fixed (@@ starts correct for deep-in-file changes); Sonnet-5 pricing auto-switches to standard rate from Sep 1 2026 (no manual edit)
