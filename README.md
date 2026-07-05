@@ -2,6 +2,11 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.38
+- Cross-platform config hardening: Linux `sudo ghost --activate` now resolves the license store to the invoking user's real home, eliminating the silent Open-tier fallback on relaunch. Five Configstore instances consolidated into one getConfig() singleton; automatic ownership reconciliation after sudo; explicit warning on root-without-sudo activation. macOS and Windows behavior unchanged.
+- Git hook intelligence: extensionless hook files (pre-commit, post-checkout, commit-msg, and 13 others) are now scanned by basename across all three loader paths (directory, ZIP, GitHub), so a .git/hooks folder is fully analyzed regardless of extension.
+- Added git-hooks-scanning smoke test; suite now 30 tests.
+
 ### v9.4.37
 - Count reconciled: the v9.4.35 POI self-audit resolved 14 findings (not 13) -- corrected in CHANGELOG and README
 - Added tests/forecast-context-cap.smoke.mjs -- regression fixture for the resolveContextCap .effective extraction (the v9.4.36 fix); test suite now 29 tests

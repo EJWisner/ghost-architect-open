@@ -5,6 +5,17 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.38] -- 2026-07-05
+
+### Fixed
+- Cross-platform configstore path resolution: on Linux, `sudo ghost --activate` wrote the license to /root/.config while a normal relaunch (as the user) read ~/.config and found nothing, silently falling back to Open tier. config.js now resolves the invoking user's real home (SUDO_USER via getent / /etc/passwd) and writes there, with automatic chown (SUDO_UID/SUDO_GID) so later non-root writes never EACCES. macOS, Windows, and non-sudo runs are unchanged.
+- Consolidated five independent Configstore('ghost-architect') instances (config, freemium, mobile-publish, portal-publish, pulse) into a single getConfig() singleton -- one source of truth, no split-brain path resolution on any platform.
+- Root-without-SUDO_USER activation now warns explicitly instead of silently misdirecting the license store.
+
+### Added
+- Git hook file scanning: extensionless hook files (pre-commit, post-checkout, commit-msg, and 13 others) are recognized by basename across all three loader paths (directory, ZIP, GitHub) via a shared isScannablePath() helper, so a scan pointed at a .git/hooks directory analyzes the hooks, not just README.md.
+- tests/git-hooks-scanning.smoke.mjs -- validates isScannablePath across extensionless hooks, code extensions, .sample skip, and non-code files (test suite now 30 tests).
+
 ## [9.4.37] -- 2026-07-03
 
 ### Fixed
