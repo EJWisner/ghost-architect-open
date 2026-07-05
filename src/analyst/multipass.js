@@ -1,9 +1,9 @@
 /**
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
  * Ghost Architect — Multi-Pass Scanner (CLI layer)
  * Thin wrapper: handles all prompts and display for core/multipass.js
  */
+const IS_WINDOWS = process.platform === 'win32';
+const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
 
 import chalk from 'chalk';
 import inquirer from 'inquirer';

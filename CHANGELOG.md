@@ -5,6 +5,11 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.40] -- 2026-07-05
+
+### Fixed
+- multipass SYM declaration bug: `const IS_WINDOWS` and `const SYM` in src/analyst/multipass.js were trapped inside the opening JSDoc block comment instead of live code, so every multipass display path (passComplete, batchMerged, coverage reporting) threw `ReferenceError: SYM is not defined`. Both declarations moved below the closing comment marker. Caught by Ghost Watcher automated conflict detection on commit 0bf83ef.
+
 ## [9.4.39] -- 2026-07-05
 
 ### Added

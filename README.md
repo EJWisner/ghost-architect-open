@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.40
+- Fixed a multipass crash: const IS_WINDOWS and const SYM were trapped inside a JSDoc comment in the multi-pass scanner, causing a ReferenceError on pass-complete, batch-merge, and coverage output. Both declarations moved to live code. Caught by Ghost Watcher.
+
 ### v9.4.39
 - Guided analysis prompt: after processing files, Ghost now opens with "Ready to analyze N files. What would you like Ghost to do?" instead of dropping straight into the mode menu. Suggested by Alex Artiukh (summusforge) during his trial.
 - First-run license flow: on first launch, Ghost asks "Do you have a Ghost license key?" before the setup wizard -- entering a key activates immediately; otherwise you are pointed at the free 7-day trial or Ghost Open. A bad key warns and continues, and never kills the first-run session.
