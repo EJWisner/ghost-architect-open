@@ -5,6 +5,15 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## [9.4.39] -- 2026-07-05
+
+### Added
+- Guided analysis prompt: after file processing, the mode menu opens with "Ready to analyze N files. What would you like Ghost to do?" instead of an abrupt drop into the list. Suggested by Alex Artiukh (summusforge) during his trial session.
+- First-run license flow: the first-run onboarding (before the setup wizard) now asks "Do you have a Ghost license key?" -- the yes path activates the key immediately, the no path points to the free 7-day trial or Ghost Open. Activation failures warn and fall through to setup rather than killing the first-run session.
+
+### Changed
+- README: added an Important note in the Install section -- run ghost from any directory and enter the full path to the codebase when prompted, rather than navigating into the target folder first.
+
 ## [9.4.38] -- 2026-07-05
 
 ### Fixed

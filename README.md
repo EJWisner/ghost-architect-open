@@ -2,6 +2,11 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v9.4.39
+- Guided analysis prompt: after processing files, Ghost now opens with "Ready to analyze N files. What would you like Ghost to do?" instead of dropping straight into the mode menu. Suggested by Alex Artiukh (summusforge) during his trial.
+- First-run license flow: on first launch, Ghost asks "Do you have a Ghost license key?" before the setup wizard -- entering a key activates immediately; otherwise you are pointed at the free 7-day trial or Ghost Open. A bad key warns and continues, and never kills the first-run session.
+- README: added an Important note on running ghost from any directory and entering the full path to your codebase when prompted.
+
 ### v9.4.38
 - Cross-platform config hardening: Linux `sudo ghost --activate` now resolves the license store to the invoking user's real home, eliminating the silent Open-tier fallback on relaunch. Five Configstore instances consolidated into one getConfig() singleton; automatic ownership reconciliation after sudo; explicit warning on root-without-sudo activation. macOS and Windows behavior unchanged.
 - Git hook intelligence: extensionless hook files (pre-commit, post-checkout, commit-msg, and 13 others) are now scanned by basename across all three loader paths (directory, ZIP, GitHub), so a .git/hooks folder is fully analyzed regardless of extension.
