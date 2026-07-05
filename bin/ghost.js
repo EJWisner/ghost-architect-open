@@ -544,7 +544,7 @@ async function selectMode(codebaseContext, tier = 'open') {
   const { mode } = await inquirer.prompt([{
     type: 'list',
     name: 'mode',
-    message: chalk.cyan('\nWhat do you want to do?'),
+    message: chalk.cyan(`\nReady to analyze ${codebaseContext.loadedFiles} files. What would you like Ghost to do?`),
     theme: inquirerTheme,
     choices,
   }]);
@@ -2013,6 +2013,43 @@ async function main() {
       { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
     ));
     console.log('');
+
+    // First-run license check: offer to activate before the setup wizard so a
+    // paying customer lands on their tier immediately; otherwise point them at
+    // the trial / Open path. Either branch continues to setup afterward.
+    const { hasKey } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'hasKey',
+      message: chalk.cyan('Do you have a Ghost license key?'),
+      default: false,
+    }]);
+    if (hasKey) {
+      const { licenseKey } = await inquirer.prompt([{
+        type: 'input',
+        name: 'licenseKey',
+        message: chalk.cyan('Paste your license key:'),
+      }]);
+      if (licenseKey && licenseKey.trim()) {
+        // runActivateFlow signals failure via process.exit(2), which a plain
+        // try/catch cannot intercept. During first-run onboarding we must never
+        // kill the process, so temporarily convert process.exit into a throw for
+        // the duration of the call, catch it, warn, and fall through to setup.
+        // The success path returns normally and never calls process.exit, so
+        // this only fires on a genuine activation failure.
+        const realExit = process.exit;
+        try {
+          process.exit = (code) => { throw new Error(`first-run-activate-exit:${code}`); };
+          await runActivateFlow(licenseKey.trim());
+        } catch (activationErr) {
+          console.log('\n' + chalk.yellow("That key didn't activate -- you can try again later with ghost --activate <key>. Continuing setup.") + '\n');
+        } finally {
+          process.exit = realExit;
+        }
+      }
+    } else {
+      console.log('\n' + chalk.gray('No problem. You can start a 7-day free trial at ghostarchitect.dev/trial or run Ghost Open for free right now.') + '\n');
+    }
+
     await runSetupWizard();
   }
 

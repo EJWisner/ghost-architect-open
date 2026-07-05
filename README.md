@@ -139,6 +139,8 @@ ghost
 
 That's it. On first run, Ghost walks you through a one-time setup wizard (API key, optional GitHub token, model preference, billing rates, context size). Your config is saved locally and every future run goes straight to the main menu.
 
+**Important:** run `ghost` from any directory. When prompted, enter the full path to the codebase you want to analyze. Do not navigate into the target folder first.
+
 **Requirements:** Node.js 18 or higher, an Anthropic API key (pay-as-you-go, not the same as a Claude.ai subscription), and optionally a GitHub Personal Access Token for private repos.
 
 ---
