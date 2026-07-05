@@ -129,6 +129,27 @@ const CODE_EXTENSIONS = [
   '.yaml', '.yml', '.env.example', '.sh', '.bash', '.md'
 ];
 
+// Git hook scripts live in .git/hooks/ and are extensionless (pre-commit,
+// post-checkout, etc.), so the CODE_EXTENSIONS filter skips them — a scan
+// pointed at a hooks directory would only pick up README.md. Allowlist their
+// exact basenames so they're always included regardless of extension.
+const GIT_HOOKS = new Set([
+  'pre-commit', 'pre-push', 'post-commit', 'post-checkout', 'post-merge',
+  'post-receive', 'pre-receive', 'pre-rebase', 'applypatch-msg', 'commit-msg',
+  'prepare-commit-msg', 'pre-applypatch', 'post-applypatch', 'pre-auto-gc',
+  'post-rewrite', 'sendemail-validate',
+]);
+
+// A file is scanned if its extension is a known code type OR its basename is a
+// known Git hook (extensionless). Shared by all three loader paths (directory,
+// ZIP, GitHub). path.basename handles the forward-slash paths used by ZIP
+// entryName and GitHub tree paths on every platform.
+export function isScannablePath(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (CODE_EXTENSIONS.includes(ext)) return true;
+  return GIT_HOOKS.has(path.basename(filePath));
+}
+
 export async function loadCodebase(method, options) {
   // Allow callers to pass per-scan options inline as a convenience.
   if (options && typeof options === 'object') {
@@ -174,7 +195,7 @@ async function _loadFromDirPath(dirPath, options = {}) {
 
   // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
   const allFiles = await glob(`${dirPath}/**/*`, { nodir: true });
-  const allCodeFiles = allFiles.filter(f => CODE_EXTENSIONS.includes(path.extname(f).toLowerCase()));
+  const allCodeFiles = allFiles.filter(f => isScannablePath(f));
 
   // Step 2: apply default IGNORED_DIRS + IGNORED_FILES exclusions.
   const beforeDefaults = allCodeFiles.length;
@@ -281,8 +302,7 @@ async function loadFromZip() {
 
   for (const entry of entries) {
     if (entry.isDirectory) continue;
-    const ext = path.extname(entry.entryName).toLowerCase();
-    if (!CODE_EXTENSIONS.includes(ext)) continue;
+    if (!isScannablePath(entry.entryName)) continue;
     // Apply default IGNORED_DIRS (handles both single-segment like 'node_modules'
     // and multi-segment like 'pub/static').
     const segments = entry.entryName.split('/');
@@ -480,8 +500,7 @@ async function loadFromGitHub() {
     const codeFiles = treeEntries.filter(item => {
       if (!item || typeof item !== 'object' || typeof item.path !== 'string') return false;
       if (item.type !== 'blob') return false;
-      const ext = path.extname(item.path).toLowerCase();
-      if (!CODE_EXTENSIONS.includes(ext)) return false;
+      if (!isScannablePath(item.path)) return false;
       // Apply default IGNORED_DIRS (handles single-segment + multi-segment like 'pub/static').
       const segments = item.path.split('/');
       for (const d of IGNORED_DIRS) {

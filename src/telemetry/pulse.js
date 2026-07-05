@@ -37,12 +37,12 @@
 
 import https from 'https';
 import crypto from 'crypto';
-import Configstore from 'configstore';
+import { getConfig } from '../config.js';
 
 const SIGNUP_ENDPOINT = 'https://signup.ghostarchitect.dev/signup';
 const POST_TIMEOUT_MS = 5000;
 
-const config = new Configstore('ghost-architect');
+const config = getConfig();
 
 function pingDisabled() {
   return process.env.GHOST_NO_PING === '1';

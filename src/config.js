@@ -2,10 +2,95 @@ import Configstore from 'configstore';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
+import { execFileSync } from 'child_process';
 import { getTierCap } from './loader/tierCaps.js';
 import { getActiveTier } from './license/session.js';
 
-const config = new Configstore('ghost-architect');
+// ── Configstore path resolution (Linux sudo/root hardening) ──────────────────
+// configstore@6 resolves to ${XDG_CONFIG_HOME || ~/.config}/configstore/<name>.json
+// via os.homedir()/env at import time. Under `sudo` on Linux, HOME=/root, so
+// `sudo ghost --activate` writes the license to /root/.config/... while a normal
+// relaunch (as the user) reads ~/.config/... and finds nothing -> silent Open
+// tier. When we are root via sudo we redirect to the invoking user's REAL home
+// so the license lands where the normal relaunch looks. macOS, Windows, and
+// non-sudo runs are unchanged (resolveConfigstorePath returns undefined).
+const CONFIGSTORE_NAME = 'ghost-architect';
+
+function isLinuxSudoRoot() {
+  return process.platform === 'linux'
+    && typeof process.getuid === 'function'
+    && process.getuid() === 0
+    && !!process.env.SUDO_USER;
+}
+
+// Root on Linux via a real root login (no sudo): no signal for which user
+// should own the license, so the activate flow warns instead of guessing.
+export function isLinuxRootWithoutSudoUser() {
+  return process.platform === 'linux'
+    && typeof process.getuid === 'function'
+    && process.getuid() === 0
+    && !process.env.SUDO_USER;
+}
+
+// Resolve a username's home WITHOUT trusting $HOME (sudo rewrites it to /root).
+// getent respects NSS/LDAP; /etc/passwd is the local fallback. null = unknown.
+function resolveUserHome(username) {
+  try {
+    const out = execFileSync('getent', ['passwd', username], {
+      encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const home = out.split('\n')[0]?.split(':')[5];
+    if (home && home.trim()) return home.trim();
+  } catch { /* getent absent or user unknown */ }
+  try {
+    for (const line of fs.readFileSync('/etc/passwd', 'utf8').split('\n')) {
+      const f = line.split(':');
+      if (f[0] === username && f[5] && f[5].trim()) return f[5].trim();
+    }
+  } catch { /* unreadable */ }
+  return null;
+}
+
+// Absolute configstore path this process should use, or undefined to let
+// configstore use its own default resolution.
+function resolveConfigstorePath() {
+  if (isLinuxSudoRoot()) {
+    const realHome = resolveUserHome(process.env.SUDO_USER);
+    if (realHome) {
+      // Deliberately ~/.config: the invoking user's own XDG_CONFIG_HOME is not
+      // visible under sudo, and root's XDG_CONFIG_HOME points at root's dir.
+      return path.join(realHome, '.config', 'configstore', `${CONFIGSTORE_NAME}.json`);
+    }
+  }
+  return undefined;
+}
+
+const CONFIG_PATH = resolveConfigstorePath();
+const config = CONFIG_PATH
+  ? new Configstore(CONFIGSTORE_NAME, {}, { configPath: CONFIG_PATH })
+  : new Configstore(CONFIGSTORE_NAME);
+
+// After a root/sudo WRITE, hand the store back to the invoking user so their
+// later non-root writes (the monotonic last-seen ratchet on every run, and
+// `ghost --configure`) don't EACCES on a root-owned file. Must run AFTER the
+// file exists (i.e., after saveActivation). sudo sets SUDO_UID / SUDO_GID.
+export function reconcileSudoOwnership() {
+  if (!isLinuxSudoRoot() || !CONFIG_PATH) return;
+  const uid = parseInt(process.env.SUDO_UID || '', 10);
+  const gid = parseInt(process.env.SUDO_GID || '', 10);
+  if (!Number.isInteger(uid) || !Number.isInteger(gid)) return;
+  const configstoreDir = path.dirname(CONFIG_PATH);   // .../.config/configstore
+  const dotConfigDir   = path.dirname(configstoreDir); // .../.config
+  // Non-recursive: only the file, its configstore dir, and .config. If .config
+  // pre-existed user-owned, chown is a harmless no-op; if root just created it,
+  // this hands it back. We never recurse into .config (other apps live there).
+  for (const p of [dotConfigDir, configstoreDir, CONFIG_PATH]) {
+    try { fs.chownSync(p, uid, gid); } catch { /* best effort */ }
+  }
+}
 
 // Distinguishes a user-initiated cancellation (Ctrl+C, force-closed prompt)
 // from a real system failure (read-only or full configstore directory,

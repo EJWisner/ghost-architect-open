@@ -17,14 +17,14 @@
  */
 
 import { createOctokit } from '../utils/octokit-client.js';
-import Configstore from 'configstore';
+import { getConfig } from '../config.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { extractFindings } from '../utils/finding-parser.js';
 import { parseRepo } from './team-sync.js';
 
-const config = new Configstore('ghost-architect');
+const config = getConfig();
 
 // Shared content encoder for GitHub API file writes.
 // Buffer → raw bytes; string → UTF-8; object → JSON.stringify then UTF-8.

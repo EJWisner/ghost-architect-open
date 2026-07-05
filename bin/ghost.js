@@ -6,7 +6,7 @@ import gradient from 'gradient-string';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
-import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey } from '../src/config.js';
+import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey, reconcileSudoOwnership, isLinuxRootWithoutSudoUser } from '../src/config.js';
 import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runQuestionMode, retrieveQuestionBatchResult } from '../src/modes/question.js';
@@ -1010,6 +1010,16 @@ async function runActivateFlow(input) {
   }
   const cleaned = input.trim();
 
+  // Real root login (no SUDO_USER) can't be redirected to a user's home, so
+  // the license would land under /root and a non-root relaunch won't see it.
+  // Warn (don't block — the operator may genuinely intend a root install).
+  // sudo runs are auto-redirected in config.js and never reach this branch.
+  if (isLinuxRootWithoutSudoUser()) {
+    console.warn(chalk.yellow('\n⚠  Activating as root: the license will be stored under /root/.config and'));
+    console.warn(chalk.yellow('   your normal user account will not see it on relaunch.'));
+    console.warn(chalk.gray('   Re-run as your regular user (without sudo):  ghost --activate <key>\n'));
+  }
+
   // Try human-key path first. tryParseKey returns { ok, parsed } or { ok: false, error }.
   const keyAttempt = tryParseKey(cleaned);
   if (keyAttempt.ok) {
@@ -1093,6 +1103,7 @@ async function runActivateViaHumanKey(humanKey, parsed) {
   }
 
   saveActivation({ token: respBody.signedToken, fingerprintHashes: fpHashes });
+  reconcileSudoOwnership();
 
   const reactivated = !!respBody.reactivated;
   console.log('\n' + boxen(
@@ -1141,6 +1152,7 @@ async function runActivateViaSignedToken(tokenString) {
   }
 
   saveActivation({ token: tokenString, fingerprintHashes: fpHashes });
+  reconcileSudoOwnership();
 
   console.log('\n' + boxen(
     chalk.green.bold(`${SYM.check} License activated`) + '\n\n' +

@@ -38,7 +38,7 @@
 // edits the worker constant and redeploys to change paywall messaging
 // without a CLI republish.
 
-import Configstore from 'configstore';
+import { getConfig } from './config.js';
 import chalk from 'chalk';
 import boxen from 'boxen';
 // FORECAST_QUOTA is owned by tier-gates.js (the policy source of truth).
@@ -48,7 +48,6 @@ import { SCAN_QUOTA } from './license/tier-gates.js';
 import { FORECAST_QUOTA } from './license/tier-gates.js';
 import { FIX_FORECAST_QUOTA } from './license/tier-gates.js';
 
-const CONFIGSTORE_NAME = 'ghost-architect';
 const COUNT_KEY = 'ghostOpenScanCount';
 // Separate counter for Commit Forecast. Isolated from ghostOpenScanCount
 // because Forecast is the only mode designed to run many times per
@@ -92,7 +91,7 @@ const MODE_TO_PREFIX = {
 // truth) and is imported above; the quota paywall copy below references it.
 
 function getStore() {
-  return new Configstore(CONFIGSTORE_NAME);
+  return getConfig();
 }
 
 export function getScanCount() {
