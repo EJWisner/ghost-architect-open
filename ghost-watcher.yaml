@@ -11,10 +11,6 @@ ghost_watcher:
   scans:
     blast_radius:
       enabled: true
-      skip_if_message_contains:
-        - "v9."
-        - "v10."
-        - "v11."
     conflict_detection: true
     ghost_brief: true
     conflict_verify: false
