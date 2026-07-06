@@ -5,6 +5,34 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.1 -- July 6, 2026
+
+### Patch: Trial Funnel, Ghost Brief, Watcher Regex, and Paywall Fixes
+
+**Trial and Conversion**
+- Trial tier now has full Pro Max parity: Audit and Ghost Brief unlocked, context cap raised to 100K. The "Start a free 7-day Ghost Pro Max trial" CTA now delivers what it promises.
+- Trial CTA added to the Open tier welcome banner so users discover the free trial on first launch, not only after hitting a paywall.
+- Paywall copy corrected: Pro Max added to "What Pro, Pro Max, Team, and Enterprise unlock" lists. Audit paywall now accurately states Ghost Brief requires Pro Max.
+- Missing trademark symbol added to "Ghost Architect reports" in quota paywall.
+- Stale "2 free runs" comment corrected to "4 free scans."
+- --license panel now instructs customers to use their GA- license key instead of "signed-token-from-email."
+
+**Ghost Brief and Chat**
+- ghost --brief no longer crashes with ReferenceError: profile is not defined. The flagship Pro Max flag works.
+- Chat mode no longer invents its version number. VERSION and tier are now injected into the system prompt so "what version are you running?" returns the real answer.
+
+**Ghost Watcher**
+- Self-refuting filter regex fixed: the pattern consistent\b was matching inside "inconsistent," silently deleting findings phrased as "inconsistent X between A and B." Fixed with a negative lookbehind.
+
+**Audit Mode**
+- "v0.4.0 development" banner and "Audit Mode Development Status" box removed. Paying customers no longer see dev scaffold after every audit run.
+
+**Fix Forecast**
+- Fix Forecast now generates previews against the proposed-changes version of the file instead of the baseline. Previously it silently reverted uncommitted work.
+
+**UI Polish**
+- Banner now renders [Pro Max] instead of [Pro-max] for all hyphenated tiers.
+
 ## v10.0.0 -- July 6, 2026
 
 ### Full Audit Remediation (32 findings)

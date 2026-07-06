@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.1
+- Patch: trial funnel and paywall fixes. Trial tier now has full Pro Max parity (Audit and Ghost Brief unlocked, 100K context cap), so the "free 7-day Ghost Pro Max trial" CTA delivers what it promises, and that CTA now appears on the Open welcome banner. ghost --brief no longer crashes (ReferenceError: profile is not defined). Chat mode reports its real version instead of inventing one. Ghost Watcher self-refuting filter no longer deletes "inconsistent X between A and B" findings. Audit dev scaffold removed. Fix Forecast now previews against proposed changes, not the baseline. Banner renders [Pro Max] not [Pro-max]. See CHANGELOG.md for the full list.
+
 ### v10.0.0
 - Full 32-finding audit remediation. Pricing corrected across all four CLI paywalls, README, and the website FAQ (single source of truth in src/constants/pricing.js). Trial CTA now leads every paywall. Portal PR-comment link fixed (missing .html 404). Setup wizard no longer hard-blocks without an API key. Clock skew degrades to a warning instead of a hard block. Verifier concurrency bounded to 4. Plus 26 more trust, conversion, and technical fixes. See CHANGELOG.md for the complete list.
 

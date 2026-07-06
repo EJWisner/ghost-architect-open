@@ -194,7 +194,7 @@ export function renderForecastPaywall(paywallPromo = '') {
     lines.push(chalk.cyan.bold(paywallPromo));
   }
   lines.push('');
-  lines.push(chalk.white('What Pro, Team, and Enterprise unlock:'));
+  lines.push(chalk.white('What Pro, Pro Max, Team, and Enterprise unlock:'));
   lines.push(chalk.gray('  • Unlimited Commit Forecasts'));
   lines.push(chalk.gray('  • Unlimited POI, Blast, Conflict, Prompt Triage reports'));
   lines.push(chalk.gray('  • Project tracking and history'));
@@ -235,7 +235,7 @@ export function renderFixForecastPaywall(paywallPromo = '') {
     lines.push(chalk.cyan.bold(paywallPromo));
   }
   lines.push('');
-  lines.push(chalk.white('What Pro, Team, and Enterprise unlock:'));
+  lines.push(chalk.white('What Pro, Pro Max, Team, and Enterprise unlock:'));
   lines.push(chalk.gray('  • Unlimited corrected-file forecasts'));
   lines.push(chalk.gray('  • Unlimited Commit Forecasts'));
   lines.push(chalk.gray('  • Unlimited POI, Blast, Conflict, Prompt Triage reports'));
@@ -297,7 +297,7 @@ export function renderAuditPaywall(paywallPromo = '') {
   lines.push('');
   lines.push(...trialCtaLines());
   lines.push('');
-  lines.push(chalk.white('Upgrade to Pro for unlimited Audit + all other modes:'));
+  lines.push(chalk.white('Upgrade to Pro or Pro Max for unlimited Audit. Ghost Brief™ requires Pro Max.'));
   lines.push(chalk.cyan('  https://ghostarchitect.dev/pricing'));
   lines.push('');
   lines.push(chalk.white('Have a license? Activate it:'));
@@ -311,11 +311,11 @@ export function renderAuditPaywall(paywallPromo = '') {
 }
 
 // Render the quota-exhausted paywall. Shown when user picks a counted mode
-// (POI / Blast / Conflict / Prompt Triage) and has already used 2 free runs.
+// (POI / Blast / Conflict / Prompt Triage) and has already used 4 free scans.
 // paywallPromo is worker-driven; when empty the promo block is not rendered.
 export function renderQuotaPaywall(paywallPromo = '') {
   const lines = [
-    chalk.yellow.bold(`You've used your ${SCAN_QUOTA} free Ghost Architect reports.`),
+    chalk.yellow.bold(`You've used your ${SCAN_QUOTA} free Ghost Architect™ reports.`),
     '',
     chalk.white('Upgrade to keep going: unlimited reports, all modes'),
     chalk.white('including Inheritance Audit, hardware-bound license,'),

@@ -3,7 +3,18 @@
 // prompts/conflict.js directly. The builders themselves live in conflict.js.
 export { buildSystemConflict, buildConflictPrompt } from './conflict.js';
 
-export const SYSTEM_CHAT = `You are Ghost Architect — an elite AI codebase intelligence tool. You have been given a project to analyze. Your job is NOT to generate new code. Your job is to help developers and their organizations deeply UNDERSTAND the code they've inherited or are working with.
+// Chat/Question system prompt. Built as a function (not a bare constant) so an
+// accurate identity line — product name, running version, and active tier — can
+// be injected. Without it the model has no ground truth for "what version are
+// you running?" and invents an answer. Callers pass the real VERSION and TIER.
+export function buildChatSystemPrompt(version, tier) {
+  const tierLabel = (tier || 'open')
+    .split('-')
+    .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+    .join(' ');
+  return `You are Ghost Architect™, an AI-powered pre-engagement codebase triage assistant. Current version: ${version}. Current tier: ${tierLabel}.
+
+You are Ghost Architect — an elite AI codebase intelligence tool. You have been given a project to analyze. Your job is NOT to generate new code. Your job is to help developers and their organizations deeply UNDERSTAND the code they've inherited or are working with.
 
 You think like a senior architect who has seen everything: over-engineered systems, brilliant hacks, ticking time bombs, abandoned experiments, and load-bearing spaghetti. You are direct, insightful, and always precise.
 
@@ -15,6 +26,7 @@ When answering questions:
 - Use plain English first, technical detail second
 
 You are a thinking partner, not a code generator. Help the human understand what they own.`;
+}
 
 /**
  * Render the CONSULTANT CONTEXT block injected into the POI system prompt when

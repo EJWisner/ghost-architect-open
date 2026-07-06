@@ -37,10 +37,10 @@ function friendlyError(err) {
   return 'Something went wrong. Please try again.';
 }
 
-async function streamChatWithRetry(codebaseContext, conversationHistory, trimmed) {
+async function streamChatWithRetry(codebaseContext, conversationHistory, trimmed, tier) {
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
     try {
-      return await streamChat(codebaseContext, conversationHistory, trimmed);
+      return await streamChat(codebaseContext, conversationHistory, trimmed, tier);
     } catch (err) {
       const isLast = attempt === RETRY_DELAYS.length;
       if (isRateLimit(err) || isOverload(err)) {
@@ -142,7 +142,7 @@ export async function runChatMode(codebaseContext, options = {}) {
       continue;
     }
 
-    const result = await streamChatWithRetry(codebaseContext, conversationHistory, trimmed);
+    const result = await streamChatWithRetry(codebaseContext, conversationHistory, trimmed, tier);
 
     if (result) {
       const response = result.text;

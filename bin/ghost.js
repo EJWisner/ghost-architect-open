@@ -68,6 +68,7 @@ import {
 import { setActiveLicense, getActiveTier } from '../src/license/session.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
 import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
+import { PRICING } from '../src/constants/pricing.js';
 
 // Activation server endpoint. Hardcoded so customers can't be tricked into
 // activating against a malicious server (they'd already need to compromise
@@ -350,7 +351,7 @@ function printBanner(opts = {}) {
     chalk.gray('  ') +
     chalk.cyan.bold('ARCHITECT') +
     chalk.gray('  -  AI-powered codebase archaeology') +
-    chalk.gray(`  v${VERSION}  [${TIER.charAt(0).toUpperCase() + TIER.slice(1)}]\n`)
+    chalk.gray(`  v${VERSION}  [${(TIER || 'open').split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ')}]\n`)
   );
 
   // Copyright line
@@ -1218,7 +1219,7 @@ async function runLicenseStatusFlow() {
     console.log('\n' + boxen(
       chalk.yellow.bold(`No license installed`) + '\n\n' +
       chalk.gray('Install a license with:') + '\n' +
-      chalk.cyan('  ghost --activate <signed-token-from-email>') + '\n\n' +
+      chalk.cyan('  ghost --activate <your GA- license key>') + '\n\n' +
       chalk.gray('Purchase at ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
       { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
     ));
@@ -1603,6 +1604,11 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
       chalk.white('Your first four are free.') + '\n',
       chalk.white('After that, scans require a license.') + '\n',
     ];
+    // Trial CTA leads the actionable block, before the pricing and activate
+    // links, so Open users see the zero-friction offer up front instead of
+    // discovering it only after hitting a paywall.
+    lines.push(chalk.green.bold(`Start a free ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial (no card required):`));
+    lines.push(chalk.cyan('  ' + PRICING.TRIAL_URL.replace(/^https?:\/\//, '')) + '\n');
     if (promoText) {
       lines.push(chalk.cyan.bold(promoText) + '\n');
     }
@@ -3243,7 +3249,10 @@ if (process.argv.includes('--brief')) {
       codebaseRoot: process.cwd(),
       tier: briefTier
     });
-    const { jsonPath, htmlPath } = writeBrief(brief, outputFile, getBranding(profile));
+    // Headless --brief has no `profile` in scope (that variable lives in
+    // main()); this path doesn't parse --profile, so brand with the default.
+    // Passing the undeclared `profile` here threw ReferenceError on every run.
+    const { jsonPath, htmlPath } = writeBrief(brief, outputFile, getBranding(null));
     console.log(`Ghost Brief written to: ${jsonPath}`);
     console.log(`HTML report written to: ${htmlPath}`);
     console.log(`  ${brief.summary.total_prompts} prompts | ${brief.summary.estimated_agent_hours}h estimated`);

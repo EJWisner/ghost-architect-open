@@ -71,10 +71,10 @@ function friendlyError(err) {
 // { text, inputTokens, outputTokens } on success, null on terminal error.
 // A future post-v7-GA refactor can promote this to a shared helper;
 // see TODO-promote-llm-retry-wrapper-shared.md.
-async function streamAnswerWithRetry(codebaseContext, userQuestion) {
+async function streamAnswerWithRetry(codebaseContext, userQuestion, tier) {
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
     try {
-      return await streamChat(codebaseContext, [], userQuestion);
+      return await streamChat(codebaseContext, [], userQuestion, tier);
     } catch (err) {
       const isLast = attempt === RETRY_DELAYS.length;
       if (isRateLimit(err) || isOverload(err)) {
@@ -157,7 +157,7 @@ export async function runQuestionMode(codebaseContext, options = {}) {
     return;
   }
 
-  const result = await streamAnswerWithRetry(codebaseContext, trimmed);
+  const result = await streamAnswerWithRetry(codebaseContext, trimmed, tier);
 
   // Trailing newline after the streamed answer for visual separation.
   console.log('\n');
@@ -287,7 +287,7 @@ async function submitQuestionBatch({ codebaseContext, question, tier }) {
     return;
   }
 
-  const req = buildQuestionRequest(codebaseContext, [], question);
+  const req = buildQuestionRequest(codebaseContext, [], question, tier);
 
   const submittedAt = new Date().toISOString();
   const customId = `question-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);

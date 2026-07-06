@@ -35,7 +35,6 @@ import { runStackRealityCheck } from './stackReality.js';
 import { runKeyPersonRisk, DEPARTED_THRESHOLD_DAYS } from './keyPersonRisk.js';
 import { runDependencyMap } from './dependencyMap.js';
 import { runRoadmapStub } from './roadmapStub.js';
-import { DEAL_TIERS } from './severityRecast.js';
 import { buildAuditReport } from './reportBuilder.js';
 import { saveReport } from '../../reports.js';
 // @ghost-verified: these imports resolve to src/projects.js and src/estimator.js (CLI layer wrappers) not src/core/ -- intentional, audit mode uses CLI display functions
@@ -170,8 +169,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
   console.log('\n' + boxen(
     chalk.cyan.bold('📋  INHERITANCE AUDIT  —  PRE-CLOSE / POST-INHERITANCE') + '\n\n' +
     chalk.gray('Deal-grade codebase audit for buyers, PE diligence,') + '\n' +
-    chalk.gray('fractional CTOs, and modernization consultants.') + '\n\n' +
-    chalk.yellow(`${SYM.warn}  v0.4.0 development — all analyzers live; deal-grade reports saving`) +
+    chalk.gray('fractional CTOs, and modernization consultants.') +
     (profile ? '\n\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
@@ -213,7 +211,6 @@ export async function runAuditMode(codebaseContext, options = {}) {
   if (!proceed) { console.log(chalk.gray('\nAudit cancelled.\n')); return; }
   console.log('');
 
-  const startedAt = Date.now();
   const results = {};
 
   // Analyzer 1: Stack Reality Check
@@ -263,8 +260,6 @@ export async function runAuditMode(codebaseContext, options = {}) {
     spinner.fail(chalk.red(`  Modernization Roadmap failed: ${err.message}`));
     results.roadmap = { _error: err.message };
   }
-
-  const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
 
   // ── Render real findings to stdout ───────────────────────────────────
   console.log('');
@@ -337,26 +332,6 @@ export async function runAuditMode(codebaseContext, options = {}) {
     console.log(chalk.gray('Audit not saved. Findings remain in this terminal session only.'));
     console.log('');
   }
-
-  // ── Development summary box ──────────────────────────────────────────
-  console.log('');
-  console.log(boxen(
-    chalk.cyan.bold('Audit Mode — Development Status') + '\n\n' +
-    chalk.gray(`Completed in ${elapsedSec}s`) + '\n\n' +
-    chalk.white('Live analyzers:') + '\n' +
-    chalk.green('  ✓ Stack Reality Check') + '\n' +
-    chalk.green('  ✓ Key-Person Risk') + '\n' +
-    chalk.green('  ✓ Hidden Dependency Map') + '\n' +
-    chalk.green('  ✓ Modernization Roadmap (LLM synthesis)') + '\n' +
-    chalk.green('  ✓ Deal-grade TXT / MD / PDF reports') + '\n\n' +
-    chalk.white('Pending:') + '\n' +
-    chalk.gray('  • Sample-repo testing (Day 5)') + '\n\n' +
-    chalk.gray('Severity recast tiers:') + '\n' +
-    chalk.gray(`  ${DEAL_TIERS.DEAL_BLOCKER} / ${DEAL_TIERS.POST_CLOSE_RISK} /`) + '\n' +
-    chalk.gray(`  ${DEAL_TIERS.DAY_91_CLEANUP} / ${DEAL_TIERS.HEALTHY}`),
-    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
-  ));
-  console.log('');
 
   return results;
 }

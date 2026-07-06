@@ -36,23 +36,21 @@ import { getActiveTier } from './session.js';
 //
 // Per D1 (locked 2026-05-23): scan quota for Open is 4 scans across
 // {poi, blast, conflict, prompt-triage} in any combination. Question
-// and Recon free across all tiers. Chat and Audit Pro-gated for
-// everyone including trial (matches the existing trial-block banner in
-// bin/ghost.js that this module replaces).
+// and Recon free across all tiers. Chat is Pro-gated (blocked on Open); Audit
+// is available to paid tiers AND to the Pro Max trial (see the trial note
+// below).
 //
 // Cycle 14 (2026-05-25): Question mode added as the Open-tier Q&A
 // surface; Chat moved to Pro+ as the multi-turn conversational surface.
 // The two modes share underlying analyst/index.js streamChat machinery
 // but present as separate products at the menu level.
 //
-// Trial tier behaves like Pro for mode access (Question/POI/Blast/
-// Conflict/Prompt-Triage/Recon/Chat all available, no quota). Audit
-// blocked. PDF watermark + audit block are the two trial-specific
-// behaviors; everything else mirrors Pro.
-// NOTE: Trial tier has Pro-level mode access (all modes, no scan quota) but
-// shares Open's 50K token context cap. See src/loader/tierCaps.js.
-// This is intentional: trial evaluators see the full feature set but
-// not the full context window of a paid Pro subscription.
+// Trial tier is a Pro Max evaluation: it mirrors Pro Max for mode access,
+// including Audit and Ghost Brief, with no scan quota, and runs at Pro Max's
+// 100K token context cap (see src/loader/tierCaps.js). The PDF watermark
+// (feature:pdf-watermark-free below) is the SOLE trial differentiator, so a
+// user who accepts the "free 7-day Ghost Pro Max trial" CTA can actually run
+// every mode that CTA implies instead of hitting the same paywall again.
 const TIER_POLICY = {
   // Modes
   'mode:question':         { open: true,              trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
@@ -62,10 +60,10 @@ const TIER_POLICY = {
   'mode:blast':            { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   'mode:conflict':         { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   'mode:prompt-triage':    { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
-  'mode:audit':            { open: false,              trial: false, pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  'mode:audit':            { open: false,              trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   // Ghost Brief artifact: Max tiers only (pro-max, team-max, enterprise-max).
   // Non-Max paid tiers (pro, team, enterprise) are blocked.
-  'mode:ghost-brief':      { open: false,              trial: false, pro: false, 'pro-max': true,  team: false, 'team-max': true,  enterprise: false, 'enterprise-max': true  },
+  'mode:ghost-brief':      { open: false,              trial: true,  pro: false, 'pro-max': true,  team: false, 'team-max': true,  enterprise: false, 'enterprise-max': true  },
   // Commit Forecast: Open gets 'forecast-quota' — a separate 1-run quota managed
   // by src/freemium.js's getForecastCount/incrementForecastCount (isolated from
   // ghostOpenScanCount so daily pro-tier usage patterns don't burn the shared

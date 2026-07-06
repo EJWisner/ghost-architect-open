@@ -926,7 +926,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   // patchedContext is the proposed-overlay codebase context (has the full fileMap).
   if (conflictCandidates.length > 0) {
     const fixFindings = conflictCandidates.map(normalizeCandidateToFinding);
-    await runPostScanFixForecast(fixFindings, codebaseContext, { tier, profile });
+    await runPostScanFixForecast(fixFindings, patchedContext, { tier, profile });
   }
 
   // ── Increment Open quota AFTER successful analysis ──────────────────────

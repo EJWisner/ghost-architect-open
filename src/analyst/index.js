@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
-import { SYSTEM_CHAT, buildSystemPOI, SYSTEM_BLAST, buildSystemBlast } from '../../prompts/index.js';
+import { buildChatSystemPrompt, buildSystemPOI, SYSTEM_BLAST, buildSystemBlast } from '../../prompts/index.js';
+import { createRequire } from 'module';
 import { AUDIT_ROADMAP_SYSTEM, buildAuditRoadmapUserMessage } from '../../prompts/audit/v1.js';
 import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
@@ -9,6 +10,11 @@ import { createLLMVerifier } from '../core/llm-verifier.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { mergeRates } from '../profile/index.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
+
+// Resolve the running version once (same package.json bin/ghost.js reads) so the
+// chat system prompt can state accurate identity instead of the model guessing.
+const _require = createRequire(import.meta.url);
+const GHOST_VERSION = _require('../../package.json').version;
 
 let client = null;
 
@@ -50,7 +56,7 @@ function extractFindings(rawText, _mode = 'poi') {
 // send byte-for-byte identical params. Returns { model, max_tokens, temperature,
 // system, messages } — the codebase context is prepended to the first user
 // message exactly as streamChat did inline.
-export function buildQuestionRequest(codebaseContext, conversationHistory, userMessage) {
+export function buildQuestionRequest(codebaseContext, conversationHistory, userMessage, tier = 'open') {
   const messages = [...conversationHistory, { role: 'user', content: userMessage }];
   const contextualMessages = messages.map((msg, i) => {
     if (i === 0 && msg.role === 'user') {
@@ -62,14 +68,14 @@ export function buildQuestionRequest(codebaseContext, conversationHistory, userM
     model:       getModel(),
     max_tokens:  4096,
     ...getSamplingParams(0, getModel()),
-    system:      SYSTEM_CHAT,
+    system:      buildChatSystemPrompt(GHOST_VERSION, tier),
     messages:    contextualMessages,
   };
 }
 
-export async function streamChat(codebaseContext, conversationHistory, userMessage) {
+export async function streamChat(codebaseContext, conversationHistory, userMessage, tier = 'open') {
   const anthropic = getClient();
-  const req = buildQuestionRequest(codebaseContext, conversationHistory, userMessage);
+  const req = buildQuestionRequest(codebaseContext, conversationHistory, userMessage, tier);
 
   process.stdout.write(chalk.cyan('\n👻 Ghost: '));
   let fullResponse = '';

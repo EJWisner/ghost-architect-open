@@ -32,7 +32,7 @@ console.log('Test 1: all eight tiers return the correct context cap');
 {
   const expected = {
     open: 50000,
-    trial: 50000,      // trial shares Open's cap; must be an explicit key, not a fallback
+    trial: 100000,     // trial is a Pro Max evaluation: matches Pro Max's 100K cap (watermark is the only differentiator)
     pro: 100000,
     'pro-max': 100000,
     team: 150000,
