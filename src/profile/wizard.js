@@ -29,12 +29,11 @@
  */
 
 import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import { slugify, profilePathFor } from './writer.js';
+import { expandTilde } from '../utils/paths.js';
 
 const HEX_COLOR_RE = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -314,12 +313,6 @@ function trimBranding(input) {
     if (v) out[k] = v;
   }
   return Object.keys(out).length ? out : undefined;
-}
-
-function expandTilde(p) {
-  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
-  if (p === '~')          return os.homedir();
-  return p;
 }
 
 function printProfileSummary(profile) {

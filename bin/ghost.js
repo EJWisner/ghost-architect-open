@@ -47,6 +47,7 @@ import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
 import { SessionCostTracker } from '../src/estimator.js';
 import { backChoice, isBack, isBackKeyword } from '../src/cli/prompt-helpers.js';
+import { showFriendlyError } from '../src/utils/errors.js';
 
 // ── License enforcement ────────────────────────────────────────────────────
 // v1 ships on the Pro umbrella main branch only. Ghost Open (MIT, public)
@@ -241,7 +242,7 @@ function parseArgs(argv) {
 function printUsage() {
   const presets = listPresets().join(', ') || '(none)';
   console.log(`
-Ghost Architect — AI-powered codebase archaeology (v${VERSION}, ${TIER} tier)
+Ghost Architect: AI-powered codebase archaeology (v${VERSION}, ${TIER} tier)
 
 Usage:
   ghost [options]
@@ -254,7 +255,7 @@ Options:
   --exclude-presets a,b    Apply named exclusion preset(s), comma-separated.
                            Available presets: ${presets}
 
-Ghost Partner™ — white-label consultant profiles:
+Ghost Partner™ - white-label consultant profiles:
   --profile path           Load a profile from .yaml/.yml/.md/.txt and apply
                            the consultant's lens + branding to all scans.
   --no-profile             Run without any profile, even if a default is set.
@@ -272,9 +273,9 @@ Ghost Partner™ — white-label consultant profiles:
 Licensing:
   --activate <key|token>   Install your license. Accepts either:
                              (a) human-typeable key: GA-2026-PRO-XXXX-XXXX-XXXX
-                                 — exchanged with the activation server for a
+                                 - exchanged with the activation server for a
                                  token bound to this machine. Requires internet.
-                             (b) pre-signed token — verified locally, no network.
+                             (b) pre-signed token: verified locally, no network.
                                  Used for offline activation when emailed by EJ.
                            Then exit.
   --license                Show current license status (tier, expiration, days
@@ -337,8 +338,10 @@ When flags are omitted, Ghost runs interactively and uses your configured defaul
 
 // ── Banner ──────────────────────────────────────────────────────────────────
 
-function printBanner() {
-  console.clear();
+function printBanner(opts = {}) {
+  // opts.skipClear leaves the screen intact — used on the post-setup call so the
+  // "License active" / "Ghost Open" confirmation the user just saw is not wiped.
+  if (!opts.skipClear) console.clear();
   const title = figlet.textSync('GHOST', { font: 'Doom', horizontalLayout: 'default' });
   const ghostGradient = gradient(['#00ffff', '#0088ff', '#004488']);
   console.log(ghostGradient(title));
@@ -346,7 +349,7 @@ function printBanner() {
   console.log(
     chalk.gray('  ') +
     chalk.cyan.bold('ARCHITECT') +
-    chalk.gray('  —  AI-powered codebase archaeology') +
+    chalk.gray('  -  AI-powered codebase archaeology') +
     chalk.gray(`  v${VERSION}  [${TIER.charAt(0).toUpperCase() + TIER.slice(1)}]\n`)
   );
 
@@ -395,15 +398,15 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
     { name: (IS_WINDOWS ? '[GIT] GitHub repository' : '🐙  GitHub repository') + profileSuffix, value: 'github' },
 
     new inquirer.Separator(promptAnalysisGroupLabel),
-    { name: (IS_WINDOWS ? '[PRT] Prompt Triage' : '🧪  Prompt Triage') + chalk.gray('         — audit a folder of LLM prompts for defects'), value: 'prompt-triage' },
+    { name: (IS_WINDOWS ? '[PRT] Prompt Triage' : '🧪  Prompt Triage') + chalk.gray('         - audit a folder of LLM prompts for defects'), value: 'prompt-triage' },
 
     new inquirer.Separator(otherGroupLabel),
-    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
-    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
+    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('- Remediation progress across all projects')), value: 'dashboard' },
+    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('- Before/after diff of two saved reports')), value: 'compare' },
     {
       name: IS_WINDOWS
-        ? '[PRF] Ghost Partner Profile  — create or manage white-label consultant profiles'
-        : '👤  Ghost Partner Profile  ' + (profilesAllowed ? chalk.gray('— create or manage white-label consultant profiles') : chalk.gray('— Pro or higher · ghostarchitect.dev/pricing')),
+        ? '[PRF] Ghost Partner Profile  - create or manage white-label consultant profiles'
+        : '👤  Ghost Partner Profile  ' + (profilesAllowed ? chalk.gray('- create or manage white-label consultant profiles') : chalk.gray('- Pro or higher · ghostarchitect.dev/pricing')),
       value: 'profiles-topLevel',
     },
   ];
@@ -447,86 +450,86 @@ async function selectMode(codebaseContext, tier = 'open') {
   // rule is part of the clean tier-product story. Pro+ tiers see both
   // Question (one-shot Q&A) and Chat (multi-turn) as distinct choices.
   const choices = [
-    { name: IS_WINDOWS ? '[ASK] Ask a Question  ' : '❓  Ask a Question  ' + chalk.gray('— Single Q&A, save the answer if you like'), value: 'question' },
+    { name: IS_WINDOWS ? '[ASK] Ask a Question  ' : '❓  Ask a Question  ' + chalk.gray('- Single Q&A, save the answer if you like'), value: 'question' },
   ];
   if (tier !== 'open') {
-    choices.push({ name: IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ' + chalk.gray('— Ongoing conversation about this project'), value: 'chat' });
+    choices.push({ name: IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ' + chalk.gray('- Ongoing conversation about this project'), value: 'chat' });
   }
   choices.push(
-    { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('— Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
-    { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('— Impact map + rollback plan'), value: 'blast' },
-    { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('— Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
-    { name: IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ' + chalk.gray('— Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
-    { name: IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ' + chalk.gray('— Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
+    { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('- Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
+    { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('- Impact map + rollback plan'), value: 'blast' },
+    { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('- Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
+    { name: IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ' + chalk.gray('- Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
+    { name: IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ' + chalk.gray('- Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
     {
       name: IS_WINDOWS
-        ? '[GBR] Ghost Brief™     — Generate AI remediation prompt pack'
-        : '📋  Ghost Brief™     ' + chalk.gray('— Generate AI remediation prompt pack'),
+        ? '[GBR] Ghost Brief™     - Generate AI remediation prompt pack'
+        : '📋  Ghost Brief™     ' + chalk.gray('- Generate AI remediation prompt pack'),
       value: 'ghost-brief',
       disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
     },
     {
       name: IS_WINDOWS
-        ? '[EXB] Executive Brief  — One-page business intelligence report'
-        : '📊  Executive Brief  ' + chalk.gray('— One-page business intelligence report'),
+        ? '[EXB] Executive Brief  - One-page business intelligence report'
+        : '📊  Executive Brief  ' + chalk.gray('- One-page business intelligence report'),
       value: 'executive-brief',
       disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
     },
     new inquirer.Separator(IS_WINDOWS ? '── Ghost Watcher ──' : '─── Ghost Watcher™ ─────────────────────────────────'),
     {
       name: IS_WINDOWS
-        ? '[WEN] Enable Watch     — monitor commits on this repo'
-        : '🔭  Enable Watch     ' + chalk.gray('— monitor commits on this repo'),
+        ? '[WEN] Enable Watch     - monitor commits on this repo'
+        : '🔭  Enable Watch     ' + chalk.gray('- monitor commits on this repo'),
       value: 'watch-enable',
       disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
       name: IS_WINDOWS
-        ? '[WST] Watch Status     — view active Watch configuration'
-        : '📋  Watch Status     ' + chalk.gray('— view active Watch configuration'),
+        ? '[WST] Watch Status     - view active Watch configuration'
+        : '📋  Watch Status     ' + chalk.gray('- view active Watch configuration'),
       value: 'watch-status',
       disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
       name: IS_WINDOWS
-        ? '[WCF] Configure Watch  — change branches, modes, notifications'
-        : '⚙   Configure Watch  ' + chalk.gray('— change branches, modes, notifications'),
+        ? '[WCF] Configure Watch  - change branches, modes, notifications'
+        : '⚙   Configure Watch  ' + chalk.gray('- change branches, modes, notifications'),
       value: 'watch-configure',
       disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
       name: IS_WINDOWS
-        ? '[WDS] Disable Watch    — remove Watch from this repo'
-        : '🚫  Disable Watch    ' + chalk.gray('— remove Watch from this repo'),
+        ? '[WDS] Disable Watch    - remove Watch from this repo'
+        : '🚫  Disable Watch    ' + chalk.gray('- remove Watch from this repo'),
       value: 'watch-disable',
       disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
       name: IS_WINDOWS
-        ? '[WTM] Manage Team      — add, reassign, or deactivate members'
-        : '👥  Manage Team      ' + chalk.gray('— add, reassign, or deactivate members'),
+        ? '[WTM] Manage Team      - add, reassign, or deactivate members'
+        : '👥  Manage Team      ' + chalk.gray('- add, reassign, or deactivate members'),
       value: 'watch-team',
       disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     new inquirer.Separator(IS_WINDOWS ? '── Other ──' : '─── Other ───────────────────────────────────────'),
     {
       name: IS_WINDOWS
-        ? '[PRF] Ghost Partner Profile  — create or manage white-label consultant profiles'
-        : '👤  Ghost Partner Profile  ' + chalk.gray('— create or manage white-label consultant profiles'),
+        ? '[PRF] Ghost Partner Profile  - create or manage white-label consultant profiles'
+        : '👤  Ghost Partner Profile  ' + chalk.gray('- create or manage white-label consultant profiles'),
       value: 'profiles',
       disabled: TIER === 'open' ? chalk.gray('(Pro or higher)') : false,
     },
-    { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('— Sizing & engagement plan, no analysis'), value: 'recon' },
-    { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('— Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
-    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('— Before/after diff of two saved reports')), value: 'compare' },
-    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('— Remediation progress across all projects')), value: 'dashboard' },
+    { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('- Sizing & engagement plan, no analysis'), value: 'recon' },
+    { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('- Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
+    { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('- Before/after diff of two saved reports')), value: 'compare' },
+    { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('- Remediation progress across all projects')), value: 'dashboard' },
     new inquirer.Separator(),
     // "New Scan" is the explicit back-out here — returns to selectInputMethod
     // with codebase context cleared. Labeled by intent ("scan a different
     // directory") rather than the abstract "Back" because the user has a
     // loaded codebase context and the natural next-thing-up is to load a
     // different one, not to abandon work entirely.
-    { name: IS_WINDOWS ? '[RLD] New Scan  — scan a different directory' : '🔄  New Scan  — scan a different directory', value: 'reload' },
+    { name: IS_WINDOWS ? '[RLD] New Scan  - scan a different directory' : '🔄  New Scan  - scan a different directory', value: 'reload' },
     // Universal escape: "Exit Ghost" with confirm-exit, consistent with
     // top-level menu. Caller checks isBack(mode) and runs confirmExit().
     backChoice(IS_WINDOWS ? '[EXIT] Exit Ghost' : '🚪  Exit Ghost'),
@@ -869,7 +872,7 @@ async function runDeleteProfileFlow(profiles) {
   deleteProfile(slug);
   if (getDefaultProfileSlug() === slug) {
     setDefaultProfileSlug(null);
-    console.log(chalk.gray('   (Was the default profile — default cleared.)'));
+    console.log(chalk.gray('   (Was the default profile: default cleared.)'));
   }
   console.log(chalk.green(`\n${SYM.check} Deleted profile: ${slug}\n`));
 }
@@ -976,7 +979,7 @@ function reportLicenseValidationError(err, { debug = false, degraded = false } =
   console.error(chalk.red(`\n${SYM.cross} License validation hit an unexpected error: ${err.message}`));
   if (degraded) {
     console.error(chalk.yellow('   Continuing at Open tier. If you have a paid license, this is likely a'));
-    console.error(chalk.yellow('   transient filesystem or network issue — re-run the command.'));
+    console.error(chalk.yellow('   transient filesystem or network issue: re-run the command.'));
   }
   if (debug) {
     console.error(chalk.gray('\n   --license-debug detail:'));
@@ -1003,6 +1006,35 @@ function reportLicenseValidationError(err, { debug = false, degraded = false } =
  *   - Pre-signed tokens are 200+ chars of base64url and would fail human-key
  *     parsing immediately with a "must have 6 segments" error.
  */
+// Build the one "validity" line for a license panel from its payload, branching
+// on the same date thresholds the validator uses (src/license/validator.js).
+// This keeps a freshly-activated healthy license from showing alarming
+// "Grace: through <date>" text: grace/expiry wording only appears once the
+// license is actually in that state.
+//   - trial              → "Trial expires: <expires>"
+//   - active (healthy)   → "Active through: <expires>"
+//   - in the grace window→ "Grace period active: through <grace_until>"
+//   - past grace / hard stop → "License expired: <expires>"
+function licenseValidityLine(payload) {
+  const date = (iso) => chalk.cyan((iso || '').slice(0, 10));
+  if (payload.tier === 'trial') {
+    return chalk.white('Trial expires: ') + date(payload.expires);
+  }
+  const now        = Date.now();
+  const expiresMs  = Date.parse(payload.expires);
+  const graceMs    = Date.parse(payload.grace_until);
+  // Past the end of grace (grace-ending or hard-stopped): subscription expired.
+  if (Number.isFinite(graceMs) && now >= graceMs) {
+    return chalk.white('License expired: ') + date(payload.expires);
+  }
+  // In the grace window: lapsed but grace not yet exhausted.
+  if (Number.isFinite(expiresMs) && now >= expiresMs) {
+    return chalk.white('Grace period active: ') + chalk.cyan('through ' + (payload.grace_until || '').slice(0, 10));
+  }
+  // Healthy active license — the fresh-activation case.
+  return chalk.white('Active through: ') + date(payload.expires);
+}
+
 async function runActivateFlow(input) {
   if (!input || !input.trim()) {
     console.error(chalk.red(`\n${SYM.cross} --activate requires a license key or token. Paste the value from your license email.\n`));
@@ -1073,7 +1105,7 @@ async function runActivateViaHumanKey(humanKey, parsed) {
 
   if (!respBody.signedToken || typeof respBody.signedToken !== 'string') {
     console.error(chalk.red(`\n${SYM.cross} Activation server returned an unexpected response (no signedToken).`));
-    console.error(chalk.gray('   This is a bug — email support@ghostarchitect.dev with the time of this attempt.\n'));
+    console.error(chalk.gray('   This is a bug: email support@ghostarchitect.dev with the time of this attempt.\n'));
     process.exit(2);
   }
 
@@ -1089,6 +1121,20 @@ async function runActivateViaHumanKey(humanKey, parsed) {
     process.exit(2);
   }
   const payload = decoded.payload;
+
+  // Cross-check the server-signed tier against the tier encoded in the key
+  // format. parsed.tier comes from the key's 3-char tier code (CODE_TO_TIER in
+  // src/license/format.js); payload.tier comes from the server-signed token.
+  // They should always agree; a disagreement points at a mis-issued key or a
+  // server returning the wrong tier. We do NOT hard-block: the server-signed
+  // payload is authoritative and is what gets saved. We only warn so the
+  // customer (and support) can catch a mis-provisioned license.
+  if (parsed?.tier && payload.tier && payload.tier !== parsed.tier) {
+    console.log(chalk.yellow(
+      `Warning: license tier mismatch detected. Key format indicates ${parsed.tier} ` +
+      `but server returned ${payload.tier}. Contact support@ghostarchitect.dev`
+    ));
+  }
 
   // Confirm the token is bound to THIS machine. The server should have set
   // payload.fingerprint = fpHashes (the hashes we sent), but verify anyway.
@@ -1110,12 +1156,11 @@ async function runActivateViaHumanKey(humanKey, parsed) {
     chalk.green.bold(`${SYM.check} License ${reactivated ? 're-activated' : 'activated'}`) + '\n\n' +
     chalk.white('Customer: ') + chalk.cyan(payload.customer) + '\n' +
     chalk.white('Tier:     ') + chalk.cyan(payload.tier) + '\n' +
-    chalk.white('Expires:  ') + chalk.cyan(payload.expires.slice(0, 10)) + '\n' +
-    chalk.white('Grace:    ') + chalk.cyan('through ' + payload.grace_until.slice(0, 10)),
+    licenseValidityLine(payload),
     { padding: 1, borderColor: 'green', borderStyle: 'round' }
   ));
   if (reactivated) {
-    console.log(chalk.gray('  (License was already activated on this machine — token refreshed.)'));
+    console.log(chalk.gray('  (License was already activated on this machine: token refreshed.)'));
   }
   console.log('');
 }
@@ -1158,8 +1203,7 @@ async function runActivateViaSignedToken(tokenString) {
     chalk.green.bold(`${SYM.check} License activated`) + '\n\n' +
     chalk.white('Customer: ') + chalk.cyan(payload.customer) + '\n' +
     chalk.white('Tier:     ') + chalk.cyan(payload.tier) + '\n' +
-    chalk.white('Expires:  ') + chalk.cyan(payload.expires.slice(0, 10)) + '\n' +
-    chalk.white('Grace:    ') + chalk.cyan('through ' + payload.grace_until.slice(0, 10)),
+    licenseValidityLine(payload),
     { padding: 1, borderColor: 'green', borderStyle: 'round' }
   ));
   console.log('');
@@ -1626,7 +1670,7 @@ async function runBatchStatusCommand() {
 
   const apiKey = resolveApiKey();
   if (!apiKey) {
-    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured — cannot check batch status.\n`));
+    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured: cannot check batch status.\n`));
     return;
   }
   const client = new Anthropic({ apiKey });
@@ -1647,8 +1691,8 @@ async function runBatchStatusCommand() {
     if (ready) anyReady = true;
     rows.push({
       id:        b.id,
-      mode:      b.mode || '—',
-      submitted: formatClockTime(b.submittedAt) || b.submittedAt || '—',
+      mode:      b.mode || '-',
+      submitted: formatClockTime(b.submittedAt) || b.submittedAt || '-',
       status,
       ready:     ready ? 'yes' : 'no',
     });
@@ -1677,7 +1721,7 @@ async function runBatchStatusCommand() {
     console.log(chalk.cyan('One or more batches are ready. Retrieve with:'));
     console.log(chalk.gray('  ghost batch-retrieve ') + chalk.cyan(readyOne.id) + '\n');
   } else {
-    console.log(chalk.gray('No batches ready yet — check again in a few minutes.\n'));
+    console.log(chalk.gray('No batches ready yet: check again in a few minutes.\n'));
   }
 }
 
@@ -1697,7 +1741,7 @@ async function runBatchRetrieveCommand(id) {
 
   const apiKey = resolveApiKey();
   if (!apiKey) {
-    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured — cannot retrieve the batch.\n`));
+    console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured: cannot retrieve the batch.\n`));
     return;
   }
   const client = new Anthropic({ apiKey });
@@ -1860,7 +1904,17 @@ async function main() {
   }
 
   if (cliOpts.help)    { printUsage(); process.exit(0); }
-  if (cliOpts.version) { console.log(`ghost-architect v${VERSION} (${TIER})`); process.exit(0); }
+  if (cliOpts.version) {
+    // Title-case the tier for display: 'open' -> 'Open', 'pro-max' -> 'Pro Max'.
+    // TIER is resolved above (getActiveTier() || 'open'); fall back to 'Open'
+    // if it is somehow unset at this point.
+    const tierLabel = (TIER || 'open')
+      .split('-')
+      .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+      .join(' ');
+    console.log(`Ghost Architect™ v${VERSION} (${tierLabel})`);
+    process.exit(0);
+  }
 
   // License management flags — handle and exit BEFORE we run any other
   // setup so customers can always reach `--activate`, `--license`, and
@@ -2006,7 +2060,11 @@ async function main() {
     process.exit(2);
   }
 
-  if (!isConfigured()) {
+  // Captured before runSetupWizard() flips isConfigured() to true, so the
+  // post-setup banner below can skip its console.clear() and keep the
+  // activation confirmation the user saw during setup on screen.
+  const firstRun = !isConfigured();
+  if (firstRun) {
     console.log(boxen(
       chalk.yellow.bold('Welcome to Ghost Architect!') + '\n' +
       chalk.gray('Looks like this is your first time here.\nLet\'s get you set up.'),
@@ -2086,7 +2144,18 @@ async function main() {
     // license. All three CLI display surfaces (banner, --help, --version)
     // run post-license per meta-arb decision 2026-05-24: trust on display
     // surfaces is binary; partial fix is worse than no fix.
-    printBanner();
+    // On first run, skip the clear so the confirmation from setup/activation
+    // stays visible, then print a persistent one-line status under the banner.
+    printBanner({ skipClear: firstRun });
+    if (firstRun) {
+      if (TIER === 'open') {
+        console.log(chalk.yellow('ℹ Running as Ghost Open. Activate a license with: ghost --activate <key>'));
+      } else {
+        const tierLabel = TIER.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        console.log(chalk.green('✓ License active: Ghost Architect™ ' + tierLabel + '. Ready to scan.'));
+      }
+      console.log('');
+    }
 
     // Re-seed scan options with the resolved tier. The earlier setScanOptions
     // call (right after parseArgs) ran with TIER='open' as the placeholder
@@ -2312,7 +2381,7 @@ async function main() {
             console.log(chalk.cyan('\n  Your profiles:\n'));
             availableProfiles.forEach(p => {
               const isDefault = p.name === defaultSlug ? chalk.yellow(' ★ default') : '';
-              console.log(chalk.white('  • ' + p.name) + isDefault + chalk.gray(' — ' + p.value));
+              console.log(chalk.white('  • ' + p.name) + isDefault + chalk.gray(': ' + p.value));
             });
             console.log('');
           }
@@ -2526,7 +2595,7 @@ async function main() {
         cfLabel:      cliOpts.cfLabel    || null,
         cfNoVerify:   cliOpts.cfNoVerify || false,
       }); break;
-      case 'recon':           await runReconMode(codebaseContext, { profile });  break;
+      case 'recon':           await runReconMode(codebaseContext, { profile, tier: TIER });  break;
       case 'audit':           await runAuditMode(codebaseContext, { profile, tier: TIER });  break;
       case 'compare':         await runCompareMode();                         break;
       case 'dashboard':       await showProjectDashboard();                   break;
@@ -2863,7 +2932,7 @@ async function main() {
             console.log(chalk.yellow('  ⚠  GitHub Actions workflow requires additional setup.'));
             console.log(chalk.gray('  Your token needs "workflow" scope to push workflow files.'));
             console.log('');
-            console.log(chalk.cyan('  Manual step — create this file in your repo:'));
+            console.log(chalk.cyan('  Manual step: create this file in your repo:'));
             console.log(chalk.white('  .github/workflows/ghost-watcher.yml'));
             console.log('');
             console.log(chalk.gray('  With this content:'));
@@ -2876,11 +2945,11 @@ async function main() {
             console.log('');
           }
 
-          console.log(chalk.cyan('  Next steps — add these secrets to your GitHub repo:'));
-          console.log(chalk.gray('     ANTHROPIC_API_KEY — your Anthropic API key'));
-          console.log(chalk.gray('     GHOST_LICENSE_KEY — your Ghost Team license key'));
-          console.log(chalk.gray('     GHOST_PORTAL_REPO — your ghost-reports repo URL'));
-          console.log(chalk.gray('     GHOST_PORTAL_TOKEN — GitHub PAT with repo write scope'));
+          console.log(chalk.cyan('  Next steps: add these secrets to your GitHub repo:'));
+          console.log(chalk.gray('     ANTHROPIC_API_KEY: your Anthropic API key'));
+          console.log(chalk.gray('     GHOST_LICENSE_KEY: your Ghost Team license key'));
+          console.log(chalk.gray('     GHOST_PORTAL_REPO: your ghost-reports repo URL'));
+          console.log(chalk.gray('     GHOST_PORTAL_TOKEN: GitHub PAT with repo write scope'));
           console.log('');
         } catch (err) {
           console.error(chalk.red(`\n  Enable Watch failed: ${err.message}\n`));
@@ -2926,7 +2995,7 @@ async function main() {
       }
 
       case 'watch-configure': {
-        console.log(chalk.cyan('\n  Configure Watch — coming in Ghost Watcher v9.0.1\n'));
+        console.log(chalk.cyan('\n  Configure Watch: coming in Ghost Watcher v9.0.1\n'));
         console.log(chalk.gray('  For now, edit ghost-watcher.yaml directly in your repo.\n'));
         break;
       }
@@ -2953,7 +3022,7 @@ async function main() {
         try {
           await disableWatch({ repoUrl, token });
           console.log(chalk.green('\n  Ghost Watcher disabled.\n'));
-          console.log(chalk.gray('  The workflow file is still in your repo — re-enable anytime.\n'));
+          console.log(chalk.gray('  The workflow file is still in your repo: re-enable anytime.\n'));
         } catch (err) {
           console.error(chalk.red(`\n  Disable Watch failed: ${err.message}\n`));
         }
@@ -2961,7 +3030,7 @@ async function main() {
       }
 
       case 'watch-team': {
-        console.log(chalk.cyan('\n  Manage Team — coming in Ghost Watcher v9.0.1\n'));
+        console.log(chalk.cyan('\n  Manage Team: coming in Ghost Watcher v9.0.1\n'));
         console.log(chalk.gray('  Team management will be available in the next release.\n'));
         break;
       }
@@ -3040,7 +3109,7 @@ async function main() {
             console.log(chalk.cyan('\n  Your profiles:\n'));
             availableProfiles.forEach(p => {
               const isDefault = p.name === defaultSlug ? chalk.yellow(' ★ default') : '';
-              console.log(chalk.white(`  • ${p.name}`) + isDefault + chalk.gray(` — ${p.value}`));
+              console.log(chalk.white(`  • ${p.name}`) + isDefault + chalk.gray(`: ${p.value}`));
             });
             console.log('');
           }
@@ -3214,8 +3283,22 @@ const isMain = () => {
 };
 
 if (isMain()) {
+  // Last-resort safety nets so an unhandled promise rejection or a throw
+  // outside the main() chain still gets the friendly, support-linked message
+  // instead of a raw stack trace. Registered inside the isMain() guard so
+  // importing this module in tests never installs process-wide handlers.
+  process.on('unhandledRejection', (reason) => {
+    showFriendlyError(reason instanceof Error ? reason : new Error(String(reason)));
+    process.exit(1);
+  });
+
+  process.on('uncaughtException', (err) => {
+    showFriendlyError(err);
+    process.exit(1);
+  });
+
   main().catch(err => {
-    console.error(chalk.red('\n' + SYM.cross + ' Fatal error:'), err.message);
+    showFriendlyError(err);
     process.exit(1);
   });
 }

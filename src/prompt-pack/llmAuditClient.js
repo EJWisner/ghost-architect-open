@@ -508,6 +508,11 @@ export async function auditPromptForDefect(params) {
     positiveExamples, negativeExamples,
   } = params;
 
+  // Coerce non-string prompt input to a safe string before any string ops
+  // (fingerprint/cacheKey below and the API envelope). Mirrors tokenizer.js and
+  // protects every Tier-2 detector that forwards promptText here unguarded.
+  const safeText = String(promptText ?? '');
+
   // Skip silently for test-only models. The model registry has a
   // testOnly flag for entries like 'test-tiny-4k' that exist solely
   // to drive offline fixture testing. Tier 2 detectors cannot run
@@ -521,7 +526,7 @@ export async function auditPromptForDefect(params) {
   }
 
   // Cache check.
-  const key = cacheKey(detectorName, modelId, promptText);
+  const key = cacheKey(detectorName, modelId, safeText);
   if (RESULT_CACHE.has(key)) {
     const cached = RESULT_CACHE.get(key);
     return { ok: true, findings: cached.findings, cached: true };
@@ -539,7 +544,7 @@ export async function auditPromptForDefect(params) {
   const envelope = buildEnvelope({
     defectName, defectDescription, positiveExamples, negativeExamples,
     schemaDescription: STANDARD_SCHEMA_DESCRIPTION,
-    auditedPrompt: promptText,
+    auditedPrompt: safeText,
   });
 
   await acquire();

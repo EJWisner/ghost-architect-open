@@ -35,6 +35,7 @@
 // they materially help comprehension.
 
 import { getBranding } from '../../profile/index.js';
+import { DEPARTED_THRESHOLD_DAYS } from './keyPersonRisk.js';
 
 const REPORT_VERSION = '1.0';
 
@@ -161,7 +162,13 @@ function buildStackRealitySection(stackReality) {
       const status = f.eolFlag
         ? `**EOL** — ${f.eolNote || 'past end-of-life'}`
         : 'In support';
-      lines.push(`| ${f.displayName} | ${f.version || 'unparsed'} | ${status} |`);
+      // A missing/unparsed version must read as a fact about the manifest, not
+      // as a tool failure. The raw internal 'unparsed' sentinel (and any empty
+      // value) becomes buyer-friendly language.
+      const version = (f.version === 'unparsed' || !f.version)
+        ? 'not declared in manifest'
+        : f.version;
+      lines.push(`| ${f.displayName} | ${version} | ${status} |`);
     }
     lines.push('');
   }
@@ -210,7 +217,7 @@ function buildKeyPersonRiskSection(keyPersonRisk) {
   lines.push(`| Distinct authors | ${totalAuthors} |`);
   lines.push(`| Total commits (non-merge) | ${totalCommits?.toLocaleString() || 0} |`);
   lines.push(`| Total lines changed | ${totalLinesChanged?.toLocaleString() || 0} |`);
-  lines.push(`| Bus factor estimate | ${busFactorEstimate} |`);
+  lines.push(`| Key contributors (80% of code) | ${busFactorEstimate} |`);
   lines.push(`| Concentration risk | ${concentrationRisk.toUpperCase()} |`);
   lines.push('');
 
@@ -225,7 +232,7 @@ function buildKeyPersonRiskSection(keyPersonRisk) {
       const firstD = c.firstCommitAt ? c.firstCommitAt.slice(0, 10) : '—';
       const lastD = c.lastCommitAt ? c.lastCommitAt.slice(0, 10) : '—';
       const status = c.likelyDeparted
-        ? `**Likely departed** — ${c.daysSinceLastCommit}d ago`
+        ? `**Likely departed** (${c.daysSinceLastCommit}d since last commit; flagged after ${DEPARTED_THRESHOLD_DAYS}d of inactivity)`
         : 'Active';
       lines.push(`| ${c.displayLabel} | ${c.linesChanged.toLocaleString()} | ${c.linesChangedPct}% | ${c.commits} | ${firstD} | ${lastD} | ${status} |`);
     }
@@ -256,7 +263,7 @@ function buildDependencyMapSection(dependencyMap) {
   lines.push('');
 
   if (!dependencyMap.totalDependencies) {
-    lines.push('No direct dependencies detected. No supported manifest files were found.');
+    lines.push('No package manifest detected in this codebase. Dependency analysis requires a package.json, requirements.txt, Gemfile, pom.xml, or similar.');
     return lines.join('\n');
   }
 

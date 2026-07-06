@@ -118,16 +118,21 @@ console.log('');
 // sanitized synthetic finding, and the raw error still hits stderr.
 console.log('Test 4: runAll synthetic finding is sanitized');
 {
-  // Passing a non-string promptText makes the Tier 1 detectors throw
-  // (e.g. promptText.split is not a function), exercising the catch path.
+  // Force a detector crash to exercise runAll's sanitization catch path.
+  // A plain non-string promptText (e.g. 42) no longer throws: the Tier 1
+  // detectors now coerce with String(promptText ?? '') at their entry. So we
+  // crash via an object whose toString() throws — this trips the coercion
+  // itself inside a detector, and carries angle brackets so the < > escaping
+  // in the synthetic finding is genuinely exercised.
   // Skip Tier 2/3 so no live API calls are made.
+  const crashingInput = { toString() { throw new Error('crashed: <script>alert(1)</script>'); } };
   let stderrCapture = '';
   const originalWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk) => { stderrCapture += String(chunk); return true; };
 
   let findings;
   try {
-    findings = await runAll(42, 'evil.txt', { skipTiers: [2, 3], verbose: true });
+    findings = await runAll(crashingInput, 'evil.txt', { skipTiers: [2, 3], verbose: true });
   } finally {
     process.stderr.write = originalWrite;
   }

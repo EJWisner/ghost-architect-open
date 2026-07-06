@@ -27,6 +27,7 @@ import inquirer from 'inquirer';
 import { runRecon } from '../core/agent/planner.js';
 import { saveReport } from '../reports.js';
 import { promptProjectLabel } from '../projects.js';
+import { requireTier } from '../license/tier-gates.js';
 import { showFriendlyError } from '../utils/errors.js';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -39,13 +40,17 @@ export async function runReconMode(codebaseContext, options = {}) {
   // only (~$0.05, no analysis passes) and serves as a pre-engagement
   // scoping artifact. COUNTED_PREFIXES in src/freemium.js excludes
   // 'ghost-recon', so recon does not accrue against the 4-scan Open
-  // quota even when saveReport forwards the prefix correctly. No
-  // requireTier call, no D3 callout site, no D4 save-semantics branch.
-  // If recon ever becomes quota-counted or tier-conditional, this
+  // quota even when saveReport forwards the prefix correctly. Recon MODE
+  // access stays tier-blind; the only tier gate here is the D4 project-label
+  // prompt below, which (like POI) is Pro+ only because project tracking is a
+  // paid feature. If recon ever becomes quota-counted or mode-gated, this
   // comment, TIER_POLICY, and COUNTED_PREFIXES must all change together.
 
   // Ghost Partner — consultant profile (null when --profile was not passed).
   const profile = options.profile || null;
+  // Default to 'open' so a caller that forgets to pass tier can never leak the
+  // paid project-tracking label prompt to an Open user.
+  const tier = options.tier || 'open';
 
   const fileMap = codebaseContext.fileMap || {};
 
@@ -58,9 +63,16 @@ export async function runReconMode(codebaseContext, options = {}) {
   ));
   console.log('');
 
-  // Smart project label prompt — same as POI for consistency.
-  const label = await promptProjectLabel();
-  console.log('');
+  // D4 gate: the project label prompt (and the tracking it feeds) is Pro+ only.
+  // On Open the label is never tracked, so we must not prompt for it — mirrors
+  // POI. Label stays null through to renderReconMarkdown (which ignores it) and
+  // saveReport (which handles null: timestamped filename, "Unnamed project").
+  const projectIntelEnabled = requireTier('feature:project-tracking', { tier }).allowed;
+  let label = null;
+  if (projectIntelEnabled) {
+    label = await promptProjectLabel();
+    console.log('');
+  }
 
   let spinner = null;
   try {

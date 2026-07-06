@@ -113,6 +113,16 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
     if (onPassComplete) onPassComplete(passNum, total);
   }
 
+  // Single-pass short-circuit: with only one pass there is nothing to merge, so
+  // skip the batch-synthesis round-trip (a second API call plus up to 20 minutes
+  // of polling) and return that pass's output directly. This matches the shape
+  // the synthesis path returns below (the report string). onSynthesisStart is
+  // intentionally NOT fired here, since no synthesis happens.
+  if (passes.length === 1) {
+    console.log('Single-pass scan, skipping batch synthesis');
+    return perPassResults[0];
+  }
+
   // ── Synthesis pass ────────────────────────────────────────────────────────
   // Feed all per-chunk blast outputs to a synthesis prompt that produces
   // one unified rollback plan. Uses the full patchedContext so the synthesizer

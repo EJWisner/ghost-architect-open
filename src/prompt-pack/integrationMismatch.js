@@ -293,12 +293,14 @@ export async function detect(promptText, filePath, opts = {}) {
   // detector called directly without a model doesn't error.
   if (!opts.targetModel) return [];
 
+  const safeText = String(promptText ?? '');
+
   // ── Phase 1: regex pre-filter ──────────────────────────────────────
   // A prompt needs at least TWO integration declarations across
   // categories OR three+ within one category for the LLM verification
   // to be useful. Single-declaration prompts cannot have an internal
   // mismatch by definition. Skipping them keeps cost bounded.
-  const { categories, totalMatches } = scanForDeclarations(promptText);
+  const { categories, totalMatches } = scanForDeclarations(safeText);
   const hasMultipleCategories = categories.size >= 2;
   const hasManyMatchesInOneCategory = totalMatches >= 3;
   if (!hasMultipleCategories && !hasManyMatchesInOneCategory) {
@@ -309,7 +311,7 @@ export async function detect(promptText, filePath, opts = {}) {
   const result = await auditPromptForDefect({
     detectorName: 'integrationMismatch',
     modelId: opts.targetModel,
-    promptText,
+    promptText: safeText,
     defectName: 'Integration mismatch',
     defectDescription: DEFECT_DESCRIPTION,
     positiveExamples: POSITIVE_EXAMPLES,

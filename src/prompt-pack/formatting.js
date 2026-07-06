@@ -351,11 +351,12 @@ function detectUnclosedInlineCode(promptText, filePath) {
  * @returns {Promise<Array>}   Findings from all sub-detectors.
  */
 export async function detect(promptText, filePath, opts = {}) {
+  const safeText = String(promptText ?? '');
   const findings = [];
 
-  findings.push(...detectUnclosedCodeBlock(promptText, filePath));
-  findings.push(...detectMismatchedTags(promptText, filePath));
-  findings.push(...detectUnclosedInlineCode(promptText, filePath));
+  findings.push(...detectUnclosedCodeBlock(safeText, filePath));
+  findings.push(...detectMismatchedTags(safeText, filePath));
+  findings.push(...detectUnclosedInlineCode(safeText, filePath));
 
   return findings;
 }

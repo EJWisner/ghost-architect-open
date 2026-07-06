@@ -125,11 +125,12 @@ function hasFewshotSignalAbove(lines, lineIdx) {
 // ── Public detect() ──────────────────────────────────────────────────────
 
 export async function detect(promptText, filePath, opts = {}) {
+  const safeText = String(promptText ?? '');
   const findings = [];
-  const lines = promptText.split('\n');
+  const lines = safeText.split('\n');
 
   // ── Check (a): Multiple <system> blocks ────────────────────────────────
-  const systemOpens = findSystemTagOpens(promptText);
+  const systemOpens = findSystemTagOpens(safeText);
   if (systemOpens.length > 1) {
     // Emit one finding per *additional* block beyond the first.
     for (let i = 1; i < systemOpens.length; i++) {
@@ -160,7 +161,7 @@ export async function detect(promptText, filePath, opts = {}) {
   }
 
   // ── Check (b): Mixed XML role tags + line markers ─────────────────────
-  const hasAnyRoleTag = ANY_ROLE_TAG_OPEN.test(promptText);
+  const hasAnyRoleTag = ANY_ROLE_TAG_OPEN.test(safeText);
   // Reset lastIndex; .test() advanced the regex's internal pointer.
   ANY_ROLE_TAG_OPEN.lastIndex = 0;
 

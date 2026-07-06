@@ -150,6 +150,7 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
   let   lastResult   = null;
   let   finished     = false;
   let   parseErrors  = 0;      // track parse failures across whole run
+  let   skippedSteps = 0;      // steps dropped because their response never parsed (results incomplete)
   let   apiError     = null;   // set to the API error message if the loop aborts on an API failure
   const MAX_PARSE_RETRIES = 2; // per step
 
@@ -258,7 +259,13 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
     }
 
     if (finished) break;
-    if (!decision) continue; // skip step, move to next
+    if (!decision) {
+      // Parse retries were exhausted for this step (decision stayed null), so
+      // the step is dropped. Count it so the result reports incompleteness
+      // instead of masquerading as a complete analysis.
+      skippedSteps++;
+      continue;
+    }
 
     const { reasoning, action, input } = decision;
     onThought({ reasoning, action, input, step });
@@ -298,12 +305,24 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
   // Attach warning metadata to result
   const result = memory.synthesize();
   result.parseErrors   = parseErrors;
-  // ok is false when the loop aborted on an API error — callers should check
-  // result.ok and handle the failure (warn / prompt retry) rather than treating
-  // a truncated, API-error result as a complete analysis.
-  result.ok            = apiError === null;
+  result.skippedSteps  = skippedSteps;                   // steps dropped after parse retries exhausted
+  result.incomplete    = skippedSteps > 0;               // true when at least one step was dropped
+  // ok is false when the loop aborted on an API error OR dropped one or more
+  // steps to unparseable responses. Callers should check result.ok and handle
+  // the failure (warn / prompt retry) rather than treating a truncated result
+  // as a complete analysis.
+  result.ok            = apiError === null && skippedSteps === 0;
   result.apiError      = apiError;                       // null when no API error occurred
-  result.hasWarnings   = parseErrors > 0 || apiError !== null;
+  result.hasWarnings   = parseErrors > 0 || apiError !== null || skippedSteps > 0;
+
+  // Summary warning so a partial run is visible even if the per-step onWarning
+  // messages scrolled past. Routed through onWarning (not console.warn) to keep
+  // this module's "no direct console output" contract — the CLI decides how to
+  // surface it, same as every other warning here. onWarning takes { message }.
+  if (skippedSteps > 0) {
+    onWarning({ message: `Ghost Agent: ${skippedSteps} step(s) could not be parsed and were skipped. Results may be incomplete.` });
+  }
+
   return result;
 }
 

@@ -75,7 +75,11 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
       return {
         state: 'invalid',
         payload,
-        message: `License is bound to a different machine. Got ${match.matchCount} of 4 hardware components matching (need 3).`,
+        message:
+          `License is bound to a different machine. Got ${match.matchCount} of 4 hardware components matching (need 3).\n` +
+          `This is normal after a new laptop, a VM refresh, or a hardware upgrade.\n` +
+          `To re-bind this license to your current machine, run: ghost --activate <your license key>\n` +
+          `Need help? Email support@ghostarchitect.dev`,
       };
     }
   }
@@ -98,15 +102,36 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   } else {
     clockResult = await validateClock(lastSeen);
     if (!clockResult.ok) {
-      let message;
+      // Only a clock ROLLBACK (local time behind the last validated time) is a
+      // real tamper signal, so it stays a hard block. Network skew and
+      // sustained-offline are legitimate machine states (dead CMOS battery, a
+      // drifted VM, NTP not running, a long stretch with no connectivity), so
+      // we degrade those to a non-blocking valid_warn: the user sees a warning
+      // with a concrete fix and keeps working instead of being locked out.
       if (clockResult.reason === 'clock_rollback') {
-        message = 'Local clock appears to be behind the last validated time. Please correct your clock and try again.';
-      } else if (clockResult.reason === 'clock_offline_grace_exceeded') {
-        message = `Ghost has been unable to reach a network time server for too many consecutive runs and can no longer verify your clock offline. Connect to the internet once and try again. (${clockResult.detail || ''})`;
-      } else {
-        message = `Local clock differs significantly from network time. Please correct your clock and try again. (${clockResult.detail || ''})`;
+        return {
+          state: 'tampered',
+          payload,
+          message: 'Local clock appears to be behind the last validated time. Please correct your clock and try again.',
+        };
       }
-      return { state: 'tampered', payload, message };
+      if (clockResult.reason === 'clock_offline_grace_exceeded') {
+        return {
+          state: 'valid_warn',
+          payload,
+          message: 'Ghost could not verify network time for several consecutive runs. Running in offline mode. Connect to the internet to re-sync.',
+        };
+      }
+      // clock_skew: local clock differs significantly from network time.
+      return {
+        state: 'valid_warn',
+        payload,
+        message:
+          'Your system clock appears to be out of sync with network time. Ghost will continue but accuracy may be affected.\n' +
+          'To fix: Mac: System Settings > General > Date & Time > enable Set automatically. ' +
+          'Windows: Settings > Time & Language > enable Set time automatically. ' +
+          'Linux: sudo ntpdate pool.ntp.org',
+      };
     }
   }
   const nowMs = clockResult.nowMs;

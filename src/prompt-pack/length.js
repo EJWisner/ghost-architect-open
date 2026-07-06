@@ -96,8 +96,9 @@ function buildDetailString({ tokenCount, charCount, hit, tokenResult, model }) {
 // ── Public detect() ──────────────────────────────────────────────────────
 
 export async function detect(promptText, filePath, opts = {}) {
-  const charCount = promptText.length;
-  const tokenResult = await countTokens(promptText, opts.targetModel);
+  const safeText = String(promptText ?? '');
+  const charCount = safeText.length;
+  const tokenResult = await countTokens(safeText, opts.targetModel);
   const tokenCount = tokenResult.count;
 
   const hit = selectThreshold(tokenCount);

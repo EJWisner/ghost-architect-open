@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.0
+- Full 32-finding audit remediation. Pricing corrected across all four CLI paywalls, README, and the website FAQ (single source of truth in src/constants/pricing.js). Trial CTA now leads every paywall. Portal PR-comment link fixed (missing .html 404). Setup wizard no longer hard-blocks without an API key. Clock skew degrades to a warning instead of a hard block. Verifier concurrency bounded to 4. Plus 26 more trust, conversion, and technical fixes. See CHANGELOG.md for the complete list.
+
 ### v9.4.40
 - Fixed a multipass crash: const IS_WINDOWS and const SYM were trapped inside a JSDoc comment in the multi-pass scanner, causing a ReferenceError on pass-complete, batch-merge, and coverage output. Both declarations moved to live code. Caught by Ghost Watcher.
 
@@ -580,21 +583,23 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Team sync features | — | — | — | ✅ | ✅ | ✅ | ✅ |
 | Custom enterprise gating | — | — | — | — | — | ✅ | ✅ |
 | Context cap | 50K tokens | 100K | 100K | 150K | 150K | 200K | 200K |
-| Pricing | Free, BYOK | $99/mo | $199/mo | $399/mo | $799/mo | $1,200/mo+ | $2,500/mo+ |
+| Pricing | Free, BYOK | $25/mo | $99/mo | $399/mo | $799/mo | $1,200/mo+ | $2,500/mo+ |
 
 **Ghost Brief™ tiers at a glance:**
 
 | Tier | Price | Ghost Brief™ |
 |---|---|---|
 | Ghost Open | Free | ❌ |
-| Ghost Pro | $99/mo | ❌ |
-| Ghost Pro Max | $199/mo | ✅ |
+| Ghost Pro | $25/mo | ❌ |
+| Ghost Pro Max | $99/mo | ✅ |
 | Ghost Team | $399/mo | ❌ |
 | Ghost Team Max | $799/mo | ✅ Unified Brief |
 | Ghost Enterprise | $1,200/mo | ❌ |
 | Ghost Enterprise Max | $2,500/mo | ✅ + Ghost Partner |
 
 The free Open tier is fully featured for individual scans. Project history, before/after comparison, white-label consultant rendering, deal-grade Inheritance Audit, and team sync are paid-tier capabilities. Ghost Brief™ is available on Pro Max and above.
+
+Start with a free 7-day Ghost Pro Max™ trial, no card required: [ghostarchitect.dev/trial](https://ghostarchitect.dev/trial).
 
 Pricing details and sign-up at [ghostarchitect.dev](https://ghostarchitect.dev).
 

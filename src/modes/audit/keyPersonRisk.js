@@ -34,8 +34,10 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
-// Days since last commit before we flag an author as "likely departed"
-const DEPARTED_THRESHOLD_DAYS = 180;
+// Days since last commit before we flag an author as "likely departed".
+// Exported so report/console renderers can disclose the threshold in their
+// "likely departed" copy instead of hardcoding (or omitting) the rule.
+export const DEPARTED_THRESHOLD_DAYS = 180;
 
 // Cap how many top contributors we report. Pareto says top 5 covers most
 // signal; we list up to 10 in the verbose output if they exist.
@@ -286,7 +288,7 @@ export async function runKeyPersonRisk(codebaseContext, options = {}) {
   if (top1Pct >= 50) {
     const lead = labeledAuthors[0];
     const departedNote = lead.likelyDeparted
-      ? ` whose last commit was ${lead.daysSinceLastCommit} days ago (likely departed)`
+      ? ` whose last commit was ${lead.daysSinceLastCommit} days ago (likely departed: flagged after ${DEPARTED_THRESHOLD_DAYS} days of inactivity)`
       : '';
     callouts.push(
       `${top1Pct}% of code touched by ${lead.displayLabel}${departedNote}.`
@@ -294,18 +296,18 @@ export async function runKeyPersonRisk(codebaseContext, options = {}) {
   }
   if (busFactorEstimate <= 2 && labeledAuthors.length > 2) {
     callouts.push(
-      `Bus factor of ${busFactorEstimate}: only ${busFactorEstimate} contributor${busFactorEstimate === 1 ? '' : 's'} account for 80% of code changes. High concentration risk.`
+      `Only ${busFactorEstimate} contributor${busFactorEstimate === 1 ? '' : 's'} account for 80% of code changes. If ${busFactorEstimate === 1 ? 'this person leaves' : 'they leave'}, this codebase becomes hard to maintain. High concentration risk.`
     );
   }
   const departedTop = labeledAuthors.slice(0, 5).filter(a => a.likelyDeparted);
   if (departedTop.length > 0) {
     callouts.push(
-      `${departedTop.length} of the top 5 contributors appear to have departed (no commits in 180+ days): ${departedTop.map(a => a.displayLabel).join(', ')}.`
+      `${departedTop.length} of the top 5 contributors appear to have departed (no commits in ${DEPARTED_THRESHOLD_DAYS}+ days): ${departedTop.map(a => a.displayLabel).join(', ')}.`
     );
   }
   if (concentrationRisk === 'low' && labeledAuthors.length >= 4) {
     callouts.push(
-      `Healthy contributor distribution: top 3 = ${top3Pct}%, top 5 = ${top5Pct}%. Bus factor ${busFactorEstimate}.`
+      `Healthy contributor distribution: top 3 = ${top3Pct}%, top 5 = ${top5Pct}% (of ${labeledAuthors.length} contributors). Knowledge is spread across ${busFactorEstimate} core contributor${busFactorEstimate === 1 ? '' : 's'}.`
     );
   }
 

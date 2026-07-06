@@ -23,9 +23,15 @@
  */
 
 import { extractFindings } from '../utils/finding-parser.js';
+import { runWithConcurrency } from '../utils/concurrency.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+
+// Verifier-specific policy: cap the LLM verifier pass to this many concurrent
+// Anthropic calls so a large report doesn't rate-limit a BYOK low-tier key. The
+// pool implementation is shared (src/utils/concurrency.js) and preserves order.
+const CONCURRENCY_LIMIT = 4;
 
 // Debug telemetry directory — written once per scan, used for diagnosing verifier behavior.
 // Files here are NEVER shown to the user; they're for EJ's eyes only.
@@ -382,8 +388,10 @@ export async function verifyReport(reportText, fileMap, options = {}) {
   // The LLM verifier catches semantic fabrications the regex pass can't — e.g.
   // "this method throws on empty input" when the method actually returns.
   if (typeof options.llmVerifier === 'function') {
-    const llmResults = await Promise.all(
-      results.map(async (r, idx) => {
+    // One task per finding, run through the bounded pool (max CONCURRENCY_LIMIT
+    // in-flight) instead of all-at-once, so a large report doesn't rate-limit a
+    // BYOK key. runWithConcurrency preserves finding order.
+    const verifierTasks = results.map((r, idx) => async () => {
         // Skip if already dropped by the regex pass — no point paying to re-check
         if (r.status === 'false_positive') {
           llmVerdicts[idx] = {
@@ -466,8 +474,8 @@ export async function verifyReport(reportText, fileMap, options = {}) {
           };
           return { ...r, reasons: [...r.reasons, `LLM verifier errored: ${err.message}`] };
         }
-      })
-    );
+    });
+    const llmResults = await runWithConcurrency(verifierTasks, CONCURRENCY_LIMIT);
     results = llmResults;
   }
 

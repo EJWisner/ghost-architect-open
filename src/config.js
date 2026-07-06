@@ -134,6 +134,23 @@ function handleSetupInterrupt(err) {
   process.exit(1);
 }
 
+// Re-assert owner-only (0600) permissions on the config file. configstore
+// already writes it with mode 0o600, but we re-tighten after every write as
+// defense in depth: it corrects a file whose permissions were loosened by a
+// manual edit or an umask-affected older install, and keeps the "owner-only
+// file permissions" privacy claim true. Best-effort — a no-op / throw on
+// Windows or restricted filesystems is swallowed.
+function secureConfigFile() {
+  try {
+    fs.chmodSync(config.path, 0o600);
+  } catch (_) {
+    // chmod is best-effort — non-fatal on Windows or restricted filesystems
+  }
+}
+// Tighten on first load in case a prior write (or older install) left the file
+// with looser permissions than configstore's default.
+secureConfigFile();
+
 export function getConfig() { return config; }
 
 export function resolveApiKey() {
@@ -164,7 +181,7 @@ export function getDefaultProfileSlug() {
 }
 
 export function setDefaultProfileSlug(slug) {
-  if (slug) config.set('defaultProfileSlug', slug);
+  if (slug) { config.set('defaultProfileSlug', slug); secureConfigFile(); }
   else      config.delete('defaultProfileSlug');
 }
 
@@ -190,11 +207,13 @@ export function addTeamSyncRepo({ name, repo, token }) {
     existing.push({ name, repo, token });
   }
   config.set('teamSync', existing);
+  secureConfigFile();
 }
 
 export function removeTeamSyncRepo(name) {
   const existing = resolveTeamSync().filter(r => r.name !== name);
   config.set('teamSync', existing);
+  secureConfigFile();
 }
 
 export function isTeamConfigured() {
@@ -216,7 +235,7 @@ export async function runSetupWizard() {
       chalk.gray('Code passes through analysis and is immediately discarded.\n') +
       chalk.gray('Never stored on any server, never used to train models.\n\n') +
       chalk.gray('Stored locally on your machine:\n') +
-      chalk.gray('  - Your API key (encrypted in your config file)\n') +
+      chalk.gray('  - Your API key (stored locally with owner-only file permissions)\n') +
       chalk.gray('  - Your preferences\n') +
       chalk.gray('  - Reports YOU choose to save\n\n') +
       chalk.green('Safe for proprietary and client codebases.'),
@@ -236,7 +255,24 @@ export async function runSetupWizard() {
       name: 'anthropicApiKey',
       message: chalk.cyan('Anthropic API Key:'),
       mask: '*',
-      validate: (val) => val.startsWith('sk-ant-') ? true : 'Key should start with sk-ant-'
+      // Trim the stored key so a stray leading/trailing space (common when
+      // pasting a key) doesn't get persisted and later corrupt the auth header.
+      filter: (val) => (val || '').trim(),
+      // Non-blocking validation. A user with no key -- or a non-sk-ant- value --
+      // must still be able to reach the free Recon mode, which makes no API
+      // call. So we warn but never reject: an empty string and a malformed key
+      // both pass through. The first real API call has its own friendly 401
+      // handler that tells the user their key is missing or invalid.
+      validate: (val) => {
+        // Trim before the prefix check so a leading space doesn't trip it.
+        const key = (val || '').trim();
+        if (key.startsWith('sk-ant-')) return true;
+        console.log('\n' + chalk.yellow(
+          'Warning: key does not look like an Anthropic API key (should start with sk-ant-). ' +
+          'You can continue, but scans requiring the API will fail until a valid key is set.'
+        ));
+        return true;
+      }
     },
     {
       type: 'list',
@@ -322,6 +358,7 @@ export async function runSetupWizard() {
   };
   if (answers.githubToken) block.githubToken = answers.githubToken;
   config.set(block);
+  secureConfigFile();
 
   // Note: the inline "Set up Ghost Team shared sync repo?" prompt that lived
   // here in Team v6.0.1 was removed during v7 unification. The unified

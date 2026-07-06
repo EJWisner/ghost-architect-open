@@ -16,6 +16,7 @@ import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
 import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
+import { isContextOverflow } from '../utils/errors.js';
 import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
 import { mergeRates } from '../profile/index.js';
@@ -409,14 +410,20 @@ function getRates()  {
   return { junior: cfg.get('rateJunior') || 85, mid: cfg.get('rateMid') || 125, senior: cfg.get('rateSenior') || 200 };
 }
 
+// Delegate to the canonical, tested context-overflow detector
+// (src/utils/errors.js, covered by tests/error-classification.smoke.mjs).
+//
+// We deliberately match on the error MESSAGE, not on `status === 400` alone.
+// A bare 400 also fires for malformed requests, invalid models, bad
+// parameters, and billing/usage-limit errors. The old code returned true for
+// ANY 400, so those were misclassified as "context limit exceeded" — which
+// tells the user to scan a subfolder and skips the retry that would have
+// succeeded. isContextOverflow requires the message to actually name a
+// context-length problem (prompt too long, maximum context, context window,
+// too many tokens, exceed context limit) and still catches genuine context
+// errors that arrive without a status (the non-400 path).
 function isContextLimitErr(err) {
-  const msg = err?.message || '';
-  return err?.status === 400 ||
-    msg.includes('too large') ||
-    msg.includes('context') ||
-    msg.includes('token') && msg.includes('limit') ||
-    msg.includes('maximum') ||
-    msg.includes('reduce');
+  return isContextOverflow(err);
 }
 
 async function callClaudeRaw(prompt, system, maxTokens = 8096) {
@@ -651,39 +658,33 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
 
   const combined  = mergedGroups.map((r, i) => `=== MERGED GROUP ${i + 1} ===\n${r}`).join('\n\n');
   const rates     = mergeRates(getRates(), options.profile);
-  const anthropic = getClient();
 
   // Ghost Partner — reinforce consultant lens in synthesis user message too.
   const profileReminder = options.profile
     ? `You are synthesizing on behalf of ${options.profile.author || 'the consultant'}. The final report must reflect their methodology as described in the CONSULTANT CONTEXT block of your system prompt — name findings in their vocabulary and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the findings below actually exhibit the pattern.\n\n`
     : '';
 
-  // Step 1: Raw synthesis (same as before — produces structured findings)
-  // Temperature 0.3: variance control — matches pass/merge calls for consistency.
-  let rawSynthesis = '';
-  const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, temperature: 0.3, system: buildSystemPOI(rates, options.profile),
-    messages: [{
-      role: 'user',
-      content:
-        profileReminder +
-        `Final synthesis: ${completedPasses} of ${totalPasses} passes complete.\n\n` +
-        `Produce the final unified Points of Interest Report:\n` +
-        `1. Merge remaining duplicates, rank by severity and business impact\n` +
-        `2. Analysis was distributed across ${totalFiles} files in ${totalPasses} passes; ${completedPasses} passes completed.\n` +
-        `3. Produce complete REMEDIATION SUMMARY with tiered rates:\n` +
-        `   LOW complexity: ${rates.junior}/hr | MEDIUM: ${rates.mid}/hr | HIGH/CRITICAL: ${rates.senior}/hr\n` +
-        `4. Use full Ghost Architect report format\n\n` +
-        `GROUNDING: Only cite file paths, method names, line numbers, and code strings that appear verbatim in the findings below. If a detail is not in the source material, describe the issue in general terms.\n\n` +
-        `FINDINGS:\n${combined}\n\nFinal report:`
-    }]
-  });
-
-  for await (const chunk of stream) {
-    if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-      rawSynthesis += chunk.delta.text;
-    }
-  }
+  // Step 1: Raw synthesis (produces structured findings). Routed through
+  // callClaude (not a bare anthropic.messages.stream) so a transient 529 /
+  // ECONNRESET / overload during the FINAL synthesis is retried with backoff
+  // instead of discarding the whole report after an already-expensive
+  // multi-pass scan. callClaude streams-and-accumulates exactly like the old
+  // inline stream did, and the raw synthesis is not streamed to the user (only
+  // the narrator step below streams via onChunk), so behavior is unchanged
+  // apart from the added resilience. Temperature 0.3 (set inside callClaudeRaw)
+  // matches the pass/merge calls for consistency.
+  const synthesisPrompt =
+    profileReminder +
+    `Final synthesis: ${completedPasses} of ${totalPasses} passes complete.\n\n` +
+    `Produce the final unified Points of Interest Report:\n` +
+    `1. Merge remaining duplicates, rank by severity and business impact\n` +
+    `2. Analysis was distributed across ${totalFiles} files in ${totalPasses} passes; ${completedPasses} passes completed.\n` +
+    `3. Produce complete REMEDIATION SUMMARY with tiered rates:\n` +
+    `   LOW complexity: ${rates.junior}/hr | MEDIUM: ${rates.mid}/hr | HIGH/CRITICAL: ${rates.senior}/hr\n` +
+    `4. Use full Ghost Architect report format\n\n` +
+    `GROUNDING: Only cite file paths, method names, line numbers, and code strings that appear verbatim in the findings below. If a detail is not in the source material, describe the issue in general terms.\n\n` +
+    `FINDINGS:\n${combined}\n\nFinal report:`;
+  const rawSynthesis = await callClaude(synthesisPrompt, buildSystemPOI(rates, options.profile), 8096);
 
   // Step 2: Narrator rewrites as senior architect (streaming to user)
   if (options.onNarratorStart) options.onNarratorStart();
@@ -697,17 +698,32 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     findings = extractFindingsFromReport(rawSynthesis);
   } catch { /* fall through to placeholder below */ }
 
-  const actualFindingCount = findings.length;
-
-  // Build memory result — use raw synthesis as detail if extraction yields few findings
-  const memoryResult = {
-    findings: findings.length >= 3 ? findings : [{
+  // Keep whatever findings actually parsed, even if there are only one or two.
+  // Fall back to the raw-synthesis blob card ONLY when nothing parsed at all.
+  // The old `>= 3` threshold discarded real findings and replaced them with a
+  // single synthetic HIGH card, and findingCount then disagreed with the array
+  // that was actually returned. findingCount now always matches the findings.
+  let resultFindings;
+  let actualFindingCount;
+  if (findings.length > 0) {
+    resultFindings = findings;
+    actualFindingCount = findings.length;
+  } else {
+    // Last resort: nothing parsed, so surface the raw synthesis as a single
+    // card so the narrator still has material to work from. It is one card.
+    resultFindings = [{
       title: 'See full analysis below',
       severity: 'HIGH',
       detail: rawSynthesis.slice(0, 2000),
       files: [],
       confidence: 90,
-    }],
+    }];
+    actualFindingCount = 1;
+  }
+
+  // Build memory result — raw synthesis passed through for the narrator.
+  const memoryResult = {
+    findings:      resultFindings,
     findingCount:  actualFindingCount,
     filesAnalyzed: totalFiles,
     stepCount:     completedPasses,

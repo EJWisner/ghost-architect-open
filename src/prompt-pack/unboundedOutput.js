@@ -205,8 +205,9 @@ function hasBoundingEnumerationBelow(lines, lineIndex) {
 // ── Public detect() ──────────────────────────────────────────────────────
 
 export async function detect(promptText, filePath, opts = {}) {
+  const safeText = String(promptText ?? '');
   const findings = [];
-  const lines = promptText.split('\n');
+  const lines = safeText.split('\n');
 
   // We need the absolute char index of each line start to compute the
   // window into the full prompt text. Build a running offset.
@@ -217,7 +218,7 @@ export async function detect(promptText, filePath, opts = {}) {
     const result = matchTriggerAtLineStart(line);
     if (result.matched) {
       const triggerCharIndex = lineOffset + (result.columnInLine - 1);
-      const bounded = hasNearbyConstraint(promptText, triggerCharIndex);
+      const bounded = hasNearbyConstraint(safeText, triggerCharIndex);
       const isBehavioralGuideline = result.isBullet && isBehavioralGuidelineBullet(lines, i);
       const hasBoundingEnum = hasBoundingEnumerationBelow(lines, i);
       if (!bounded && !isBehavioralGuideline && !hasBoundingEnum) {

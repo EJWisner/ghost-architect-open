@@ -427,9 +427,10 @@ export async function runBlastMode(codebaseContext, options = {}) {
       console.log('');
     } else {
       // Even if the user declines to save, give them one last clear
-      // signal that a report exists — it's been buffered but not
-      // streamed, so they may not realize it ran at all.
-      console.log(chalk.gray(`\n  (Report not saved. ${buffer.length.toLocaleString()} characters were generated.)\n`));
+      // signal that the analysis ran — it's been buffered but not
+      // streamed, so they may not realize it happened at all. A raw
+      // character count is internal noise a buyer does not need.
+      console.log(chalk.gray('\n  (Report not saved.)\n'));
     }
 
     const { another } = await inquirer.prompt([{

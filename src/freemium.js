@@ -47,6 +47,10 @@ import boxen from 'boxen';
 import { SCAN_QUOTA } from './license/tier-gates.js';
 import { FORECAST_QUOTA } from './license/tier-gates.js';
 import { FIX_FORECAST_QUOTA } from './license/tier-gates.js';
+// Pricing is owned by src/constants/pricing.js (the single source of truth for
+// tier prices and the free-trial CTA). Imported here so every paywall renderer
+// quotes prices from one place instead of hardcoding them per renderer.
+import { PRICING } from './constants/pricing.js';
 
 const COUNT_KEY = 'ghostOpenScanCount';
 // Separate counter for Commit Forecast. Isolated from ghostOpenScanCount
@@ -152,13 +156,36 @@ export function resetFixForecastCount() {
   getStore().delete(FIX_FORECAST_COUNT_KEY);
 }
 
+// ── Shared paywall CTA fragments ──────────────────────────────────────────────
+// Both fragments read from PRICING (src/constants/pricing.js) so a price or
+// trial change lands in one place. Each returns an array of chalk-styled lines
+// spread into a renderer's `lines` array with lines.push(...).
+
+// The free-trial call-to-action, shown first in every paywall's CTA block —
+// before any --activate or /pricing reference.
+function trialCtaLines() {
+  return [
+    chalk.green.bold(`Start a free ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial (no card required):`),
+    chalk.cyan('  ' + PRICING.TRIAL_URL.replace(/^https?:\/\//, '')),
+  ];
+}
+
+// The tier price list. Labels are padded so the price column aligns.
+function tierPriceLines() {
+  return [
+    chalk.gray('  ' + 'Pro'.padEnd(11) + `$${PRICING.PRO.monthly}/mo`),
+    chalk.gray('  ' + 'Pro Max'.padEnd(11) + `$${PRICING.PRO_MAX.monthly}/mo`),
+    chalk.gray('  See all plans: ghostarchitect.dev/pricing'),
+  ];
+}
+
 // Render the Commit Forecast quota-exhausted paywall for Open tier.
 // paywallPromo is worker-driven; empty string = no promo block.
 export function renderForecastPaywall(paywallPromo = '') {
   const lines = [
     chalk.yellow.bold(`You've used your free Commit Forecast.`),
     '',
-    chalk.white('Commit Forecast is designed to run continuously — before every'),
+    chalk.white('Commit Forecast is designed to run continuously: before every'),
     chalk.white('push, every review cycle, every offshore file drop.'),
     chalk.white('Upgrade to Pro, Team, or Enterprise for unlimited Commit Forecasts.'),
   ];
@@ -173,10 +200,10 @@ export function renderForecastPaywall(paywallPromo = '') {
   lines.push(chalk.gray('  • Project tracking and history'));
   lines.push(chalk.gray('  • Inheritance Audit'));
   lines.push('');
+  lines.push(...trialCtaLines());
+  lines.push('');
   lines.push(chalk.white('Upgrade at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'));
-  lines.push(chalk.gray('  Pro        $99/mo'));
-  lines.push(chalk.gray('  Team       $399/mo'));
-  lines.push(chalk.gray('  Enterprise $1,200/mo'));
+  lines.push(...tierPriceLines());
   lines.push('');
   lines.push(chalk.white('Have a license? Activate it:'));
   lines.push(chalk.cyan('  ghost --activate <your key here>'));
@@ -197,7 +224,7 @@ export function renderFixForecastPaywall(paywallPromo = '') {
     chalk.yellow.bold(`You've used your free corrected-file forecast for this install.`),
     '',
     chalk.white(`Corrected-file forecast shows you what would happen if you applied`),
-    chalk.white(`Ghost's suggested fix — without touching your code. See the impact`),
+    chalk.white(`Ghost's suggested fix - without touching your code. See the impact`),
     chalk.white(`on your codebase before you ship the change.`),
     '',
     chalk.white('Upgrade to Pro, Team, or Enterprise for unlimited corrected-file'),
@@ -215,10 +242,10 @@ export function renderFixForecastPaywall(paywallPromo = '') {
   lines.push(chalk.gray('  • Project tracking and history'));
   lines.push(chalk.gray('  • Inheritance Audit'));
   lines.push('');
+  lines.push(...trialCtaLines());
+  lines.push('');
   lines.push(chalk.white('Upgrade at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'));
-  lines.push(chalk.gray('  Pro        $99/mo'));
-  lines.push(chalk.gray('  Team       $399/mo'));
-  lines.push(chalk.gray('  Enterprise $1,200/mo'));
+  lines.push(...tierPriceLines());
   lines.push('');
   lines.push(chalk.white('Have a license? Activate it:'));
   lines.push(chalk.cyan('  ghost --activate <your key here>'));
@@ -257,7 +284,7 @@ export function shouldBlockMode(modeId) {
 // is worker-driven; when empty the promo block is not rendered.
 export function renderAuditPaywall(paywallPromo = '') {
   const lines = [
-    chalk.cyan.bold('📋  Inheritance Audit — Pro feature'),
+    chalk.cyan.bold('📋  Inheritance Audit - Pro feature'),
     '',
     chalk.white('The Inheritance Audit produces a deal-grade report for'),
     chalk.white('buyer diligence, fractional CTO onboarding, and'),
@@ -267,6 +294,8 @@ export function renderAuditPaywall(paywallPromo = '') {
     lines.push('');
     lines.push(chalk.cyan.bold(paywallPromo));
   }
+  lines.push('');
+  lines.push(...trialCtaLines());
   lines.push('');
   lines.push(chalk.white('Upgrade to Pro for unlimited Audit + all other modes:'));
   lines.push(chalk.cyan('  https://ghostarchitect.dev/pricing'));
@@ -297,10 +326,10 @@ export function renderQuotaPaywall(paywallPromo = '') {
     lines.push(chalk.cyan.bold(paywallPromo));
   }
   lines.push('');
+  lines.push(...trialCtaLines());
+  lines.push('');
   lines.push(chalk.white('Tiers available at ') + chalk.cyan('https://ghostarchitect.dev/pricing') + chalk.white(':'));
-  lines.push(chalk.gray('  Pro        $99/mo'));
-  lines.push(chalk.gray('  Team       $399/mo'));
-  lines.push(chalk.gray('  Enterprise $1,200/mo'));
+  lines.push(...tierPriceLines());
   lines.push('');
   lines.push(chalk.white('Have a license? Activate it:'));
   lines.push(chalk.cyan('  ghost --activate <your key here>'));

@@ -117,7 +117,21 @@ const REDACTION_RULES = [
   { name: 'MySQL DSN',             regex: /mysql:\/\/[^@\s]+:[^@\s]+@/gi,                         replacement: 'mysql://[REDACTED:DB_CREDENTIALS]@' },
   { name: 'Postgres DSN',          regex: /postgres:\/\/[^@\s]+:[^@\s]+@/gi,                      replacement: 'postgres://[REDACTED:DB_CREDENTIALS]@' },
   { name: 'MongoDB DSN',           regex: /mongodb(\+srv)?:\/\/[^@\s]+:[^@\s]+@/gi,               replacement: 'mongodb://[REDACTED:DB_CREDENTIALS]@' },
-  { name: 'DB Password Flag',      regex: /-p(?:assword)?\s+\S+/g,                                replacement: '-p[REDACTED:DB_PASSWORD]' },
+  // DB CLI password flags. The old /-p(?:assword)?\s+\S+/ mangled ANY `-p`
+  // followed by a space+arg — `docker run -p 8080`, `git log -p ...` — turning
+  // unrelated CLI flags into [REDACTED]. Real DB-client passwords attach with no
+  // space (`-pSECRET`) or via `--password`, so we anchor to those forms and, for
+  // the ambiguous `-p`/spaced `--password` cases, require a database-client
+  // indicator earlier on the same line (lookbehind, bounded to 200 chars).
+  //   docker run -p 8080        → -p has a space, no match
+  //   docker run -p8080:8080    → no DB CLI indicator on the line, no match
+  //   git log -p                → no attached value, no match
+  //   mysql -h db -u root -pSECRET   → SECRET redacted
+  //   mysqldump --password=SECRET    → SECRET redacted
+  //   psql --password SECRET         → SECRET redacted
+  { name: 'DB Password Flag (-p)',        regex: /(?<=\b(?:mysqldump|mysql|psql|mongo)[^\n]{0,200}\s)-p\S+/gi,        replacement: '-p[REDACTED:DB_PASSWORD]' },
+  { name: 'DB Password (--password=)',    regex: /--password=\S+/gi,                                                  replacement: '--password=[REDACTED:DB_PASSWORD]' },
+  { name: 'DB Password (--password )',    regex: /(?<=\b(?:mysqldump|mysql|psql|mongo)[^\n]{0,200})--password\s+\S+/gi, replacement: '--password [REDACTED:DB_PASSWORD]' },
 
   // Private Keys & Certificates — bounded quantifiers to prevent ReDoS
   // (Stateful parser path, ReDoS-immune. v7-unification 2026-05-21: these
@@ -201,13 +215,18 @@ export function redactContent(content, customRules = [], filePath = null) {
           failedRules.push({ rule: rule.name, error: 'Skipped — input exceeds 500KB size guard (ReDoS protection)' });
           partialRedaction = true;
         } else if (matches && matches.length > 0) {
-          findings.push(`${rule.name} (${matches.length} instance${matches.length > 1 ? 's' : ''})`);
           const { result, timedOut } = safeRegexReplace(redacted, rule.regex, rule.replacement);
           if (timedOut) {
+            // Replacement failed, so the secret is STILL present in `redacted`.
+            // Do NOT record a finding here: reporting "Redacted: X" while the
+            // secret is passed through untouched is a dangerous mis-signal.
+            // failedRules + partialRedaction surface the real (incomplete) state.
             failedRules.push({ rule: rule.name, error: 'Regex timeout — input too large or pattern backtracking' });
             partialRedaction = true;
           } else {
+            // Replace succeeded — only now is the finding real.
             redacted = result;
+            findings.push(`${rule.name} (${matches.length} instance${matches.length > 1 ? 's' : ''})`);
           }
         }
       }

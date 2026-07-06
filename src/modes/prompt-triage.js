@@ -111,7 +111,7 @@ export async function runPromptTriageMode(options = {}) {
   // ── Banner ──────────────────────────────────────────────────────────────
   console.log('');
   console.log(chalk.bold('Prompt Triage'));
-  console.log(chalk.gray('Auditing prompts for defects (Tian et al. 2025 taxonomy).'));
+  console.log(chalk.gray('Auditing prompts for structural defects: missing context, ambiguous instructions, brittle assumptions, token bloat.'));
   if (targetModelEntry) {
     console.log(chalk.gray('Target model: ' + targetModelEntry.displayName
       + ' (' + targetModelEntry.contextWindow.toLocaleString() + ' token window)'));

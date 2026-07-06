@@ -5,6 +5,50 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.0 -- July 6, 2026
+
+### Full Audit Remediation (32 findings)
+
+Ghost Architect v10.0.0 is a complete remediation of a 32-finding dogfood audit conducted against the v9.4.x codebase using Opus 4.8. Every finding has been addressed.
+
+**Conversion & Trust**
+- Pricing corrected across all four CLI paywalls, README, and website FAQ. Single source of truth in src/constants/pricing.js
+- Trial CTA now appears as the first CTA in every paywall
+- Dead local trial module (trial.js) removed
+- Portal PR comment link fixed (missing .html causing 404)
+- Setup wizard no longer hard-blocks without an API key
+- Tilde path expansion now works on all scan prompts
+- Markdown report severity badges no longer corrupt prose
+
+**Customer Experience**
+- Grace/hard-stop language removed from healthy licenses
+- Fingerprint mismatch message now includes recovery steps
+- Clock skew degrades to warning instead of hard block
+- Bus factor jargon replaced with consequence language
+- "unparsed" replaced with "not declared in manifest"
+- Concentration percentages now include denominators
+- npm unknown license callout includes explanatory note
+- console.clear() no longer wipes activation confirmation
+- Top-level errors route through friendlyError()
+- Config wizard copy corrected (key is not encrypted)
+- --version output now shows Ghost Architect™ vX (Tier)
+- Em dashes removed from all customer-facing CLI output
+- Four minor buyer-facing noise items cleaned up
+
+**Technical**
+- Verifier concurrency bounded to 4 (was unbounded Promise.all)
+- Agent loop now surfaces dropped steps instead of ok:true
+- synthesizeFinal routes through callClaude retry wrapper
+- Extraction shortfall no longer discards real findings
+- CI telemetry step sending hardcoded zeros removed
+- HTTP 400 no longer misclassified as context limit error
+- Activation cross-checks key format tier vs server tier
+- Blast single-pass short-circuits batch synthesis
+- Tier-1 prompt detectors guarded against non-string input
+- Redactor mis-signal on timeout fixed
+- DB password regex no longer mangles docker/git -p flags
+- runWithConcurrency extracted to src/utils/concurrency.js
+
 ## [9.4.40] -- 2026-07-05
 
 ### Fixed

@@ -164,6 +164,7 @@ function charIndexToLocation(promptText, charIndex) {
 // ── Public detect() ──────────────────────────────────────────────────────
 
 export async function detect(promptText, filePath, opts = {}) {
+  const safeText = String(promptText ?? '');
   const findings = [];
 
   for (const pattern of PATTERNS) {
@@ -171,10 +172,10 @@ export async function detect(promptText, filePath, opts = {}) {
     // prompt rather than just the first.
     const globalRe = new RegExp(pattern.regex.source, pattern.regex.flags + 'g');
     let match;
-    while ((match = globalRe.exec(promptText)) !== null) {
+    while ((match = globalRe.exec(safeText)) !== null) {
       const matchedText = match[0];
       const charIndex = match.index;
-      const { line, column } = charIndexToLocation(promptText, charIndex);
+      const { line, column } = charIndexToLocation(safeText, charIndex);
 
       findings.push({
         detector: 'injectionStaticPattern',

@@ -32,7 +32,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
 import { runStackRealityCheck } from './stackReality.js';
-import { runKeyPersonRisk } from './keyPersonRisk.js';
+import { runKeyPersonRisk, DEPARTED_THRESHOLD_DAYS } from './keyPersonRisk.js';
 import { runDependencyMap } from './dependencyMap.js';
 import { runRoadmapStub } from './roadmapStub.js';
 import { DEAL_TIERS } from './severityRecast.js';
@@ -68,7 +68,7 @@ async function runAuditOpenPaywall() {
     chalk.green('  ✓  ') + chalk.white('Stack Reality Check: what the codebase actually contains,') + '\n' +
     chalk.gray('     framework versions, end-of-life flags') + '\n' +
     chalk.green('  ✓  ') + chalk.white('Key-Person Risk: who has been writing this code,') + '\n' +
-    chalk.gray('     bus-factor math, contributor concentration') + '\n' +
+    chalk.gray('     key-person dependency, contributor concentration') + '\n' +
     chalk.green('  ✓  ') + chalk.white('Hidden Dependency Map: license risk, EOL exposure,') + '\n' +
     chalk.gray('     commercial encumbrances the buyer is inheriting') + '\n' +
     chalk.green('  ✓  ') + chalk.white('Modernization Roadmap: LLM-synthesized stabilize-vs-rebuild') + '\n' +
@@ -464,7 +464,7 @@ function renderKeyPersonRiskFindings(keyPersonRisk) {
   console.log(
     `  ${chalk.white('Total authors:')} ${chalk.cyan(totalAuthors)}` +
     `   ${chalk.white('Commits:')} ${chalk.cyan(totalCommits.toLocaleString())}` +
-    `   ${chalk.white('Bus factor:')} ${chalk.cyan(busFactorEstimate)}` +
+    `   ${chalk.white('Key contributors:')} ${chalk.cyan(busFactorEstimate)}` +
     `   ${chalk.white('Concentration risk:')} ${riskColor.bold(concentrationRisk.toUpperCase())}`
   );
 
@@ -474,7 +474,7 @@ function renderKeyPersonRiskFindings(keyPersonRisk) {
     console.log(chalk.white.bold('  Top contributors by lines changed'));
     for (const c of topContributors.slice(0, 5)) {
       const bar = makeBar(c.linesChangedPct, 30);
-      const departed = c.likelyDeparted ? chalk.red(`  (likely departed — ${c.daysSinceLastCommit}d ago)`) : '';
+      const departed = c.likelyDeparted ? chalk.red(`  (likely departed: ${c.daysSinceLastCommit}d since last commit; flagged after ${DEPARTED_THRESHOLD_DAYS}d of inactivity)`) : '';
       console.log(
         `    ${chalk.white(c.displayLabel.padEnd(10))} ${chalk.cyan(bar)} ${chalk.gray(c.linesChangedPct.toString().padStart(3) + '%')} ${chalk.gray(`(${c.commits} commits)`)}${departed}`
       );

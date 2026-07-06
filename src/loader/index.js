@@ -12,6 +12,7 @@ import { resolveContextCap } from './tierCaps.js';
 import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
 import { redactContent, showRedactionSummary } from '../redactor.js';
 import { isBackKeyword } from '../cli/prompt-helpers.js';
+import { expandTilde } from '../utils/paths.js';
 
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
@@ -245,7 +246,10 @@ async function loadFromFiles() {
       name: 'dirPath',
       message: chalk.cyan("Path to codebase directory (or 'back' to cancel):"),
     }]);
-    const trimmed = answer.dirPath.trim();
+    // Expand a leading ~ before any existsSync/statSync check — a path typed
+    // into the prompt is not shell-expanded. 'back' and '' pass through
+    // unchanged, so the escape/required checks below still work.
+    const trimmed = expandTilde(answer.dirPath.trim());
     // Universal-escape: 'back' keyword returns null so the main loop's
     // `if (!codebaseContext) continue;` re-enters selectInputMethod.
     if (isBackKeyword(trimmed)) {
@@ -277,11 +281,17 @@ async function loadFromZip() {
     name: 'zipPath',
     message: chalk.cyan("Path to ZIP file (or 'back' to cancel):"),
     validate: (v) => {
+      // Expand a leading ~ before the existsSync check — the prompt value is
+      // not shell-expanded.
+      const p = expandTilde(v.trim());
       // Universal-escape: allow 'back' through validation; the
       // post-prompt isBackKeyword() check below routes the cancellation.
-      if (v.trim().toLowerCase() === 'back') return true;
-      return fs.existsSync(v) ? true : 'File not found';
-    }
+      if (p.toLowerCase() === 'back') return true;
+      return fs.existsSync(p) ? true : 'File not found';
+    },
+    // inquirer's validate can't mutate the answer, so expand here too: this
+    // is what persists into zipPath and reaches AdmZip below.
+    filter: (v) => expandTilde(v.trim())
   }]);
 
   // Universal-escape: 'back' keyword — return null so main loop re-prompts.

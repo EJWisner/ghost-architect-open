@@ -2087,7 +2087,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
       // Build portal URL for PR comment
       const portalSlug = (process.env.GHOST_PORTAL_SLUG || portalOwner).toLowerCase();
-      portalUrl = `https://ghostarchitect.dev/portal-${portalSlug}`;
+      portalUrl = `https://ghostarchitect.dev/portal-${portalSlug}.html`;
 
     } catch (err) {
       console.error(`Ghost Watcher: portal push failed (non-fatal) — ${err.message}`);

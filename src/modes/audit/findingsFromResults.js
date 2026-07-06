@@ -154,7 +154,7 @@ export function findingsFromAuditResults(results) {
     const conc = kpr.concentrationRisk;
     if (conc === 'high' || conc === 'medium') {
       const sev = conc === 'high' ? 'HIGH' : 'MEDIUM';
-      const busFactor = kpr.busFactorEstimate != null ? `Bus factor estimate: ${kpr.busFactorEstimate}.` : '';
+      const keyPersonNote = kpr.busFactorEstimate != null ? `Only ${kpr.busFactorEstimate} contributor${kpr.busFactorEstimate === 1 ? '' : 's'} account for most code changes.` : '';
       const calloutText = Array.isArray(kpr.callouts) && kpr.callouts.length > 0
         ? ` ${kpr.callouts.join(' ')}`
         : '';
@@ -165,7 +165,7 @@ export function findingsFromAuditResults(results) {
         files: [],
         effortHours: effortFor('contributor_concentration'),
         confidence: 100,
-        detail: `Codebase shows ${conc} concentration of code authorship. ${busFactor}${calloutText} Knowledge-transfer plan recommended before key contributors depart.`.trim(),
+        detail: `Codebase shows ${conc} concentration of code authorship. ${keyPersonNote}${calloutText} Knowledge-transfer plan recommended before key contributors depart.`.trim(),
       });
     }
   }

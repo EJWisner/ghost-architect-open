@@ -142,4 +142,5 @@ export function isProgrammerError(err) {
 
 export function showFriendlyError(err) {
   console.log('\n' + chalk.yellow(`  ⚠  ${friendlyError(err)}\n`));
+  console.log(chalk.gray('  Still stuck? Email support@ghostarchitect.dev\n'));
 }

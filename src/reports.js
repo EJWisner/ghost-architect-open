@@ -423,6 +423,38 @@ export async function saveReport(content, prefix, label, meta = {}) {
   };
 }
 
+// Severity badge emoji, keyed by canonical (upper-case) severity word.
+const SEVERITY_EMOJI = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' };
+
+// Convert severity words to bold, colour-badged markdown — but ONLY where the
+// word is an actual severity field value, never in prose. This mirrors the
+// stricter, line-oriented gate the PDF path uses (pdf-generator.js): a bare
+// global replace over the whole body badges "HIGH availability", "criticality",
+// "LOW latency", etc. We instead badge a severity word only when it is:
+//   (1) the value following a "Severity:" label on the same line, or
+//   (2) a standalone severity label occupying its own line (optionally wrapped
+//       in ** or led by a "- "/"* " bullet).
+// Everything else is left untouched.
+export function badgeSeverities(text) {
+  const badge = (w) => `${SEVERITY_EMOJI[w.toUpperCase()]} **${w.toUpperCase()}**`;
+  return text.split('\n').map((line) => {
+    // (1) "Severity:" field value. The label may be decorated with markdown
+    // bold and spacing in several forms — "Severity: HIGH", "**Severity:** HIGH",
+    // "**Severity**: HIGH", "- **Severity:** HIGH" — so allow any run of
+    // stars/colons/spaces between the label word and the value.
+    const field = line.replace(
+      /(Severity[\s*:]*)(CRITICAL|HIGH|MEDIUM|LOW)\b/i,
+      (_m, pre, word) => pre + badge(word)
+    );
+    if (field !== line) return field;
+    // (2) Standalone severity label — the whole line is just the word.
+    return line.replace(
+      /^(\s*(?:[-*]\s+)?)(?:\*\*)?(CRITICAL|HIGH|MEDIUM|LOW)(?:\*\*)?(\s*)$/i,
+      (_m, pre, word, post) => pre + badge(word) + post
+    );
+  }).join('\n');
+}
+
 function convertToMarkdown(content, prefix, label, meta, timestamp = null, branding = null) {
   const clean = stripAnsi(content);
   const date = new Date().toLocaleString();
@@ -473,12 +505,12 @@ function convertToMarkdown(content, prefix, label, meta, timestamp = null, brand
     // Headers
     .replace(/^# (.+)$/gm, '# $1')
     .replace(/^## (.+)$/gm, '## $1')
-    .replace(/^### (.+)$/gm, '### $1')
-    // Severity badges — convert to bold colored text
-    .replace(/CRITICAL/g, '🔴 **CRITICAL**')
-    .replace(/\bHIGH\b/g, '🟠 **HIGH**')
-    .replace(/\bMEDIUM\b/g, '🟡 **MEDIUM**')
-    .replace(/\bLOW\b/g, '🟢 **LOW**')
+    .replace(/^### (.+)$/gm, '### $1');
+  // Severity badges — anchored to field values only, never prose (see
+  // badgeSeverities). Prior code global-replaced severity words across the
+  // whole body, badging "HIGH availability", "criticality", "LOW latency".
+  body = badgeSeverities(body);
+  body = body
     // Section dividers
     .replace(/^---+$/gm, '\n---\n')
     // Clean up excessive blank lines

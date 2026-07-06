@@ -386,14 +386,43 @@ export async function runDependencyMap(codebaseContext, options = {}) {
   }
 
   if (unknownLicenseDeps.length > 0 && unknownLicenseDeps.length >= dependencies.length * 0.7) {
-    // Only flag this when MOST deps are unknown (i.e. package.json with no
-    // license metadata) — otherwise it's noise.
+    // Only flag this when MOST deps are unknown (i.e. a manifest with no
+    // per-dependency license metadata). Otherwise it is noise.
+    //
+    // npm is a special case: package.json never carries per-dependency license
+    // data (it lives in each dependency's own package.json), so "unknown
+    // license" for npm deps is EXPECTED and benign, not a compliance red flag.
+    // We only keep the audit-recommendation framing for non-npm ecosystems.
+    const unknownNpm = unknownLicenseDeps.filter(d => d.ecosystem === 'npm');
+    const unknownOther = unknownLicenseDeps.filter(d => d.ecosystem !== 'npm');
+    const NPM_LICENSE_NOTE =
+      'Note: npm package manifests do not include per-dependency license data. ' +
+      '"Unknown license" for npm dependencies is expected and does not indicate a licensing problem. ' +
+      'Use a tool such as license-checker for a full npm license inventory.';
+    const plural = (n, has, have) => `${n} dependenc${n === 1 ? `y ${has}` : `ies ${have}`}`;
+
+    let summary;
+    if (unknownOther.length === 0) {
+      // Pure npm: reframe as expected, not a red flag.
+      summary = `${plural(unknownLicenseDeps.length, 'has', 'have')} no license field in the manifest. ${NPM_LICENSE_NOTE}`;
+    } else if (unknownNpm.length > 0) {
+      // Mixed: soften the npm portion, keep the compliance ask for the rest.
+      summary =
+        `${plural(unknownLicenseDeps.length, 'has', 'have')} no license metadata in the manifest, ${unknownNpm.length} of them npm. ` +
+        `${NPM_LICENSE_NOTE} ` +
+        `The remaining ${unknownOther.length} non-npm dependenc${unknownOther.length === 1 ? 'y' : 'ies'} should have license terms verified before any commercial transfer.`;
+    } else {
+      // No npm involved: a manifest that would normally carry license data does
+      // not. This is a genuine signal, so keep the original framing.
+      summary = `${plural(unknownLicenseDeps.length, 'has', 'have')} no license metadata in the manifest. License compliance audit recommended before any commercial transfer.`;
+    }
+
     riskCallouts.push({
       category: 'unknown-license',
       count: unknownLicenseDeps.length,
       packages: unknownLicenseDeps.slice(0, 20).map(d => d.name),
       severity: 'low',
-      summary: `${unknownLicenseDeps.length} dependenc${unknownLicenseDeps.length === 1 ? 'y has' : 'ies have'} no license metadata in the manifest. License compliance audit recommended before any commercial transfer.`,
+      summary,
     });
   }
 
