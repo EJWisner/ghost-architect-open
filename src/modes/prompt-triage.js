@@ -42,6 +42,7 @@ import inquirer from 'inquirer';
 
 import { loadPromptSource } from '../prompt-pack/loader.js';
 import { runAll, listDetectors } from '../prompt-pack/index.js';
+import { redactContent } from '../redactor.js';
 import { renderReport } from '../prompt-pack/report.js';
 import { getModel } from '../prompt-pack/models.js';
 import { resetSessionUsage, getSessionUsage } from '../prompt-pack/llmAuditClient.js';
@@ -234,7 +235,37 @@ export async function runPromptTriageMode(options = {}) {
       options.onProgress(file, i + 1, loaded.files.length);
     }
 
-    const findings = await runAll(file.content, file.path, { targetModel });
+    // Privacy gate: Tier 2/3 detectors send this content to the Claude API, so
+    // it MUST be redacted first. A prompt file can carry API keys, DSNs, or PEM
+    // blocks; sending those raw would break the "safe for proprietary codebases"
+    // guarantee. Fail-closed: if redaction throws, or is only PARTIAL (oversized
+    // file / regex timeout, where secrets may survive), skip the file rather than
+    // risk shipping raw credentials to the API. We never fall back to raw content.
+    let redactedContent;
+    try {
+      const redaction = redactContent(file.content, [], file.path);
+      if (redaction.partialRedaction) {
+        console.log(chalk.yellow('  ⚠ ' + path.basename(file.path)
+          + ' skipped: redaction incomplete (oversized file or regex timeout);'
+          + ' possibly-unredacted content was NOT sent to the API.'));
+        continue;
+      }
+      redactedContent = redaction.redacted;
+      // Debug-only signal: which redaction rules fired and how many, never the
+      // raw secret. Gated on GHOST_DEBUG so normal runs stay quiet.
+      if (redaction.findings.length > 0 && process.env.GHOST_DEBUG === '1') {
+        process.stderr.write('[prompt-triage] ' + path.basename(file.path)
+          + ': redacted ' + redaction.findings.length + ' sensitive item(s) before API ('
+          + redaction.findings.join(', ') + ')\n');
+      }
+    } catch (err) {
+      console.log(chalk.red('  ✗ ' + path.basename(file.path)
+        + ' skipped: redaction failed (' + (err && err.message ? err.message : String(err))
+        + '); raw content was NOT sent to the API.'));
+      continue;
+    }
+
+    const findings = await runAll(redactedContent, file.path, { targetModel });
     for (const f of findings) allFindings.push(f);
     scannedFilePaths.push(file.path);
 

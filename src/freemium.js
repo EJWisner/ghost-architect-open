@@ -187,7 +187,7 @@ export function renderForecastPaywall(paywallPromo = '') {
     '',
     chalk.white('Commit Forecast is designed to run continuously: before every'),
     chalk.white('push, every review cycle, every offshore file drop.'),
-    chalk.white('Upgrade to Pro, Team, or Enterprise for unlimited Commit Forecasts.'),
+    chalk.white('Upgrade to Pro, Pro Max, Team, or Enterprise for unlimited Commit Forecasts.'),
   ];
   if (paywallPromo) {
     lines.push('');
@@ -227,7 +227,7 @@ export function renderFixForecastPaywall(paywallPromo = '') {
     chalk.white(`Ghost's suggested fix - without touching your code. See the impact`),
     chalk.white(`on your codebase before you ship the change.`),
     '',
-    chalk.white('Upgrade to Pro, Team, or Enterprise for unlimited corrected-file'),
+    chalk.white('Upgrade to Pro, Pro Max, Team, or Enterprise for unlimited corrected-file'),
     chalk.white('forecasts on every Ghost-suggested fix you want to evaluate.'),
   ];
   if (paywallPromo) {
@@ -335,6 +335,36 @@ export function renderQuotaPaywall(paywallPromo = '') {
   lines.push(chalk.cyan('  ghost --activate <your key here>'));
   lines.push('');
   lines.push(chalk.white('Question and Recon modes remain free.'));
+  console.log('\n' + boxen(lines.join('\n'), {
+    padding: 1,
+    borderColor: 'yellow',
+    borderStyle: 'round',
+  }));
+  console.log('');
+}
+
+// Render the tier-upgrade paywall. Shown when a mode is TIER-blocked (not
+// quota-blocked): Chat, Ghost Brief, or Executive Brief on a tier that does not
+// include them. Unlike the quota paywall, this must NOT say "you've used your N
+// free reports" -- these modes were never counted. modeName and requiredTier
+// come from the paywall payload built in tier-gates.paywallFor().
+export function renderUpgradePaywall(paywall = {}, paywallPromo = '') {
+  const modeName = paywall.modeName || 'This mode';
+  const requiredTier = paywall.requiredTier || 'a paid tier';
+  const lines = [
+    chalk.yellow.bold(`${modeName} requires ${requiredTier} or higher.`),
+  ];
+  if (paywallPromo) {
+    lines.push('');
+    lines.push(chalk.cyan.bold(paywallPromo));
+  }
+  lines.push('');
+  lines.push(...trialCtaLines());
+  lines.push('');
+  lines.push(chalk.white('Or upgrade at: ') + chalk.cyan('ghostarchitect.dev/pricing'));
+  lines.push('');
+  lines.push(chalk.white('Have a license? Activate it:'));
+  lines.push(chalk.cyan('  ghost --activate <your key here>'));
   console.log('\n' + boxen(lines.join('\n'), {
     padding: 1,
     borderColor: 'yellow',

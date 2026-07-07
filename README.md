@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.4
+- Patch: session cost summary cleaned up, keyless wizard loop fixed, wrong paywall copy corrected, pricing constants completed, POI false-positive copy removed, Prompt Triage now redacts before every API call, Node 20 deprecation warning fixed.
+
 ### v10.0.3
 - Patch: README privacy section corrected, LICENSE replaced with real BUSL-1.1 text, Ghost Watcher false-clean signal fixed, trial hard-stop degrades to Open, profile creation fixed, npm license detection from package-lock.json, 9 unwired tests added, and website em dash sweep across 34 pages.
 

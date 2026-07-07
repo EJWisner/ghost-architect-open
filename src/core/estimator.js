@@ -130,10 +130,10 @@ export function calcActualCost(inputTokens, outputTokens, model) {
 }
 
 export function getCostFraming(totalCost) {
-  if (totalCost < 0.05)  return "Less than a nickel — go for it.";
+  if (totalCost < 0.05)  return "Less than a nickel, go for it.";
   if (totalCost < 0.25)  return "Pocket change for the insight you'll get.";
-  if (totalCost < 1.00)  return "Under a dollar — reasonable for a large codebase.";
-  return "Large codebase — consider raising your context limit in settings.";
+  if (totalCost < 1.00)  return "Under a dollar, reasonable for a large codebase.";
+  return "Large codebase, consider raising your context limit in settings.";
 }
 
 export class SessionCostTracker {

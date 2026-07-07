@@ -185,7 +185,14 @@ export function setDefaultProfileSlug(slug) {
   else      config.delete('defaultProfileSlug');
 }
 
-export function isConfigured() { return !!resolveApiKey(); }
+// Configured means "the user has finished the setup wizard at least once",
+// NOT "the user has an API key". A keyless-by-choice user (env-var BYOK, or
+// planning to add a key later) is still configured and must not replay the
+// wizard every launch. The resolveApiKey() fallback keeps pre-wizardComplete
+// installs (an existing key, no flag yet) from being forced back through setup.
+export function isConfigured() {
+  return config.get('wizardComplete') === true || !!resolveApiKey();
+}
 
 export function usingEnvKey() { return !!process.env.ANTHROPIC_API_KEY; }
 
@@ -349,6 +356,11 @@ export async function runSetupWizard() {
   // The object form of config.set persists all keys in a single file write,
   // so even a filesystem failure cannot leave a subset of fields on disk.
   const block = {
+    // wizardComplete records that the user finished setup at least once. It is
+    // what isConfigured() keys on, so a user who deliberately declines to set
+    // an API key (BYOK via env var, or configuring one later) is not dragged
+    // back through the wizard on every launch.
+    wizardComplete: true,
     anthropicApiKey: answers.anthropicApiKey,
     defaultModel: answers.defaultModel,
     maxTokensContext: answers.maxTokensContext || tierCap,

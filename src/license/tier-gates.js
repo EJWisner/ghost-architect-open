@@ -64,6 +64,10 @@ const TIER_POLICY = {
   // Ghost Brief artifact: Max tiers only (pro-max, team-max, enterprise-max).
   // Non-Max paid tiers (pro, team, enterprise) are blocked.
   'mode:ghost-brief':      { open: false,              trial: true,  pro: false, 'pro-max': true,  team: false, 'team-max': true,  enterprise: false, 'enterprise-max': true  },
+  // Executive Brief artifact: same Max-tier policy as Ghost Brief (menu labels
+  // both "Pro Max or higher"). Declared here so a dispatch-level requireTier()
+  // check enforces it even when the menu's disabled-state is bypassed.
+  'mode:executive-brief':  { open: false,              trial: true,  pro: false, 'pro-max': true,  team: false, 'team-max': true,  enterprise: false, 'enterprise-max': true  },
   // Commit Forecast: Open gets 'forecast-quota' — a separate 1-run quota managed
   // by src/freemium.js's getForecastCount/incrementForecastCount (isolated from
   // ghostOpenScanCount so daily pro-tier usage patterns don't burn the shared
@@ -234,14 +238,56 @@ export function requireTier(gateId, opts = {}) {
  * @param {string} tier
  * @returns {{ kind: 'audit' | 'quota' | 'unknown', gateId: string, tier: string }}
  */
+// Display names for modes that render an upgrade paywall. Fallback strips the
+// 'mode:' prefix so a new mode still renders a sensible (if plain) name.
+const MODE_DISPLAY = {
+  'mode:chat':            'Chat',
+  'mode:ghost-brief':     'Ghost Brief™',
+  'mode:executive-brief': 'Executive Brief™',
+};
+
+// Human labels for tiers, and the order in which we advertise the LOWEST paid
+// tier that unlocks a gate. Trial and Open are never advertised as the required
+// tier (trial is an evaluation, Open is the thing being upgraded from).
+const TIER_DISPLAY = {
+  'pro': 'Ghost Pro', 'pro-max': 'Ghost Pro Max',
+  'team': 'Ghost Team', 'team-max': 'Ghost Team Max',
+  'enterprise': 'Ghost Enterprise', 'enterprise-max': 'Ghost Enterprise Max',
+};
+const PAID_TIER_ORDER = ['pro', 'pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+
+function minRequiredTierLabel(gateId) {
+  const allowed = new Set(allowedTiers(gateId));
+  for (const t of PAID_TIER_ORDER) {
+    if (allowed.has(t)) return TIER_DISPLAY[t];
+  }
+  return 'a paid tier';
+}
+
 export function paywallFor(gateId, tier) {
   // Audit-tier-blocked → audit-specific copy (worker-driven promo + Pro feature framing).
   if (gateId === 'mode:audit') {
     return { kind: 'audit', gateId, tier };
   }
-  // Quota-exhausted on any counted mode → quota paywall (you've used your N free).
   if (gateId.startsWith('mode:')) {
-    return { kind: 'quota', gateId, tier };
+    const verdict = (TIER_POLICY[gateId] || {})[tier];
+    // A quota-family verdict on this tier means the user ran out of free runs →
+    // "you've used your N free reports" quota paywall.
+    if (verdict === 'quota' || verdict === 'forecast-quota' || verdict === 'fix-forecast-quota') {
+      return { kind: 'quota', gateId, tier };
+    }
+    // A hard tier block (verdict === false, or an ineligible/unknown tier) is an
+    // UPGRADE prompt, NOT a quota message. Chat and Ghost Brief on Open/pro/team
+    // land here and must not read "you've used your 4 free reports" — they were
+    // never quota-gated. Carry the mode name and the lowest paid tier that
+    // unlocks the mode so the renderer can say exactly what to upgrade to.
+    return {
+      kind: 'upgrade',
+      gateId,
+      tier,
+      modeName: MODE_DISPLAY[gateId] || gateId.replace(/^mode:/, ''),
+      requiredTier: minRequiredTierLabel(gateId),
+    };
   }
   // Feature gates currently have no rendered paywall — Phase 2/3 will wire
   // soft-gate callouts (D3) at feature sites instead of blocking. Returned

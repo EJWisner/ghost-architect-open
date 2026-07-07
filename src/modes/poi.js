@@ -81,7 +81,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
   console.log('\n' + boxen(
     chalk.cyan.bold('🗺  POINTS OF INTEREST SCAN') + '\n' +
     chalk.gray(`Analyzing ${codebaseContext.loadedFiles} files for red flags, landmarks,\ndead zones, fault lines, effort estimates, and remediation steps...`) +
-    (useMultiPass ? '\n' + chalk.yellow(`⚡ Large codebase — multi-pass mode (${passes.length} passes required)`) : '') + '\n' +
+    (useMultiPass ? '\n' + chalk.yellow(`⚡ Large codebase: multi-pass mode (${passes.length} passes required)`) : '') + '\n' +
     chalk.gray(ratesLine) +
     (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
@@ -122,7 +122,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
     console.log('');
   } catch {
     // Planner failure is non-fatal — continue without it
-    console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
+    console.log(chalk.gray('  (Recon unavailable, proceeding with standard scan)\n'));
   }
 
   // Smart project label prompt — shows existing projects, fuzzy matches, confirms.
@@ -192,7 +192,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
                   const parts = [];
                   parts.push(chalk.green(`${verified}/${totalFindings} grounded`));
                   if (unverified > 0)     parts.push(chalk.yellow(`${unverified} unverified`));
-                  if (falsePositives > 0) parts.push(chalk.red(`${falsePositives} false positives dropped`));
+                  if (falsePositives > 0) parts.push(chalk.gray(`${falsePositives} low-confidence signals excluded`));
                   console.log(chalk.gray(`\n  Verification: `) + parts.join(chalk.gray(', ')) + '\n');
                 }
               }
@@ -200,7 +200,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
           }
           if (type === "passStart") {
             if (spinner) { spinner.stop(); spinner = null; }
-            spinner = ora({ text: chalk.gray(`  Pass ${data.passNum} of ${data.totalPasses} — ${data.fileCount} files (~${(data.tokens||0).toLocaleString()} tokens)...`), color: "cyan" }).start();
+            spinner = ora({ text: chalk.gray(`  Pass ${data.passNum} of ${data.totalPasses}: ${data.fileCount} files (~${(data.tokens||0).toLocaleString()} tokens)...`), color: "cyan" }).start();
           }
           if (type === "passComplete") {
             if (spinner) { spinner.succeed(chalk.green(`  ${SYM.check} Pass ${data.passNum} complete`)); spinner = null; }
@@ -249,7 +249,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
           return parseInt(passCap);
         },
         async onSessionPrompt({ session, allPassCount, pct }) {
-          console.log(chalk.cyan(`\n📂  Saved session: ${session.projectLabel} — ${session.completedPassCount}/${allPassCount} passes (${pct}% coverage)\n`));
+          console.log(chalk.cyan(`\n📂  Saved session: ${session.projectLabel} (${session.completedPassCount}/${allPassCount} passes, ${pct}% coverage)\n`));
           const promptSpinner = ora({ text: chalk.gray('Preparing options...'), color: 'cyan' }).start();
           await new Promise(r => setTimeout(r, 600));
           promptSpinner.stop();
@@ -266,7 +266,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
           return action;
         },
         async onCompletePrompt({ coverage, remaining, passCount }) {
-          console.log(chalk.cyan(`\n  ${SYM.check} ${passCount} passes complete — ${coverage}% coverage`));
+          console.log(chalk.cyan(`\n  ${SYM.check} ${passCount} passes complete: ${coverage}% coverage`));
           console.log(chalk.gray(`  ${remaining} passes remain. Session saved.\n`));
           const promptSpinner = ora({ text: chalk.gray('Preparing options...'), color: 'cyan' }).start();
           await new Promise(r => setTimeout(r, 600));
@@ -276,10 +276,10 @@ export async function runPOIMode(codebaseContext, options = {}) {
             message: chalk.cyan('What would you like to do?'),
             choices: [
               { name: 'Generate report from completed passes now', value: 'report' },
-              { name: 'Save and exit — continue next session',     value: 'save'   },
+              { name: 'Save and exit: continue next session',     value: 'save'   },
             ]
           }]);
-          if (next === 'save') console.log(chalk.green(`\n  ${SYM.check} Session saved — continue from pass ${passCount + 1} next time\n`));
+          if (next === 'save') console.log(chalk.green(`\n  ${SYM.check} Session saved: continue from pass ${passCount + 1} next time\n`));
           return next;
         },
       }, { profile });
@@ -287,7 +287,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
       if (!multiResult) {
         // fall through
       } else if (multiResult.saved) {
-        console.log(chalk.cyan(`\n  Session saved — run Ghost again to continue from where you left off.\n`));
+        console.log(chalk.cyan(`\n  Session saved. Run Ghost again to continue from where you left off.\n`));
         return;
       } else if (multiResult.finalReport) {
         // Stop the narrator spinner cleanly now that the full report is in hand.
@@ -299,7 +299,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
         }
         console.log('\n');
         console.log(chalk.cyan(
-          `  ${SYM.check} Multi-pass complete — ${multiResult.passCount} passes, ` +
+          `  ${SYM.check} Multi-pass complete: ${multiResult.passCount} passes, ` +
           `${multiResult.coverage}% of ${multiResult.totalFiles} files analyzed\n`
         ));
       }

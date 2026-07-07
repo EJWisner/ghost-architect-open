@@ -16,7 +16,9 @@ export const PRICING = {
   PRO: { monthly: 25, annual: 300 },
   PRO_MAX: { monthly: 99, annual: 1188 },
   TEAM: { monthly: 399, annual: 4788 },
+  TEAM_MAX: { monthly: 799, annual: 9588 },
   ENTERPRISE: { monthly: 1200, annual: 14400 },
+  ENTERPRISE_MAX: { monthly: 2500, annual: 30000 },
   TRIAL_DAYS: 7,
   TRIAL_URL: 'https://ghostarchitect.dev/trial',
 };

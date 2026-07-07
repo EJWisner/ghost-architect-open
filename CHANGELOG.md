@@ -5,6 +5,35 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.4 -- July 7, 2026
+
+### Patch: Cost Transparency, Paywall Copy, Pricing, and Prompt Triage Redaction
+
+**Cost and Session**
+- Dead session cost summary removed. The top-level SessionCostTracker was never populated by any mode and always rendered zeros. Removed the dead showSummary() calls rather than showing a misleading empty summary.
+
+**First-Run Experience**
+- Keyless users no longer replay the full wizard on every launch. isConfigured() now checks a wizardComplete flag set at wizard completion, not API key presence. Recon-only users (no API key by design) now land directly in the main menu.
+
+**Paywall Copy**
+- Ghost Brief and Chat mode now show a proper upgrade paywall ("Ghost Brief requires Pro Max") instead of the quota paywall ("You've used your 4 free reports") when tier-blocked. The quota copy was factually wrong for these modes.
+
+**Pricing Constants**
+- TEAM_MAX ($799/mo) and ENTERPRISE_MAX ($2,500/mo) added to src/constants/pricing.js.
+- Forecast paywalls now include Pro Max in the upgrade tier list.
+- First-run wizard now uses PRICING.TRIAL_DAYS instead of hardcoded "7-day" string.
+- mode:executive-brief added to TIER_POLICY so it is properly gated via flag as well as menu.
+
+**POI Output**
+- "N false positives dropped" removed from POI output. Rule violation -- customers do not need to know what was filtered.
+- Em dashes removed from poi.js and estimator.js customer-facing strings.
+
+**Prompt Triage**
+- Prompt Triage now runs redactContent() on every prompt file before sending to the Claude API. Previously raw file content including any secrets went directly to Anthropic. Fix is fail-closed -- a redactor failure surfaces an error rather than falling back to raw content. All three API call sites patched.
+
+**Ghost Watcher**
+- actions/checkout and actions/setup-node bumped to @v5 in both ghost-watcher.yml and the customer template. This silences the "Node 20 is being deprecated" warning which came from the action runtime, not the node-version input.
+
 ## v10.0.3 -- July 7, 2026
 
 ### Patch: Trust, Trial Funnel, Profile, and License Detection

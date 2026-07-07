@@ -45,7 +45,6 @@ import { runPromptTriageMode } from '../src/modes/prompt-triage.js';
 import { runCommitForecastMode } from '../src/modes/commit-forecast.js';
 import { listModelsForPicker } from '../src/prompt-pack/models.js';
 import { showProjectDashboard } from '../src/projects.js';
-import { SessionCostTracker } from '../src/estimator.js';
 import { backChoice, isBack, isBackKeyword } from '../src/cli/prompt-helpers.js';
 import { showFriendlyError } from '../src/utils/errors.js';
 
@@ -67,7 +66,7 @@ import {
 } from '../src/license/store.js';
 import { setActiveLicense, getActiveTier, trialDaysRemaining } from '../src/license/session.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
-import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
+import { getScanCount, renderAuditPaywall, renderQuotaPaywall, renderUpgradePaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
 import { PRICING } from '../src/constants/pricing.js';
 
 // Activation server endpoint. Hardcoded so customers can't be tricked into
@@ -928,8 +927,9 @@ async function confirmExit() {
 /**
  * Dispatch a paywall payload from requireTier() to the appropriate existing
  * renderer in src/freemium.js. Per design decision 2a (2026-05-23): tier-gates
- * emits an enum-like { kind: 'audit' | 'quota' | 'unknown' } and this helper
- * routes to renderAuditPaywall() or renderQuotaPaywall(). This preserves the
+ * emits an enum-like { kind: 'audit' | 'quota' | 'upgrade' | 'unknown' } and this
+ * helper routes to renderAuditPaywall(), renderQuotaPaywall(), or
+ * renderUpgradePaywall() (tier-blocked modes). This preserves the
  * dispatch boundary between tier-gates (policy) and freemium (paywall
  * rendering).
  *
@@ -947,8 +947,9 @@ function renderPaywall(paywall, paywallPromo = '') {
     console.log(chalk.gray('  (Access denied. No paywall renderer available.)\n'));
     return;
   }
-  if (paywall.kind === 'audit')  { renderAuditPaywall(paywallPromo); return; }
-  if (paywall.kind === 'quota')  { renderQuotaPaywall(paywallPromo); return; }
+  if (paywall.kind === 'audit')   { renderAuditPaywall(paywallPromo); return; }
+  if (paywall.kind === 'quota')   { renderQuotaPaywall(paywallPromo); return; }
+  if (paywall.kind === 'upgrade') { renderUpgradePaywall(paywall, paywallPromo); return; }
   console.log(chalk.gray(`  (No paywall renderer for gate: ${paywall.gateId})\n`));
 }
 
@@ -2137,7 +2138,7 @@ async function main() {
         }
       }
     } else {
-      console.log('\n' + chalk.gray('No problem. You can start a 7-day free trial at ghostarchitect.dev/trial or run Ghost Open for free right now.') + '\n');
+      console.log('\n' + chalk.gray(`No problem. You can start a ${PRICING.TRIAL_DAYS}-day free trial at ghostarchitect.dev/trial or run Ghost Open for free right now.`) + '\n');
     }
 
     await runSetupWizard();
@@ -2226,7 +2227,6 @@ async function main() {
   }
 
   let codebaseContext = null;
-  const session = new SessionCostTracker();
 
   // ── Non-interactive Commit Forecast branch ────────────────────────────────
   // Fires ONLY when ALL THREE of --baseline, --proposed, --modes are present.
@@ -2291,7 +2291,6 @@ async function main() {
       // Universal escape: top-level Back/Exit — confirm before leaving.
       if (isBack(method)) {
         if (await confirmExit()) {
-          session.showSummary();
           console.log(chalk.cyan('\nIntel gathered. Go make your move.\n'));
           console.log(chalk.gray(`${COPYRIGHT}\n`));
           process.exit(0);
@@ -2453,7 +2452,6 @@ async function main() {
     // Universal escape: Exit Ghost from mode menu — confirm before leaving.
     if (isBack(mode)) {
       if (await confirmExit()) {
-        session.showSummary();
         console.log(chalk.cyan('\nIntel gathered. Go make your move.\n'));
         console.log(chalk.gray(`${COPYRIGHT}\n`));
         process.exit(0);
@@ -2491,7 +2489,7 @@ async function main() {
     // when Question mode launched as the Open-tier Q&A surface). Question,
     // recon, compare, dashboard — free across all tiers.
     // commit-forecast is handled separately below (uses its own forecast-quota gate).
-    if (['chat', 'poi', 'blast', 'conflict', 'audit', 'ghost-brief'].includes(mode)) {
+    if (['chat', 'poi', 'blast', 'conflict', 'audit', 'ghost-brief', 'executive-brief'].includes(mode)) {
       const verdict = requireTier(`mode:${mode}`, { scansUsed: getScanCount() });
       if (!verdict.allowed) {
         renderPaywall(verdict.paywall, promos.paywallPromo);
