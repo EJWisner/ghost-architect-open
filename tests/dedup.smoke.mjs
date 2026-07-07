@@ -51,7 +51,7 @@ console.log('Test 1: classifyDetector taxonomy');
   check('conflictingInstructions → specific',  classifyDetector('conflictingInstructions'),    'specific');
   check('undefinedOutputFormat → specific',    classifyDetector('undefinedOutputFormat'),      'specific');
   check('unboundedOutput → specific',          classifyDetector('unboundedOutput'),            'specific');
-  check('injection/static-pattern → specific', classifyDetector('injection/static-pattern'),   'specific');
+  check('injectionStaticPattern → specific', classifyDetector('injectionStaticPattern'),   'specific');
   check('inefficientFewShot → specific',       classifyDetector('inefficientFewShot'),         'specific');
   check('tokenLimitExcessive → specific',      classifyDetector('tokenLimitExcessive'),        'specific');
 

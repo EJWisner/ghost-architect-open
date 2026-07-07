@@ -65,7 +65,7 @@ import {
   getAdminToken,
   saveAdminToken,
 } from '../src/license/store.js';
-import { setActiveLicense, getActiveTier } from '../src/license/session.js';
+import { setActiveLicense, getActiveTier, trialDaysRemaining } from '../src/license/session.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
 import { getScanCount, renderAuditPaywall, renderQuotaPaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
 import { PRICING } from '../src/constants/pricing.js';
@@ -1622,6 +1622,25 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
     return false;  // fall through to Open tier behavior per D2
   }
   if (isBlocking(result.state)) {
+    // A lapsed TRIAL must not dead-end the user: Question and Recon are free
+    // forever on Open, so a hard_stopped trial degrades to Open (continue) with
+    // a conversion prompt rather than process.exit(1). Paid hard_stops still
+    // hard-block -- a paying customer whose term ended renews, not silently
+    // downgrades. setActiveLicense(null) makes downstream getActiveTier()/trial
+    // checks resolve to Open, keeping the whole run consistent.
+    if (result.state === 'hard_stop' && result.payload?.tier === 'trial') {
+      TIER = 'open';
+      setActiveLicense(null);
+      console.log('\n' + boxen(
+        chalk.yellow.bold(`Your ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial has ended.`) + '\n\n' +
+        chalk.white('You still have access to Ghost Open.') + '\n' +
+        chalk.white('Question and Recon are free forever.') + '\n\n' +
+        chalk.white('To keep scanning: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+      console.log('');
+      return false;  // continue as Open, do not block
+    }
     const headline =
       result.state === 'hard_stop' ? 'License expired' :
       result.state === 'invalid'   ? 'License invalid' :
@@ -1637,6 +1656,13 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
     console.log('');
     console.log(chalk.gray('Existing reports on disk are unaffected. New scans are blocked until\nthe license is renewed.\n'));
     return true;
+  }
+  // Active trial: surface days remaining so the countdown is visible and the
+  // user can convert before it lapses. trialDaysRemaining() (session.js) reads
+  // the active license; returns null for non-trial tiers or a lapsed trial.
+  const trialLeft = trialDaysRemaining();
+  if (trialLeft !== null && trialLeft >= 0) {
+    console.log(chalk.cyan(`\nTrial: ${trialLeft} day${trialLeft === 1 ? '' : 's'} remaining.\n`));
   }
   // valid_warn / grace / expired — show banner, continue
   if (result.state === 'valid_warn') {
@@ -2291,21 +2317,6 @@ async function main() {
         continue;
       }
 
-      if (method === 'profiles') {
-        await runProfilesMenu();
-        // After the user manages profiles, re-resolve in case they changed
-        // the default or created a new profile they want to use immediately.
-        try {
-          const resolved = await resolveStartupProfile(cliOpts);
-          profile = resolved.profile;
-          activeProfileLabel = resolved.label;
-        } catch (err) {
-          console.log(chalk.yellow(`⚠  Could not refresh profile: ${err.message}`));
-        }
-        printBanner();
-        continue;
-      }
-
       if (method === 'profiles-topLevel') {
         const profilesAllowedTopLevel = requireTier('feature:profiles', { tier: TIER }).allowed;
         if (!profilesAllowedTopLevel) {
@@ -2314,104 +2325,23 @@ async function main() {
           console.log(chalk.cyan('  Upgrade at ghostarchitect.dev/pricing\n'));
           continue;
         }
-        const profilesDir = path.join(os.homedir(), '.ghost', 'profiles');
-        let availableProfiles = [];
-        if (fs.existsSync(profilesDir)) {
-          availableProfiles = fs.readdirSync(profilesDir)
-            .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
-            .map(f => ({
-              name: f.replace(/\.(yaml|yml)$/, ''),
-              value: path.join(profilesDir, f),
-            }));
+        // runProfilesMenu() is the single source of truth for profile
+        // management: create (persists via writeProfile), edit, set-default,
+        // open, and delete. The previous inline menu here treated the wizard's
+        // returned profile OBJECT as a file path (path.resolve/loadProfile on
+        // an object), which crashed "use now" and silently discarded the
+        // profile on "no". Routing here fixes both and adds edit/delete.
+        await runProfilesMenu();
+        // After managing profiles, re-resolve so a newly created profile or a
+        // changed default takes effect immediately for this session.
+        try {
+          const resolved = await resolveStartupProfile(cliOpts);
+          profile = resolved.profile;
+          activeProfileLabel = resolved.label;
+        } catch (err) {
+          console.log(chalk.yellow(`⚠  Could not refresh profile: ${err.message}`));
         }
-        const defaultSlug = getDefaultProfileSlug();
-        const { profileAction } = await inquirer.prompt([{
-          type: 'list',
-          name: 'profileAction',
-          message: chalk.cyan('Ghost Partner Profile'),
-          theme: inquirerTheme,
-          choices: [
-            { name: '✏️   Create new profile', value: 'create' },
-            ...(availableProfiles.length > 0 ? [{ name: '👤  Select and use a profile this session', value: 'select' }] : []),
-            ...(availableProfiles.length > 0 ? [{ name: '📋  List my profiles', value: 'list' }] : []),
-            ...(availableProfiles.length > 0 ? [{ name: '⭐  Set default profile', value: 'set-default' }] : []),
-            { name: '✖️   Clear default profile', value: 'clear-default' },
-            new inquirer.Separator(),
-            { name: '← Back', value: 'back' },
-          ],
-        }]);
-
-        if (profileAction === 'back') { continue; }
-
-        if (profileAction === 'create') {
-          const { runProfileWizard } = await import('../src/profile/wizard.js');
-          const savedPath = await runProfileWizard();
-          if (savedPath) {
-            const { confirmed: useNow } = await inquirer.prompt([{
-              type: 'confirm',
-              name: 'confirmed',
-              message: chalk.cyan('Use this profile for this session?'),
-              default: true,
-              theme: inquirerTheme,
-            }]);
-            if (useNow) {
-              profile = await loadProfile(savedPath);
-              console.log(chalk.green('\n  ✓ Profile active: ' + path.basename(savedPath, '.yaml') + '\n'));
-            }
-          }
-        }
-
-        if (profileAction === 'select') {
-          const defaultBadge = (p) => p.name === defaultSlug ? chalk.gray(' (default)') : '';
-          const { selected } = await inquirer.prompt([{
-            type: 'list',
-            name: 'selected',
-            message: chalk.cyan('Select profile to use this session:'),
-            theme: inquirerTheme,
-            choices: [
-              ...availableProfiles.map(p => ({ name: p.name + defaultBadge(p), value: p.value })),
-              new inquirer.Separator(),
-              { name: '← Cancel', value: null },
-            ],
-          }]);
-          if (selected) {
-            profile = await loadProfile(selected);
-            console.log(chalk.green('\n  ✓ Profile active: ' + path.basename(selected, '.yaml') + '\n'));
-          }
-        }
-
-        if (profileAction === 'list') {
-          if (availableProfiles.length === 0) {
-            console.log(chalk.yellow('\n  No profiles found. Create one first.\n'));
-          } else {
-            console.log(chalk.cyan('\n  Your profiles:\n'));
-            availableProfiles.forEach(p => {
-              const isDefault = p.name === defaultSlug ? chalk.yellow(' ★ default') : '';
-              console.log(chalk.white('  • ' + p.name) + isDefault + chalk.gray(': ' + p.value));
-            });
-            console.log('');
-          }
-        }
-
-        if (profileAction === 'set-default') {
-          const { selected } = await inquirer.prompt([{
-            type: 'list',
-            name: 'selected',
-            message: chalk.cyan('Select profile to set as default:'),
-            theme: inquirerTheme,
-            choices: availableProfiles.map(p => ({ name: p.name, value: p.name })),
-          }]);
-          if (selected) {
-            setDefaultProfileSlug(selected);
-            console.log(chalk.green('\n  ✓ Default profile set to: ' + selected + '\n'));
-          }
-        }
-
-        if (profileAction === 'clear-default') {
-          setDefaultProfileSlug(null);
-          console.log(chalk.green('\n  ✓ Default profile cleared.\n'));
-        }
-
+        printBanner();
         continue;
       }
 
@@ -3042,104 +2972,20 @@ async function main() {
       }
 
       case 'profiles': {
-        const profilesDir = path.join(os.homedir(), '.ghost', 'profiles');
-        let availableProfiles = [];
-        if (fs.existsSync(profilesDir)) {
-          availableProfiles = fs.readdirSync(profilesDir)
-            .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
-            .map(f => ({
-              name: f.replace(/\.(yaml|yml)$/, ''),
-              value: path.join(profilesDir, f),
-            }));
+        // Route to runProfilesMenu() (the create/edit/set-default/open/delete
+        // menu with correct persistence) rather than the old inline menu, which
+        // treated the wizard's returned profile OBJECT as a file path and so
+        // crashed on "use now" and silently lost the profile on "no".
+        await runProfilesMenu();
+        // Re-resolve so a newly created profile or changed default applies to
+        // the loaded session immediately.
+        try {
+          const resolved = await resolveStartupProfile(cliOpts);
+          profile = resolved.profile;
+          activeProfileLabel = resolved.label;
+        } catch (err) {
+          console.log(chalk.yellow(`⚠  Could not refresh profile: ${err.message}`));
         }
-        const defaultSlug = getDefaultProfileSlug();
-        const { profileAction } = await inquirer.prompt([{
-          type: 'list',
-          name: 'profileAction',
-          message: chalk.cyan('Ghost Partner Profile'),
-          theme: inquirerTheme,
-          choices: [
-            { name: '✏️   Create new profile', value: 'create' },
-            ...(availableProfiles.length > 0 ? [{ name: '👤  Select and use a profile this session', value: 'select' }] : []),
-            ...(availableProfiles.length > 0 ? [{ name: '📋  List my profiles', value: 'list' }] : []),
-            ...(availableProfiles.length > 0 ? [{ name: '⭐  Set default profile', value: 'set-default' }] : []),
-            { name: '✖️   Clear default profile', value: 'clear-default' },
-            new inquirer.Separator(),
-            { name: '← Back', value: 'back' },
-          ],
-        }]);
-
-        if (profileAction === 'back') break;
-
-        if (profileAction === 'create') {
-          const { runProfileWizard } = await import('../src/profile/wizard.js');
-          const savedPath = await runProfileWizard();
-          if (savedPath) {
-            const { confirmed: useNow } = await inquirer.prompt([{
-              type: 'confirm',
-              name: 'confirmed',
-              message: chalk.cyan('Use this profile for this session?'),
-              default: true,
-              theme: inquirerTheme,
-            }]);
-            if (useNow) {
-              profile = await loadProfile(savedPath);
-              console.log(chalk.green(`\n  ✓ Profile active: ${path.basename(savedPath, '.yaml')}\n`));
-            }
-          }
-        }
-
-        if (profileAction === 'select') {
-          const defaultBadge = (p) => p.name === defaultSlug ? chalk.gray(' (default)') : '';
-          const { selected } = await inquirer.prompt([{
-            type: 'list',
-            name: 'selected',
-            message: chalk.cyan('Select profile to use this session:'),
-            theme: inquirerTheme,
-            choices: [
-              ...availableProfiles.map(p => ({ name: p.name + defaultBadge(p), value: p.value })),
-              new inquirer.Separator(),
-              { name: '← Cancel', value: null },
-            ],
-          }]);
-          if (selected) {
-            profile = await loadProfile(selected);
-            console.log(chalk.green(`\n  ✓ Profile active: ${path.basename(selected, '.yaml')}\n`));
-          }
-        }
-
-        if (profileAction === 'list') {
-          if (availableProfiles.length === 0) {
-            console.log(chalk.yellow('\n  No profiles found. Create one first.\n'));
-          } else {
-            console.log(chalk.cyan('\n  Your profiles:\n'));
-            availableProfiles.forEach(p => {
-              const isDefault = p.name === defaultSlug ? chalk.yellow(' ★ default') : '';
-              console.log(chalk.white(`  • ${p.name}`) + isDefault + chalk.gray(`: ${p.value}`));
-            });
-            console.log('');
-          }
-        }
-
-        if (profileAction === 'set-default') {
-          const { selected } = await inquirer.prompt([{
-            type: 'list',
-            name: 'selected',
-            message: chalk.cyan('Select profile to set as default:'),
-            theme: inquirerTheme,
-            choices: availableProfiles.map(p => ({ name: p.name, value: p.name })),
-          }]);
-          if (selected) {
-            setDefaultProfileSlug(selected);
-            console.log(chalk.green(`\n  ✓ Default profile set to: ${selected}\n`));
-          }
-        }
-
-        if (profileAction === 'clear-default') {
-          setDefaultProfileSlug(null);
-          console.log(chalk.green('\n  ✓ Default profile cleared.\n'));
-        }
-
         break;
       }
     }

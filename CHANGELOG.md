@@ -5,6 +5,44 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.3 -- July 7, 2026
+
+### Patch: Trust, Trial Funnel, Profile, and License Detection
+
+**Trust and Legal**
+- README privacy section corrected: "No telemetry, no analytics, no phone-home" replaced with honest copy describing the anonymous usage ping and the GHOST_NO_PING=1 opt-out.
+- LICENSE replaced with real Business Source License 1.1 text. The previous LICENSE was all-rights-reserved proprietary text that contradicted the README's BUSL-1.1 claim and caused procurement auto-block.
+- "never stored on any server" copy removed from README and config.js per standing copy rule.
+
+**Ghost Watcher**
+- Ghost Watcher no longer posts "Safe to merge" or sends a clean-scan email when scans failed to run. Scan tracking added: a submission failure or API outage now renders an explicit error PR comment instead of a false green signal.
+- Default Watch config no longer ships skip_if_message_contains patterns to customer repos. Every new Ghost Watcher install now fires the full Triple Crown on release commits.
+
+**Trial Funnel**
+- Trial hard-stop now degrades to Open tier instead of process.exit(1). A Day 8 trial user sees a conversion banner and keeps Question and Recon.
+- Trial expiry messages now say "Your Ghost Pro Max trial has ended" instead of "Renew your subscription."
+- trialDaysRemaining() now wired -- active trial users see "Trial: X days remaining" on every launch.
+
+**Profile Management**
+- Interactive profile creation no longer crashes or silently discards input. Both broken handlers now route to runProfilesMenu() which persists correctly. Edit and delete paths are now reachable.
+
+**Inheritance Audit**
+- classifyLicense() now exported and wired into all six ecosystem parsers. Previously hardcoded to unknown regardless of license data.
+- npm parser now reads package-lock.json for resolved license data. AGPL and GPL dependencies now correctly surface as copyleft findings in local directory scans.
+
+**README and Docs**
+- Tier matrix Open column corrected: POI, Blast, Conflict, and Prompt Triage now show "4 free scans" instead of unqualified checkmarks.
+- "Fully featured" Open tier description replaced with accurate copy.
+
+**Tests**
+- dedup.smoke.mjs fixed (stale detector id).
+- 9 previously unwired test suites added to npm test: dedup, assert-prompt-pack, banner-promo, commit-forecast, conflict-extractor, verifier-stepcap, license/test-fingerprint-matching, license/test-fingerprint-windows, license/test-trial. Total: 30 to 39 test invocations.
+
+**Website**
+- 549 customer-facing em dashes replaced across 34 HTML pages.
+- 38 meta and OG tags converted from em dash to --.
+- 10 title tags with awkward double-colon or ?: punctuation fixed.
+
 ## v10.0.2 -- July 6, 2026
 
 ### Patch: License Key Generation, Watch Setup, and Cost Estimator

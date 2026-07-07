@@ -186,16 +186,22 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   };
 
   if (nowMs >= hardStopMs) {
-    return { ...baseResult, state: 'hard_stop',
-      message: `License expired on ${payload.expires.slice(0, 10)}. Renew at ghostarchitect.dev/pricing or email support@ghostarchitect.dev.` };
+    const message = payload.tier === 'trial'
+      ? `Your Ghost Pro Max trial has ended. Continue free with Ghost Open, or subscribe at ghostarchitect.dev/pricing to keep scanning.`
+      : `License expired on ${payload.expires.slice(0, 10)}. Renew at ghostarchitect.dev/pricing or email support@ghostarchitect.dev.`;
+    return { ...baseResult, state: 'hard_stop', message };
   }
   if (nowMs >= graceMs) {
-    return { ...baseResult, state: 'expired',
-      message: `License grace period ends today. New scans will be blocked starting ${payload.hard_stop.slice(0, 10)}. Renew now.` };
+    const message = payload.tier === 'trial'
+      ? `Your Ghost Pro Max trial has ended. New scans stop after ${payload.hard_stop.slice(0, 10)}. Subscribe at ghostarchitect.dev/pricing to keep scanning.`
+      : `License grace period ends today. New scans will be blocked starting ${payload.hard_stop.slice(0, 10)}. Renew now.`;
+    return { ...baseResult, state: 'expired', message };
   }
   if (nowMs >= expiresMs) {
-    return { ...baseResult, state: 'grace',
-      message: `License expired on ${payload.expires.slice(0, 10)}. Grace period through ${payload.grace_until.slice(0, 10)}. Renew now.` };
+    const message = payload.tier === 'trial'
+      ? `Your Ghost Pro Max trial has ended (${payload.expires.slice(0, 10)}). Access continues through ${payload.grace_until.slice(0, 10)}. Subscribe at ghostarchitect.dev/pricing to keep scanning.`
+      : `License expired on ${payload.expires.slice(0, 10)}. Grace period through ${payload.grace_until.slice(0, 10)}. Renew now.`;
+    return { ...baseResult, state: 'grace', message };
   }
   if (baseResult.daysUntilExpires <= WARN_WINDOW_DAYS) {
     return { ...baseResult, state: 'valid_warn',

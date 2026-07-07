@@ -304,7 +304,7 @@ function buildVerifiedSection(verifiedFindings) {
   return s;
 }
 
-async function postPRComment({ findings, verifiedFindings = [], blastFileCount, briefPromptCount, portalUrl, clean = false }) {
+async function postPRComment({ findings, verifiedFindings = [], blastFileCount, briefPromptCount, portalUrl, clean = false, scanFailed = false, incompleteScans = [] }) {
   const prToken = process.env.GHOST_PR_TOKEN || process.env.GITHUB_TOKEN;
   if (!prToken) return;
 
@@ -320,8 +320,10 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   const prMatch = (process.env.GITHUB_REF || '').match(/refs\/pull\/(\d+)\//);
   if (!prMatch) return; // push event, not a PR — no comment to post
 
-  // Zero findings — post clean green comment and return
-  if (clean) {
+  // No scan actually completed — surface an explicit error, never a clean
+  // result. A caught "non-fatal" submission failure leaves findings empty for a
+  // reason that is NOT "clean"; treating it as clean is a false green signal.
+  if (scanFailed) {
     try {
       const octokit = createOctokit({ auth: prToken });
       const [owner, repo] = repository.split('/');
@@ -334,13 +336,49 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
         `**Branch:** \`${escapeMarkdown(refName)}\``,
         `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}`,
         ``,
-        `✅ **No findings detected.**`,
+        `⚠️ **Ghost Watcher could not complete this scan.**`,
         ``,
-        `Blast Radius: no affected files outside the changed set`,
-        `Conflict Detection: no conflicts found`,
-        `Ghost Brief: not needed`,
+        `Results are unavailable. Do not treat this as a clean result.`,
+      ].join('\n');
+      await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+    } catch (err) {
+      console.error(`Ghost Watcher: error-state PR comment failed (non-fatal): ${err.message}`);
+    }
+    return;
+  }
+
+  // Zero findings — post clean green comment and return
+  if (clean) {
+    try {
+      const octokit = createOctokit({ auth: prToken });
+      const [owner, repo] = repository.split('/');
+      const prNumber = parseInt(prMatch[1], 10);
+      const shortSha = sha.slice(0, 7);
+      const date = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const cleanTail = incompleteScans.length === 0
+        ? [
+            `✅ **No findings detected.**`,
+            ``,
+            `Blast Radius: no affected files outside the changed set`,
+            `Conflict Detection: no conflicts found`,
+            `Ghost Brief: not needed`,
+            ``,
+            `**Safe to merge.**`,
+          ]
+        : [
+            `⚠️ **No findings from the scans that completed, but this run is incomplete.**`,
+            ``,
+            `Did not complete: ${incompleteScans.join(', ')}.`,
+            ``,
+            `Do not treat this as a full clean result. Re-run after resolving the issue above.`,
+          ];
+      const body = [
+        `## 👻 Ghost Watcher™ — Commit Analysis`,
         ``,
-        `**Safe to merge.**`,
+        `**Branch:** \`${escapeMarkdown(refName)}\``,
+        `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}`,
+        ``,
+        ...cleanTail,
       ].join('\n');
       const verifiedSection = buildVerifiedSection(verifiedFindings);
       const finalBody = verifiedSection ? `${body}\n\n${verifiedSection}` : body;
@@ -382,6 +420,10 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   body    += `**Findings:** ${total} (${severitySummary})\n`;
   body    += `**Blast radius:** ${blastFileCount} file${blastFileCount === 1 ? '' : 's'} affected\n`;
   body    += `**Ghost Brief:** ${briefPromptCount} prompt${briefPromptCount === 1 ? '' : 's'} ready\n\n`;
+
+  if (incompleteScans.length > 0) {
+    body  += `> ⚠️ This run is incomplete: ${incompleteScans.join(', ')} did not complete. Findings below may be partial.\n\n`;
+  }
 
   if (phase1.length > 0) {
     body += `### PHASE 1 — Fix first (surgical)\n`;
@@ -1548,6 +1590,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   let blastFindings  = [];
   let blastFileCount = 0;
 
+  // Track whether each scan ACTUALLY ran to completion (submitted and returned
+  // results). A submission failure or API outage is caught as "non-fatal" and
+  // leaves findings empty — without this, Step 10 would render a false "safe to
+  // merge" clean signal on every commit. Set true only on the success path.
+  const scanRan = { blast: false, conflict: false };
+
   // Running token totals across every batch in this commit run (blast, conflict,
   // detailed prompts). Treated as 0 for any result that carries no usage.
   let totalInputTokens  = 0;
@@ -1632,6 +1680,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         totalOutputTokens += blastUsage.outputTokens;
         console.log(`Ghost Watcher: Blast Radius tokens — in ${blastUsage.inputTokens}, out ${blastUsage.outputTokens}`);
         await clearPendingBatch(octokitPortal, portalRepoPath, blastBatchId);
+        scanRan.blast = true;
         console.log(`Ghost Watcher: Blast Radius complete — ${blastFindings.length} findings\n`);
       } catch (err) {
         if (err instanceof BatchTimeoutError) {
@@ -1736,6 +1785,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         totalInputTokens  += conflictUsage.inputTokens;
         totalOutputTokens += conflictUsage.outputTokens;
         await clearPendingBatch(octokitPortal, portalRepoPath, conflictBatchId);
+        scanRan.conflict = true;
         console.log(`Ghost Watcher: Conflict Detection complete — ${conflictFindings.length} findings\n`);
       } catch (err) {
         if (err instanceof BatchTimeoutError) {
@@ -1784,6 +1834,18 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // returns a fresh `allFindings` array that may not carry the flag, so we OR
   // against blastFindings too (mirrors the portal manifest flag below).
   const narratorFailed = !!(allFindings._narratorFailed || blastFindings._narratorFailed);
+
+  // ── Failed-scan guard ─────────────────────────────────────────────────────
+  // An empty allFindings set is only a genuine "clean" result if at least one
+  // scan ran AND no scan that was expected to run failed. Otherwise a config
+  // typo or API outage would render a permanent false-green "safe to merge" on
+  // every commit. "Expected" = enabled (and, for blast, not release-skipped).
+  const blastExpected    = watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast;
+  const conflictExpected = watchConfig.scans?.conflict_detection !== false;
+  const incompleteScans  = [];
+  if (blastExpected    && !scanRan.blast)    incompleteScans.push('Blast Radius');
+  if (conflictExpected && !scanRan.conflict) incompleteScans.push('Conflict Detection');
+  const anyScanRan = scanRan.blast || scanRan.conflict;
 
   // ── Step 8: Ghost Brief (Max-tier gated) ─────────────────────────────────
   // Ghost Brief is a Max-tier artifact (pro-max / team-max / enterprise-max).
@@ -1920,9 +1982,9 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           portalSlug:    portalSlug || repoOwner,
         });
         await sendWatcherEmail(emailRecipients, eFindings.subject, eFindings.html);
-      } else {
+      } else if (anyScanRan && incompleteScans.length === 0) {
         // ── Step 8d: Clean scan email ─────────────────────────────────────
-        // Zero findings across both scans — tell the customer the commit is clean.
+        // Zero findings AND every expected scan completed — genuinely clean.
         const eClean = emailCleanScan({
           repo:       repoPath,
           shortSha:   commitSha,
@@ -1930,6 +1992,10 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           portalSlug: portalSlug || repoOwner,
         });
         await sendWatcherEmail(emailRecipients, eClean.subject, eClean.html);
+      } else {
+        // No scan completed, or an expected scan did not. Do NOT send a clean
+        // email — a failed scan must never produce a false "clean" signal.
+        console.error(`Ghost Watcher: suppressing clean-scan email (${anyScanRan ? 'incomplete: ' + incompleteScans.join(', ') : 'no scan completed'}).`);
       }
     } catch (_) { /* email never blocks */ }
   }
@@ -2098,7 +2164,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
   // ── Step 10: PR comment ───────────────────────────────────────────────────
   if (watchConfig.notifications?.pr_comment !== false) {
-    await postPRComment({ findings: allFindings, verifiedFindings, blastFileCount, briefPromptCount, portalUrl, clean: allFindings.length === 0 });
+    await postPRComment({ findings: allFindings, verifiedFindings, blastFileCount, briefPromptCount, portalUrl, clean: allFindings.length === 0 && anyScanRan, scanFailed: !anyScanRan, incompleteScans });
   }
 
   // ── Done ──────────────────────────────────────────────────────────────────

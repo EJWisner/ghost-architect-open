@@ -233,7 +233,7 @@ export async function runSetupWizard() {
   console.log(boxen(
       chalk.white.bold('Privacy notice') + '\n\n' +
       chalk.gray('Code passes through analysis and is immediately discarded.\n') +
-      chalk.gray('Never stored on any server, never used to train models.\n\n') +
+      chalk.gray('Never retained between sessions, never used to train models.\n\n') +
       chalk.gray('Stored locally on your machine:\n') +
       chalk.gray('  - Your API key (stored locally with owner-only file permissions)\n') +
       chalk.gray('  - Your preferences\n') +

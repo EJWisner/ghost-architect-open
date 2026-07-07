@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.3
+- Patch: README privacy section corrected, LICENSE replaced with real BUSL-1.1 text, Ghost Watcher false-clean signal fixed, trial hard-stop degrades to Open, profile creation fixed, npm license detection from package-lock.json, 9 unwired tests added, and website em dash sweep across 34 pages.
+
 ### v10.0.2
 - Patch: format.js tier key mismatch fixed (generateKey now accepts canonical tier strings), enableWatch CRLF branch injection fixed, cost-estimator output token estimates added for audit, prompt-triage, recon, and forecast modes.
 
@@ -552,11 +555,12 @@ Profiles can be authored as `.yaml`, `.yml`, `.md`, or `.txt`. Markdown and plai
 
 **Your code never leaves the analysis moment.**
 
-Ghost Architect™ works like a filter: your codebase goes in, the analysis comes out, and the code itself is immediately discarded. It is never stored on any server, never written to any database, never retained between sessions. Think of it as running your code through an expert analyst who reads it, gives you the report, and forgets everything they saw.
+Ghost Architect™ works like a filter: your codebase goes in, the analysis comes out, and the code itself is immediately discarded. It is never written to any database and never retained between sessions. Think of it as running your code through an expert analyst who reads it, gives you the report, and forgets everything they saw.
 
 - **No code retention:** your codebase passes through Claude's analysis and is gone. Anthropic does not store API call content for training under standard API terms.
 - **Local config only:** your API key and all settings are stored exclusively in a config file on your own machine. They are never transmitted anywhere except to Anthropic's API to authenticate your calls.
-- **No third-party sharing:** Ghost connects only to Anthropic's API (and optionally GitHub for repo loading). No telemetry, no analytics, no phone-home.
+- **No third-party sharing of your code:** Ghost sends your codebase only to Anthropic's API for analysis (and optionally GitHub for repo loading). Your code and your findings are never sent anywhere else.
+- **Anonymous usage telemetry (opt out any time):** when you run a mode, Ghost sends one small, anonymous ping so we can see which features are used across the install base. It carries only a randomly generated install ID (a UUID created and kept locally on your machine), the Ghost version, your license tier, and the mode name. It never includes your code, your findings, your file paths, your API key, or any personal data. To turn it off completely, set GHOST_NO_PING=1 in your environment.
 - **Reports stay local:** saved reports are written to your machine only.
 - **Source-available:** you can read every line of Ghost Architect's code and verify these claims yourself.
 
@@ -569,11 +573,11 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Feature | Open (free) | Pro | Pro Max | Team | Team Max | Enterprise | Ent. Max |
 |---|---|---|---|---|---|---|---|
 | Question | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Points of Interest scan | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Blast Radius + Rollback | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Conflict Detection | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Points of Interest scan | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Blast Radius + Rollback | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Conflict Detection | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Commit Forecast | 1 free / install | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Prompt Triage | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Prompt Triage | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Recon sizing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Project labels + history tracking | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -603,7 +607,7 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Ghost Enterprise | $1,200/mo | ❌ |
 | Ghost Enterprise Max | $2,500/mo | ✅ + Ghost Partner |
 
-The free Open tier is fully featured for individual scans. Project history, before/after comparison, white-label consultant rendering, deal-grade Inheritance Audit, and team sync are paid-tier capabilities. Ghost Brief™ is available on Pro Max and above.
+The free Open tier is free forever for Question and Recon, plus 4 free deep scans across POI, Blast, Conflict, and Prompt Triage. Project history, before/after comparison, white-label consultant rendering, deal-grade Inheritance Audit, and team sync are paid-tier capabilities. Ghost Brief™ is available on Pro Max and above.
 
 Start with a free 7-day Ghost Pro Max™ trial, no card required: [ghostarchitect.dev/trial](https://ghostarchitect.dev/trial).
 
@@ -945,7 +949,7 @@ See [LICENSE](./LICENSE) for full terms.
 
 **Copyright © 2026 Ghost Architect. All rights reserved.**
 
-Ghost Architect™ is proprietary software. Unauthorized use, reproduction, or distribution is strictly prohibited.
+Ghost Architect™ is source-available under the Business Source License 1.1. Use outside the license terms above requires a commercial license from Ghost Platform LLC.
 
 *Not a code generator. A thinking accelerator.*
 

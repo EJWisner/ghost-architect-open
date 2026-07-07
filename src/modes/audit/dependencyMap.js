@@ -68,7 +68,7 @@ const COMMERCIAL_HINTS = [
   'commercial', 'proprietary', 'see license', 'all rights reserved',
 ];
 
-function classifyLicense(licenseString) {
+export function classifyLicense(licenseString) {
   if (!licenseString || typeof licenseString !== 'string') return 'unknown';
   const normalized = licenseString.trim();
   if (!normalized) return 'unknown';
@@ -109,7 +109,38 @@ function classifyLicense(licenseString) {
 //     manifestPath: string,
 //   }
 
-function parsePackageJsonDeps(content, eolData, manifestPath) {
+// Read license data from a sibling package-lock.json (npm lockfile v2/v3).
+// package.json lists no per-dependency license, but the lockfile records a
+// resolved `license` for every installed package under `packages`. We read it
+// from disk (the lockfile is in the loader's IGNORED_FILES, so it never
+// reaches the fileMap) using the scan's basePath plus the manifest's own
+// directory. Returns a { depName: licenseString } map, or {} when no lockfile
+// is reachable (ZIP/GitHub scans have no basePath; any read/parse error is
+// swallowed so a malformed lockfile degrades to "unknown" rather than crashing
+// the audit).
+function readLockfileLicenses(basePath, manifestPath) {
+  if (!basePath) return {};
+  let lockData;
+  try {
+    const lockPath = path.resolve(basePath, path.dirname(manifestPath), 'package-lock.json');
+    if (!fs.existsSync(lockPath)) return {};
+    lockData = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  } catch {
+    return {};
+  }
+  const lockLicenses = {};
+  for (const [key, val] of Object.entries(lockData.packages || {})) {
+    const name = key.replace('node_modules/', '');
+    if (val && val.license) {
+      lockLicenses[name] = Array.isArray(val.license)
+        ? val.license.join(' OR ')
+        : val.license;
+    }
+  }
+  return lockLicenses;
+}
+
+function parsePackageJsonDeps(content, eolData, manifestPath, basePath) {
   const found = [];
   try {
     const json = JSON.parse(content);
@@ -118,18 +149,20 @@ function parsePackageJsonDeps(content, eolData, manifestPath) {
       ...(json.devDependencies || {}),
       ...(json.peerDependencies || {}),
     };
-    // package.json doesn't list per-dep licenses at the manifest level
-    // (those live in each dep's own package.json). For v1 we treat
-    // license as "unknown" and surface the dependency-list-only nature
-    // of package.json as a callout.
+    // package.json doesn't list per-dep licenses at the manifest level (those
+    // live in each dep's own package.json), but a sibling package-lock.json
+    // records a resolved license for every package. Load it once, then look
+    // each dependency up; deps absent from the lockfile stay null -> unknown.
+    const lockLicenses = readLockfileLicenses(basePath, manifestPath);
     for (const [name, version] of Object.entries(deps)) {
       const versionClean = stripVersion(version);
+      const license = lockLicenses[name] || null;
       found.push({
         name,
         version: versionClean,
         ecosystem: 'npm',
-        license: null,
-        licenseRisk: 'unknown',
+        license,
+        licenseRisk: classifyLicense(license),
         eolFlag: checkDepEol(name, versionClean, eolData, ecosystemFrameworkMap.npm),
         eolNote: getDepEolNote(name, versionClean, eolData, ecosystemFrameworkMap.npm),
         manifestPath,
@@ -152,12 +185,16 @@ function parseComposerJsonDeps(content, eolData, manifestPath) {
       // dependency for EOL purposes but skip non-package entries.
       if (name === 'php' || name.startsWith('ext-')) continue;
       const versionClean = stripVersion(version);
+      // composer.json require/require-dev carry no per-dependency license
+      // (that lives in each package's own composer.json), so license is null
+      // and classifies as unknown until a parser populates it.
+      const license = null;
       found.push({
         name,
         version: versionClean,
         ecosystem: 'composer',
-        license: null,
-        licenseRisk: 'unknown',
+        license,
+        licenseRisk: classifyLicense(license),
         eolFlag: checkDepEol(name, versionClean, eolData, ecosystemFrameworkMap.composer),
         eolNote: getDepEolNote(name, versionClean, eolData, ecosystemFrameworkMap.composer),
         manifestPath,
@@ -175,12 +212,15 @@ function parseRequirementsTxtDeps(content, eolData, manifestPath) {
     if (!m) continue;
     const name = m[1];
     const versionExpr = (m[2] || '').replace(/^[=~<>!]+/, '').trim();
+    // requirements.txt lists no license per line, so license is null and
+    // classifies as unknown until a parser populates it.
+    const license = null;
     found.push({
       name,
       version: versionExpr,
       ecosystem: 'pypi',
-      license: null,
-      licenseRisk: 'unknown',
+      license,
+      licenseRisk: classifyLicense(license),
       eolFlag: checkDepEol(name.toLowerCase(), versionExpr, eolData, ecosystemFrameworkMap.pypi),
       eolNote: getDepEolNote(name.toLowerCase(), versionExpr, eolData, ecosystemFrameworkMap.pypi),
       manifestPath,
@@ -197,12 +237,15 @@ function parseGemfileDeps(content, eolData, manifestPath) {
     if (!m) continue;
     const name = m[1];
     const version = stripVersion(m[2] || '');
+    // Gemfile lines carry no license, so license is null and classifies as
+    // unknown until a parser populates it.
+    const license = null;
     found.push({
       name,
       version,
       ecosystem: 'rubygems',
-      license: null,
-      licenseRisk: 'unknown',
+      license,
+      licenseRisk: classifyLicense(license),
       eolFlag: checkDepEol(name, version, eolData, ecosystemFrameworkMap.rubygems),
       eolNote: getDepEolNote(name, version, eolData, ecosystemFrameworkMap.rubygems),
       manifestPath,
@@ -223,12 +266,15 @@ function parsePomXmlDeps(content, eolData, manifestPath) {
     const version = (block.match(/<version>([^<]+)<\/version>/) || [])[1] || '';
     const name = artifactId ? (groupId ? `${groupId}:${artifactId}` : artifactId) : '';
     if (!name) continue;
+    // <dependency> blocks carry no license (it lives in each artifact's own
+    // POM), so license is null and classifies as unknown until populated.
+    const license = null;
     found.push({
       name,
       version,
       ecosystem: 'maven',
-      license: null,
-      licenseRisk: 'unknown',
+      license,
+      licenseRisk: classifyLicense(license),
       eolFlag: false,
       eolNote: null,
       manifestPath,
@@ -245,12 +291,15 @@ function parseBuildGradleDeps(content, eolData, manifestPath) {
   while ((match = depRegex.exec(content)) !== null) {
     const [, group, artifact, version] = match;
     const name = `${group}:${artifact}`;
+    // build.gradle dependency declarations carry no license, so license is
+    // null and classifies as unknown until a parser populates it.
+    const license = null;
     found.push({
       name,
       version,
       ecosystem: 'gradle',
-      license: null,
-      licenseRisk: 'unknown',
+      license,
+      licenseRisk: classifyLicense(license),
       eolFlag: false,
       eolNote: null,
       manifestPath,
@@ -342,7 +391,11 @@ export async function runDependencyMap(codebaseContext, options = {}) {
     const basename = path.basename(filePath);
     for (const { filename, parser } of MANIFEST_PARSERS) {
       if (basename !== filename) continue;
-      const deps = parser(fileMap[filePath], eolData, filePath);
+      // basePath (set for local-directory scans) lets the npm parser read a
+      // sibling package-lock.json from disk for license data. Other parsers
+      // ignore the extra arg. It is undefined for ZIP/GitHub scans, where the
+      // lockfile is not on disk and licenses fall back to "unknown".
+      const deps = parser(fileMap[filePath], eolData, filePath, codebaseContext?.basePath);
       dependencies.push(...deps);
     }
   }
