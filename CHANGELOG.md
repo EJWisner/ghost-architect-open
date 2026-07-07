@@ -5,6 +5,19 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.2 -- July 6, 2026
+
+### Patch: License Key Generation, Watch Setup, and Cost Estimator
+
+**License**
+- generateKey() in format.js now accepts canonical tier strings ('pro', 'pro-max', 'team', etc.) in addition to 3-char code keys ('PRO', 'PMX', 'TEM'). Previously any caller passing a canonical tier string (as returned by getActiveTier()) would throw Invalid tier: pro.
+
+**Ghost Watcher Setup**
+- enableWatch branch injection now normalizes CRLF to LF before applying the branch regex, then restores CRLF if the source file used it. Previously a Windows git checkout with CRLF line endings caused the regex to silently fail, deploying Ghost Watcher with wrong branch triggers.
+
+**Cost Estimator**
+- MENU_OUTPUT_TOKENS in cost-estimator.js now has explicit entries for audit (8000), prompt-triage (3000), recon (2000), and forecast (4000). Previously these modes silently fell back to the generic 4000 default, underestimating audit output by 50 percent.
+
 ## v10.0.1 -- July 6, 2026
 
 ### Patch: Trial Funnel, Ghost Brief, Watcher Regex, and Paywall Fixes

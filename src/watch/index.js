@@ -150,13 +150,24 @@ export async function enableWatch({ repoUrl, token, watchOptions = {}, version =
   const branches = watchOptions.branches || ['main', 'develop', 'feature/**', 'bugfix/**'];
   const branchYaml = branches.map(b => `      - '${b}'`).join('\n');
 
-  const workflowContent = fs.readFileSync(WORKFLOW_TEMPLATE_PATH, 'utf8')
+  // Version pinning uses plain-string search, so it is line-ending agnostic.
+  const rawContent = fs.readFileSync(WORKFLOW_TEMPLATE_PATH, 'utf8')
     .replace('ghost-architect-open@latest', `ghost-architect-open@${version}`)
-    .replace('"version":"__GHOST_VERSION__"', `"version":"${version}"`)
-    .replace(
-      /on:\n  push:\n    branches:\n(      - .+\n)+/,
-      `on:\n  push:\n    branches:\n${branchYaml}\n`
-    );
+    .replace('"version":"__GHOST_VERSION__"', `"version":"${version}"`);
+
+  // Branch injection uses an LF-anchored regex. On a Windows checkout the file
+  // may have CRLF endings, which makes the regex silently fail to match and
+  // pushes the workflow with the wrong branch triggers. Normalize to LF before
+  // the replacement, then restore CRLF if the source used it.
+  const hadCRLF = rawContent.includes('\r\n');
+  const normalizedContent = rawContent.replace(/\r\n/g, '\n');
+  const replacedContent = normalizedContent.replace(
+    /on:\n  push:\n    branches:\n(      - .+\n)+/,
+    `on:\n  push:\n    branches:\n${branchYaml}\n`
+  );
+  const workflowContent = hadCRLF
+    ? replacedContent.replace(/\n/g, '\r\n')
+    : replacedContent;
 
   // Push ghost-watcher.yaml (requires repo scope only)
   await upsertRepoFile(

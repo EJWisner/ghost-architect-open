@@ -72,9 +72,14 @@ function randomDataChars(n = 11) {
   return out.join('');
 }
 
-// Build a fresh human key for a given tier and year.
+// Build a fresh human key for a given tier and year. Accepts BOTH canonical
+// tier strings ('pro', 'pro-max' — what getActiveTier()/tier-gates return) and
+// 3-char code keys ('PRO', 'PMX'). VALID_TIERS holds the code keys, so a
+// canonical string must be mapped to its code first via TIER_TO_CODE (the
+// canonical->code inverse of CODE_TO_TIER); a value that is already a code key
+// isn't in TIER_TO_CODE, so it falls through to the uppercased input.
 export function generateKey(tier, year = new Date().getUTCFullYear()) {
-  const tierCode = tier.toUpperCase();
+  const tierCode = TIER_TO_CODE[tier.toLowerCase()] || tier.toUpperCase();
   if (!VALID_TIERS.has(tierCode)) {
     throw new Error(`Invalid tier: ${tier} (must be one of ${[...VALID_TIERS].join(', ')})`);
   }

@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.2
+- Patch: format.js tier key mismatch fixed (generateKey now accepts canonical tier strings), enableWatch CRLF branch injection fixed, cost-estimator output token estimates added for audit, prompt-triage, recon, and forecast modes.
+
 ### v10.0.1
 - Patch: trial funnel and paywall fixes. Trial tier now has full Pro Max parity (Audit and Ghost Brief unlocked, 100K context cap), so the "free 7-day Ghost Pro Max trial" CTA delivers what it promises, and that CTA now appears on the Open welcome banner. ghost --brief no longer crashes (ReferenceError: profile is not defined). Chat mode reports its real version instead of inventing one. Ghost Watcher self-refuting filter no longer deletes "inconsistent X between A and B" findings. Audit dev scaffold removed. Fix Forecast now previews against proposed changes, not the baseline. Banner renders [Pro Max] not [Pro-max]. See CHANGELOG.md for the full list.
 

@@ -37,6 +37,14 @@ const MENU_OUTPUT_TOKENS = {
   brief:        6000,
   'ghost-brief': 6000,
   question:     2000,
+  // These modes previously fell through to DEFAULT_OUTPUT_TOKENS (4000), which
+  // silently mis-estimated their real output. MENU-scale ("fuller response")
+  // values per the note above, deliberately higher than core/estimator's
+  // per-call MODE_OUTPUT_ESTIMATES (which size the at-a-glance panel, not spend).
+  audit:           8000,   // deal-grade report, long output
+  'prompt-triage': 3000,   // per-prompt findings list
+  recon:           2000,   // scoping summary, shorter output
+  forecast:        4000,   // impact analysis, medium output
 };
 
 const DEFAULT_OUTPUT_TOKENS = 4000;
