@@ -19,6 +19,7 @@ import { extractFindings as extractFindingsFromReport } from '../utils/finding-p
 import { isContextOverflow } from '../utils/errors.js';
 import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
+import { recordUsage } from './usage-tracker.js';
 import { mergeRates } from '../profile/index.js';
 
 const PASS_TOKEN_LIMIT = 45000;
@@ -446,6 +447,16 @@ async function callClaudeRaw(prompt, system, maxTokens = 8096) {
         result += chunk.delta.text;
       }
     }
+    // Record REAL token usage so the cost report reflects the actual API bill.
+    // Every multi-pass scan pass, the synthesis call, and the follow-up merges
+    // route through here, so this one capture covers all callClaude traffic.
+    // Best-effort: a usage-capture hiccup must never fail a scan.
+    try {
+      const finalMsg = await activeStream.finalMessage();
+      if (finalMsg?.usage) {
+        recordUsage(finalMsg.usage.input_tokens ?? 0, finalMsg.usage.output_tokens ?? 0);
+      }
+    } catch { /* usage capture is best-effort */ }
   } catch (err) {
     // Abort stream cleanly before rethrowing — prevents orphaned background processes
     if (activeStream) {

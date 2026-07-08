@@ -81,7 +81,15 @@ function writeRedactionFailureLog(failedRules, { continued }) {
     }
     fs.writeFileSync(filepath, lines.join('\n'), 'utf8');
     return filepath;
-  } catch {
+  } catch (writeErr) {
+    // File write failed -- fall back to stderr so diagnostic details are never
+    // silently lost even when the debug directory is unwritable.
+    process.stderr.write(
+      `[Ghost] Redaction failure log could not be written ` +
+      `(${writeErr.message}). Failures:\n` +
+      failedRules.map(f => `  - ${f.rule}: ${f.file || '<unknown file>'}`).join('\n') +
+      '\n'
+    );
     return null; // never let logging break the scan
   }
 }
@@ -932,6 +940,15 @@ function buildContext(fileMap) {
   // assembled .context string. Bind to a named local rather than reassigning the
   // parameter so the input vs. redacted-output distinction stays explicit.
   const activeFileMap = redactedFileMap;
+
+  // Clear original fileMap to prevent unredacted content from remaining
+  // accessible via caller references. Defense-in-depth: nothing downstream in
+  // buildContext reads the raw fileMap after this point (only activeFileMap is
+  // used), and the loader entry points return the redacted result rather than
+  // their raw local map, so this only drops the now-unneeded raw content.
+  for (const key of Object.keys(fileMap)) {
+    fileMap[key] = null;
+  }
 
   let context = '';
   let fileIndex = [];

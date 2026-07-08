@@ -6,7 +6,9 @@ import gradient from 'gradient-string';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
-import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey, reconcileSudoOwnership, isLinuxRootWithoutSudoUser } from '../src/config.js';
+import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey, reconcileSudoOwnership, isLinuxRootWithoutSudoUser, getConfig, secureConfigFile } from '../src/config.js';
+import { getPublishConfig, setPublishConfig, getPublishToken } from '../src/core/mobile-publish.js';
+import { createOctokit } from '../src/utils/octokit-client.js';
 import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
 import { runQuestionMode, retrieveQuestionBatchResult } from '../src/modes/question.js';
@@ -1908,6 +1910,163 @@ async function buildPendingBatchChoices() {
   return rows;
 }
 
+// ── Selective Reconfigure ──────────────────────────────────────────────────
+// Replaces the old "replay the entire first-run wizard" behavior. Each item is
+// updated independently, every level offers Back, and Ctrl+C in a sub-option
+// returns to this menu (never the main menu, never an exit). No em dashes in
+// any user-facing string here (colons/hyphens only).
+
+// Verify a GitHub reports token against the GitHub API. Pass an explicit token
+// to test a candidate before saving; omit to test the currently-stored one.
+async function testGithubToken(explicitToken) {
+  try {
+    const token = explicitToken !== undefined ? explicitToken : await getPublishToken();
+    if (!token) return false;
+    const octokit = createOctokit({ auth: token });
+    await octokit.rest.users.getAuthenticated();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Anthropic API key sub-flow. A blank Enter or 'back' cancels WITHOUT touching
+// the stored key (the old wizard cleared it on blank Enter).
+async function reconfigureApiKey() {
+  try {
+    const { key } = await inquirer.prompt([{
+      type: 'password', name: 'key',
+      message: chalk.cyan("Enter new Anthropic API key (press Enter to keep current, type 'back' to cancel):"),
+    }]);
+    const val = (key || '').trim();
+    if (!val || val.toLowerCase() === 'back') {
+      console.log(chalk.gray('  No changes saved.'));
+      return;
+    }
+    if (!val.startsWith('sk-ant-')) {
+      console.log(chalk.yellow('  Warning: key does not start with sk-ant-. Continuing anyway.'));
+    }
+    const { decision } = await inquirer.prompt([{
+      type: 'list', name: 'decision', theme: inquirerTheme,
+      message: chalk.cyan('Save this key?'),
+      choices: [
+        { name: 'Yes', value: 'yes' },
+        { name: 'No', value: 'no' },
+        { name: 'Back', value: 'back' },
+      ],
+    }]);
+    if (decision === 'yes') {
+      getConfig().set('anthropicApiKey', val);
+      secureConfigFile();
+      console.log(chalk.green('  API key saved.'));
+    } else {
+      console.log(chalk.gray('  Discarded. No changes saved.'));
+    }
+  } catch (_) {
+    // Ctrl+C during the sub-option: fall back to the reconfigure menu.
+  }
+}
+
+// GitHub reports token sub-flow. Tests against GitHub BEFORE saving; on failure
+// offers Try again or Back. Returns the (possibly updated) verified status.
+async function reconfigureGithubToken(currentStatus) {
+  try {
+    while (true) {
+      const { token } = await inquirer.prompt([{
+        type: 'password', name: 'token',
+        message: chalk.cyan("Enter GitHub reports token (starts with ghp_, press Enter to cancel):"),
+      }]);
+      const val = (token || '').trim();
+      if (!val || val.toLowerCase() === 'back') return currentStatus;
+
+      process.stdout.write(chalk.gray('  Testing token against GitHub...\n'));
+      const ok = await testGithubToken(val);
+      if (!ok) {
+        const { retry } = await inquirer.prompt([{
+          type: 'list', name: 'retry', theme: inquirerTheme,
+          message: chalk.yellow('GitHub rejected this token. Try again or press Enter to cancel.'),
+          choices: [
+            { name: 'Try again', value: 'retry' },
+            { name: 'Back', value: 'back' },
+          ],
+        }]);
+        if (retry === 'back') return currentStatus;
+        continue; // loop back to the token prompt
+      }
+      // Valid: persist via the keychain path (CC5). setPublishConfig needs a
+      // repo; preserve the configured one, or prompt for it if none is set.
+      const cfg = getPublishConfig();
+      let repo = cfg?.repo;
+      if (!repo) {
+        const { repoInput } = await inquirer.prompt([{
+          type: 'input', name: 'repoInput',
+          message: chalk.cyan("Reports repo (owner/repo or GitHub URL, type 'back' to cancel):"),
+        }]);
+        repo = (repoInput || '').trim();
+        if (!repo || repo.toLowerCase() === 'back') {
+          console.log(chalk.gray('  No repo provided. Token not saved.'));
+          return currentStatus;
+        }
+      }
+      await setPublishConfig({ repo, token: val });
+      console.log(chalk.green('  Token verified and saved successfully.'));
+      return true;
+    }
+  } catch (_) {
+    return currentStatus; // Ctrl+C: return to the reconfigure menu
+  }
+}
+
+// License sub-flow. Runs only the activation path; never touches the API key or
+// GitHub token. Returns to the reconfigure menu after activation completes or is
+// cancelled. (runActivateFlow returns on success; it exits the process only on a
+// server/verification error, which is its pre-existing behavior.)
+async function reconfigureLicense() {
+  try {
+    const { key } = await inquirer.prompt([{
+      type: 'input', name: 'key',
+      message: chalk.cyan("Enter license key or signed token (type 'back' to cancel):"),
+    }]);
+    const val = (key || '').trim();
+    if (!val || val.toLowerCase() === 'back') return;
+    await runActivateFlow(val);
+  } catch (_) {
+    // Ctrl+C during the sub-option: fall back to the reconfigure menu.
+  }
+}
+
+// The selective reconfigure menu. licenseState is a short status string for the
+// license line. Returns to the caller (main menu) only on explicit Back, or on
+// Ctrl+C at this menu level.
+async function runSelectiveReconfigure(licenseState) {
+  // Test the GitHub token once when the menu opens; cache for the session.
+  let githubOk = await testGithubToken();
+  while (true) {
+    const reconfigureChoices = [
+      { name: `Anthropic API key ${resolveApiKey() ? '(configured)' : '(not set)'}`, value: 'apiKey' },
+      { name: `GitHub reports token ${githubOk ? '(verified)' : '(bad credentials: needs update)'}`, value: 'githubToken' },
+      { name: `License key (${TIER}: ${licenseState})`, value: 'license' },
+      { name: 'Run full setup wizard', value: 'full' },
+      { name: 'Back', value: 'back' },
+    ];
+    let action;
+    try {
+      ({ action } = await inquirer.prompt([{
+        type: 'list', name: 'action', theme: inquirerTheme,
+        message: chalk.cyan('Reconfigure Ghost Architect:'),
+        choices: reconfigureChoices,
+      }]));
+    } catch (_) {
+      return; // Ctrl+C at the menu level: back to the main Ghost menu.
+    }
+    if (action === 'back') return;
+    if (action === 'full') { await reconfigure(); return; }
+    if (action === 'apiKey') { await reconfigureApiKey(); continue; }
+    if (action === 'githubToken') { githubOk = await reconfigureGithubToken(githubOk); continue; }
+    if (action === 'license') { await reconfigureLicense(); continue; }
+  }
+}
+
 async function main() {
   // Parse CLI flags first so --help / --version / --max-context etc. are honored
   // before we print the banner or run the setup wizard.
@@ -2299,7 +2458,7 @@ async function main() {
       }
 
       if (method === 'reconfigure') {
-        await reconfigure();
+        await runSelectiveReconfigure(licenseResult?.state || 'unknown');
         printBanner();
         continue;
       }

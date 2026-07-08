@@ -178,29 +178,80 @@ export function saveProjectIntelligence(label, reportText, meta) {
       scanCount:        1,
       scans:            [{ date: scanDate, file: scanFile, findingCount: findings.length }],
       rates:            meta.rates || null,
+      // Optimistic-locking version for the aggregate project.json. Starts at 0;
+      // every subsequent read-modify-write increments it. See the retry loop
+      // in the subsequent-scan branch below.
+      version:          0,
     };
     saveProjectMeta(label, projectMeta);
     return { type: 'baseline', findingCount: findings.length };
   }
 
-  // Subsequent scan — compare against baseline
-  const baseline  = existing.baselineFindings;
-  const resolved  = baseline.filter(f => !findings.some(n => similarFinding(f, n)));
-  const newIssues = findings.filter(f => !baseline.some(b => similarFinding(f, b)));
-  const remaining = baseline.filter(f => findings.some(n => similarFinding(f, n)));
-  const progress  = baseline.length > 0 ? Math.round((resolved.length / baseline.length) * 100) : 0;
+  // Subsequent scan — compare against baseline and update the aggregate meta.
+  //
+  // OPTIMISTIC LOCKING (project.json read-modify-write):
+  // Two scans of the same project can finish nearly simultaneously (a Ghost
+  // Watcher run plus a manual scan, or parallel CI jobs). Each reads
+  // project.json, appends its own scan entry and bumps scanCount, then writes.
+  // Without a guard the second writer clobbers the first, silently losing one
+  // scan's aggregate update. (Per-scan record files are uniquely named and never
+  // race; only the shared project.json does.) We guard the cycle with a `version`
+  // field: capture the version we read, re-read immediately before writing, and
+  // if it moved underneath us another process wrote first — so we retry the whole
+  // read-modify-write against the fresh copy (re-applying our update on top, so
+  // the concurrent scan's entry is preserved rather than lost). After
+  // MAX_SAVE_RETRIES lost races we warn and take last-write-wins rather than drop
+  // the scan result entirely. This is optimistic, not a hard lock: a small TOCTOU
+  // window remains between the final re-read and the write, but it collapses the
+  // practical race window to near zero without platform-specific file locking.
+  const MAX_SAVE_RETRIES = 3;
 
-  // Update project meta
-  existing.lastScan  = scanDate;
-  existing.scanCount = (existing.scanCount || 1) + 1;
-  existing.scans     = existing.scans || [];
-  existing.scans.push({ date: scanDate, file: scanFile, findingCount: findings.length, resolved: resolved.length, newIssues: newIssues.length });
-  saveProjectMeta(label, existing);
+  let baseline, resolved, newIssues, remaining, progress, current;
+  for (let attempt = 1; attempt <= MAX_SAVE_RETRIES; attempt++) {
+    // (1) Read current metadata and capture its version (default 0 if absent).
+    current = loadProjectMeta(label) || existing;
+    const baseVersion = (typeof current.version === 'number') ? current.version : 0;
+
+    // (2) Apply updates in memory. The comparison is derived from the baseline,
+    //     which never changes across writes, so it is stable across retries.
+    baseline  = current.baselineFindings || [];
+    resolved  = baseline.filter(f => !findings.some(n => similarFinding(f, n)));
+    newIssues = findings.filter(f => !baseline.some(b => similarFinding(f, b)));
+    remaining = baseline.filter(f => findings.some(n => similarFinding(f, n)));
+    progress  = baseline.length > 0 ? Math.round((resolved.length / baseline.length) * 100) : 0;
+
+    current.lastScan  = scanDate;
+    current.scanCount = (current.scanCount || 1) + 1;
+    current.scans     = current.scans || [];
+    current.scans.push({ date: scanDate, file: scanFile, findingCount: findings.length, resolved: resolved.length, newIssues: newIssues.length });
+    // (C) Increment version on every successful write.
+    current.version   = baseVersion + 1;
+
+    // (3) Re-read immediately before writing to detect a concurrent write.
+    const check = loadProjectMeta(label);
+    const checkVersion = (check && typeof check.version === 'number') ? check.version : 0;
+
+    // (4) Version moved since our read: another process wrote first — retry the
+    //     whole cycle against the fresh copy (up to MAX_SAVE_RETRIES times).
+    if (checkVersion !== baseVersion && attempt < MAX_SAVE_RETRIES) {
+      continue;
+    }
+    // (5) Retries exhausted with a still-conflicting version: warn and fall back
+    //     to last-write-wins so this scan's result is not lost entirely.
+    if (checkVersion !== baseVersion) {
+      process.stderr.write(
+        `Ghost: project "${label}" metadata changed concurrently after ${MAX_SAVE_RETRIES} attempts; ` +
+        `writing anyway (last-write-wins). A concurrent scan's aggregate update may be overwritten.\n`
+      );
+    }
+    saveProjectMeta(label, current);
+    break;
+  }
 
   // Velocity trend
   let velocity = null;
-  if (existing.scans.length >= 3) {
-    const recent     = existing.scans.slice(-3);
+  if (current.scans.length >= 3) {
+    const recent     = current.scans.slice(-3);
     const avgResolved = Math.round(recent.reduce((s, sc) => s + (sc.resolved || 0), 0) / recent.length);
     const scansToFix  = avgResolved > 0 && remaining.length > 0 ? Math.ceil(remaining.length / avgResolved) : null;
     velocity = { avgResolved, scansToFix };
@@ -209,7 +260,7 @@ export function saveProjectIntelligence(label, reportText, meta) {
   return {
     type:          'comparison',
     label,
-    baselineDate:  existing.baselineDate,
+    baselineDate:  current.baselineDate,
     scanDate,
     baselineCount: baseline.length,
     findingCount:  findings.length,

@@ -8,6 +8,7 @@ import inquirer from 'inquirer';
 import { runPOIScan } from '../analyst/index.js';
 import { buildPasses } from '../analyst/multipass.js';
 import { runMultiPassPOI } from '../core/multipass.js';
+import { beginUsageCapture, endUsageCapture } from '../core/usage-tracker.js';
 import { showCostEstimate, showActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
@@ -158,6 +159,12 @@ export async function runPOIMode(codebaseContext, options = {}) {
   let spinner = null;
 
   try {
+    // Capture REAL API token usage across the whole scan. Every scan pass,
+    // synthesis, narrator, and per-finding verifier call records into the usage
+    // tracker, so the cost line below can report the actual Anthropic bill
+    // instead of the old char/4 estimate that only measured the codebase context
+    // once and ignored the rest (historically ~9x low on a full POI scan).
+    beginUsageCapture();
     if (useMultiPass) {
       const multiResult = await runMultiPassPOI(fileMap, label || 'project', {
         onChunk(chunk) {
@@ -346,9 +353,19 @@ export async function runPOIMode(codebaseContext, options = {}) {
 
     if (!buffer) return;
 
-    // Cost
-    const inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 200;
-    const outputTokens = Math.ceil(buffer.length / 4);
+    // Cost — prefer REAL captured token usage (every API call in the pipeline
+    // records into the usage tracker). Fall back to the char/4 estimate only if
+    // capture produced nothing (e.g. a code path that bypassed the tracker), so
+    // the cost line degrades gracefully rather than showing $0.
+    const captured = endUsageCapture();
+    let inputTokens, outputTokens;
+    if (captured && captured.calls > 0) {
+      inputTokens  = captured.inputTokens;
+      outputTokens = captured.outputTokens;
+    } else {
+      inputTokens  = Math.ceil(codebaseContext.context.length / 4) + 200;
+      outputTokens = Math.ceil(buffer.length / 4);
+    }
     showActualCost(inputTokens, outputTokens, model);
 
     // Project Intelligence — auto-compare against baseline

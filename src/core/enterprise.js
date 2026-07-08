@@ -407,9 +407,6 @@ export async function removeSeat(targetSeatId, workspace) {
 //     disk (cleared on the next successful write). Both the file write and the
 //     removal are best-effort and swallow their own errors so the fail-safe
 //     contract holds even if the reports directory is read-only.
-let consecutiveAuditFailures = 0;
-let lastAuditFailureUtc = null;
-
 const AUDIT_FAILURE_MARKER = path.join(
   os.homedir(), 'Ghost Architect Reports', '.audit-failure'
 );
@@ -423,14 +420,39 @@ function logAuditFailure(stage, err) {
   }
 }
 
+// Restore the consecutive-failure streak from the on-disk marker so it survives
+// process boundaries. Ghost Watcher runs one process per commit; without this
+// the in-memory counter would reset to 0 every run and a sustained audit-log
+// outage would never accumulate past the first failure, so the escalation
+// warning could never fire. Best-effort: a missing or unreadable/legacy marker
+// (one without a stored count) is the normal case and starts the streak at 0.
+function readAuditFailureMarker() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(AUDIT_FAILURE_MARKER, 'utf8'));
+    const count = Number.isInteger(parsed?.consecutiveFailures) ? parsed.consecutiveFailures : 0;
+    return {
+      consecutiveFailures: Math.max(0, count),
+      lastAuditFailureUtc: parsed?.lastAuditFailureUtc || null,
+    };
+  } catch {
+    return { consecutiveFailures: 0, lastAuditFailureUtc: null };
+  }
+}
+
+const _restoredAuditFailure = readAuditFailureMarker();
+let consecutiveAuditFailures = _restoredAuditFailure.consecutiveFailures;
+let lastAuditFailureUtc = _restoredAuditFailure.lastAuditFailureUtc;
+
 // Persist the audit-failure signal across CLI invocations. Best-effort: any
-// error here is swallowed so a disk problem can never break the scan.
-function writeAuditFailureMarker(utc) {
+// error here is swallowed so a disk problem can never break the scan. The
+// running streak count is stored so the next process resumes it rather than
+// restarting at zero.
+function writeAuditFailureMarker(count, utc) {
   try {
     fs.mkdirSync(path.dirname(AUDIT_FAILURE_MARKER), { recursive: true });
     fs.writeFileSync(
       AUDIT_FAILURE_MARKER,
-      JSON.stringify({ lastAuditFailureUtc: utc, seatId: getSeatId() }) + '\n'
+      JSON.stringify({ consecutiveFailures: count, lastAuditFailureUtc: utc, seatId: getSeatId() }) + '\n'
     );
   } catch (err) {
     logAuditFailure('marker-write', err);
@@ -492,11 +514,10 @@ export async function appendAuditEvent(event, workspace) {
     logAuditFailure('audit-write', err);
     consecutiveAuditFailures += 1;
     lastAuditFailureUtc = new Date().toISOString();
-    // First failure of this run — persist the signal so it survives the
-    // process exit and an admin sees it even if this is the last scan.
-    if (consecutiveAuditFailures === 1) {
-      writeAuditFailureMarker(lastAuditFailureUtc);
-    }
+    // Persist the running streak on EVERY failure (not just the first) so the
+    // on-disk count stays accurate for the next process to resume. The marker
+    // is cleared only after a successful write (see the success path above).
+    writeAuditFailureMarker(consecutiveAuditFailures, lastAuditFailureUtc);
     if (consecutiveAuditFailures >= 1) {
       process.stderr.write(
         'Ghost: ' + consecutiveAuditFailures + ' consecutive audit-log '

@@ -5,6 +5,29 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.6 -- July 8, 2026
+
+### Patch: Cost Reporting, Reconfigure Menu, Security, and Reliability
+
+**Cost Reporting**
+- Points of Interest scan cost reporting fixed (previously ~9x low on multi-pass scans). The scan passes were the only calls counted; the synthesis, narrator, and per-finding verifier calls were invisible, and the single-pass path estimated cost from character counts rather than real usage. All API calls in the POI pipeline (both single-pass and multi-pass engines) now record real token usage into a shared usage tracker, and the reported cost reflects the actual Anthropic bill. Blast and Conflict already tracked their own usage.
+
+**Reconfigure Menu**
+- Reconfigure Ghost now shows a selective update menu instead of replaying the full first-run wizard. Each configurable item shows its current status. Updating one setting no longer risks clearing another. Every sub-option has a Back choice that returns to the reconfigure menu without saving changes.
+- GitHub reports token update now tests the token against the GitHub API before saving. Invalid tokens are rejected before storage with a clear error message.
+
+**Security**
+- GitHub reports token now stored in OS keychain when available (macOS Keychain, Windows Credential Manager, Linux Secret Service). Falls back to chmod-600 plaintext with explicit warning when keychain is unavailable. Existing tokens migrate automatically on first read.
+- Consultant profile fields now go through a two-stage prompt architecture. Stage 1 extracts vocabulary in a sandboxed LLM call with no codebase access before Stage 2 uses the sanitized list in the main analysis. Injection attempts are detected and logged.
+- Original fileMap nulled after redaction to prevent unredacted content from persisting in memory.
+- writeRedactionFailureLog now falls back to stderr when the debug directory is unwritable so diagnostic details are never silently lost.
+
+**Reliability**
+- Race condition in saveProjectIntelligence fixed with optimistic locking. Concurrent scans on the same project no longer silently overwrite each other. Atomic file writes prevent metadata corruption on crash.
+- Tier 2 detector failures now preserve the original error stack trace. Set GHOST_DEBUG_TIER2=1 to log full stack traces to stderr.
+- Enterprise audit log failure counter now persists across process boundaries. Admins see cumulative failure counts instead of always seeing "1 consecutive failure."
+- SCAN_QUOTA now imported from tier-gates.js into freemium.js. One source of truth -- enforcement gate and paywall copy can no longer drift apart.
+
 ## v10.0.5 -- July 8, 2026
 
 ### Patch: Executive Brief, Ghost Brief, and Install

@@ -17,7 +17,7 @@
  */
 
 import { createOctokit } from '../utils/octokit-client.js';
-import { getConfig } from '../config.js';
+import { getConfig, secureConfigFile } from '../config.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -36,25 +36,113 @@ function encodeFileContent(content) {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+// The GitHub PAT is stored in the OS keychain when one is reachable, and only
+// falls back to the (chmod-600) configstore when it is not. keytar is loaded
+// LAZILY and OPTIONALLY -- it is deliberately NOT a hard dependency, because it
+// is a native, now-unmaintained module and forcing it on every `npm install -g`
+// would break installs that lack build tools (or libsecret on Linux). If it is
+// present and works, we get keychain security; if not, we degrade cleanly.
+const KEYCHAIN_SERVICE = 'ghost-architect';
+const KEYCHAIN_ACCOUNT_GITHUB = 'mobile-publish-pat';
+
+let _keytarChecked = false;
+let _keytar = null;
+async function loadKeytar() {
+  if (_keytarChecked) return _keytar;
+  _keytarChecked = true;
+  try {
+    const mod = await import('keytar');
+    _keytar = mod.default || mod;
+  } catch {
+    _keytar = null; // not installed, or native binding / libsecret unavailable
+  }
+  return _keytar;
+}
+
+// Config here holds only non-secret fields: { repo, inKeychain }. In keychain
+// mode the token lives in the OS keychain (not in this JSON). In fallback mode
+// the token is stored inline (with 0600 perms). getPublishConfig stays SYNC and
+// never returns the real secret in keychain mode -- use getPublishToken() for
+// the actual PAT.
 export function getPublishConfig() {
   return config.get('mobilePublish') || null;
 }
 
-export function setPublishConfig({ repo, token }) {
-  config.set('mobilePublish', { repo, token });
+// Resolve the actual GitHub PAT. Async because keychain access is async.
+// Returns null when nothing is stored. Also transparently MIGRATES a legacy
+// plaintext token into the keychain on first use when a keychain is available,
+// so existing installs are upgraded without the user re-running setup.
+export async function getPublishToken() {
+  const cfg = config.get('mobilePublish');
+  if (!cfg) return null;
+
+  if (cfg.inKeychain) {
+    const keytar = await loadKeytar();
+    if (keytar) {
+      try {
+        const token = await keytar.getPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_GITHUB);
+        if (token) return token;
+      } catch { /* keychain unreadable -- fall through to any remnant below */ }
+    }
+    return cfg.token || null;
+  }
+
+  // Plaintext mode. If a keychain is now available, migrate the token into it
+  // and drop the plaintext copy (best-effort; keep working either way).
+  const token = cfg.token || null;
+  if (token) {
+    const keytar = await loadKeytar();
+    if (keytar) {
+      try {
+        await keytar.setPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_GITHUB, token);
+        config.set('mobilePublish', { repo: cfg.repo, inKeychain: true });
+        secureConfigFile();
+      } catch { /* migration best-effort; keep using the plaintext token */ }
+    }
+  }
+  return token;
+}
+
+// Store the repo + PAT. Async: keychain writes are async. Prefers the OS
+// keychain; falls back to a chmod-600 plaintext store with an explicit warning.
+export async function setPublishConfig({ repo, token }) {
+  const keytar = await loadKeytar();
+  if (keytar) {
+    try {
+      await keytar.setPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_GITHUB, token);
+      // Persist only the repo + a keychain sentinel; never the plaintext token.
+      config.set('mobilePublish', { repo, inKeychain: true });
+      secureConfigFile();
+      return { secure: true };
+    } catch { /* keychain write failed at runtime -- fall back below */ }
+  }
+  // Fallback: chmod-600 plaintext. Warn so the user knows the token is on disk.
+  config.set('mobilePublish', { repo, token, inKeychain: false });
+  secureConfigFile();
+  console.warn(
+    'Warning: OS keychain unavailable. GitHub token stored with owner-only (0600) file permissions.'
+  );
+  return { secure: false };
 }
 
 export function isPublishConfigured() {
   const cfg = getPublishConfig();
-  return !!(cfg?.repo && cfg?.token);
+  // Configured when we have a repo AND a token reachable either in the keychain
+  // (inKeychain flag) or inline (fallback). Stays synchronous so existing
+  // callers (reports.js, poi.js) do not need to change.
+  return !!(cfg?.repo && (cfg.token || cfg.inKeychain));
 }
 
 // ── Octokit helpers ───────────────────────────────────────────────────────────
 
-function getOctokit() {
+async function getOctokit() {
   const cfg = getPublishConfig();
   if (!cfg) throw new Error('Ghost Mobile publish not configured. Run ghost --configure-publish.');
-  return createOctokit({ auth: cfg.token });
+  const token = await getPublishToken();
+  if (!token) {
+    throw new Error('Ghost Mobile publish token not found (keychain empty or config missing). Re-run ghost --configure-publish.');
+  }
+  return createOctokit({ auth: token });
 }
 
 async function getFileSha(octokit, owner, repo, filePath) {
@@ -243,7 +331,7 @@ export async function publishProject(projectMeta, scanRecord) {
   if (!isPublishConfigured()) return { ok: false, reason: 'not_configured' };
 
   const cfg = getPublishConfig();
-  const octokit = getOctokit();
+  const octokit = await getOctokit();
   const { owner, repo } = parseRepo(cfg.repo);
   const slug = (projectMeta.slug || projectMeta.label || 'unnamed')
     .replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
@@ -318,7 +406,7 @@ export async function testPublishConnection() {
   const cfg = getPublishConfig();
   if (!cfg) return { ok: false, error: 'Not configured. Run ghost --configure-publish.' };
   try {
-    const octokit = getOctokit();
+    const octokit = await getOctokit();
     const { owner, repo } = parseRepo(cfg.repo);
     await octokit.rest.repos.get({ owner, repo });
     return { ok: true, repo: cfg.repo };
@@ -331,7 +419,7 @@ export async function listPublishedProjects() {
   const cfg = getPublishConfig();
   if (!cfg) return [];
   try {
-    const octokit = getOctokit();
+    const octokit = await getOctokit();
     const { owner, repo } = parseRepo(cfg.repo);
     const { content: index } = await getFileContent(octokit, owner, repo, 'index.json');
     return index?.projects || [];

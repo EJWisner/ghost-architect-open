@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.6
+- Patch: cost reporting fixed (was ~9x off on multi-pass POI scans), selective reconfigure menu added, GitHub token now keychain-secured, prompt injection two-stage architecture, race condition in projects fixed, and four additional findings from Ghost POI self-scan.
+
 ### v10.0.5
 - Patch: Executive Brief renders a graceful empty state instead of erroring, ghost --brief --output flag now wired through (both --output=path and --output path forms), and the README install command uses --location=global.
 

@@ -586,7 +586,15 @@ export async function auditPromptForDefect(params) {
     const errMsg = 'Audit API call failed: ' + (err.message || String(err));
     maybeLogTier2Failure(detectorName, modelId, errMsg);
     recordTier2Failure(detectorName, modelId, errMsg);
-    return { ok: false, findings: [], error: errMsg };
+    // Preserve the full stack trace for debugging. maybeLogTier2Failure only
+    // logs the one-line message; the stack is otherwise discarded. Gated on the
+    // same GHOST_DEBUG_TIER2=1 convention used elsewhere in this module.
+    if (process.env.GHOST_DEBUG_TIER2 === '1') {
+      process.stderr.write(`[Ghost Tier2 Debug] ${err.stack || err}\n`);
+    }
+    // Carry the original error object on the failure shape so callers that want
+    // richer diagnostics (stack, cause) have access rather than just the message.
+    return { ok: false, findings: [], error: errMsg, originalError: err };
   } finally {
     release();
   }

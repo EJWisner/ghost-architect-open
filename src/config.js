@@ -140,7 +140,7 @@ function handleSetupInterrupt(err) {
 // manual edit or an umask-affected older install, and keeps the "owner-only
 // file permissions" privacy claim true. Best-effort — a no-op / throw on
 // Windows or restricted filesystems is swallowed.
-function secureConfigFile() {
+export function secureConfigFile() {
   try {
     fs.chmodSync(config.path, 0o600);
   } catch (_) {

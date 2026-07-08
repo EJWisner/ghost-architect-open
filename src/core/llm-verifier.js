@@ -30,6 +30,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveApiKey, getConfig } from '../config.js';
+import { recordUsage } from './usage-tracker.js';
 
 // Keep source snippets under this size to control cost. Most findings reference
 // a single file; if the file is huge, we truncate with context markers.
@@ -131,6 +132,15 @@ Respond with a single JSON object: { "verdict": "...", "reason": "..." }`;
         raw += chunk.delta.text;
       }
     }
+    // Record REAL usage for this per-finding verifier call. A scan runs one of
+    // these per finding, so together they are a material slice of the bill that
+    // the old char/4 estimate ignored entirely. Best-effort.
+    try {
+      const finalMsg = await stream.finalMessage();
+      if (finalMsg?.usage) {
+        recordUsage(finalMsg.usage.input_tokens ?? 0, finalMsg.usage.output_tokens ?? 0);
+      }
+    } catch { /* best-effort usage capture */ }
   } catch (err) {
     return { verdict: 'partial', reason: `LLM verifier call failed: ${err.message}` };
   }

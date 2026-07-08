@@ -7,6 +7,7 @@ import { AUDIT_ROADMAP_SYSTEM, buildAuditRoadmapUserMessage } from '../../prompt
 import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
+import { recordUsage } from '../core/usage-tracker.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { mergeRates } from '../profile/index.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
@@ -140,6 +141,15 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
       rawOutput += chunk.delta.text;
     }
   }
+  // Record REAL usage for the single-pass scan call. The narrator and verifier
+  // steps below record their own usage; together they cover the whole
+  // single-pass POI pipeline. Best-effort so a capture hiccup never fails a scan.
+  try {
+    const scanFinal = await stream.finalMessage();
+    if (scanFinal?.usage) {
+      recordUsage(scanFinal.usage.input_tokens ?? 0, scanFinal.usage.output_tokens ?? 0);
+    }
+  } catch { /* usage capture is best-effort */ }
 
   // Step 2: Narrator rewrites — streaming to user
   const findings = extractFindings(rawOutput, 'poi');
