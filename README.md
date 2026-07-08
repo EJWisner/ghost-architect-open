@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.7
+- Hotfix: Reconfigure menu no longer crashes with a ReferenceError (out-of-scope licenseResult), and FREE_QUOTA is removed entirely so SCAN_QUOTA from tier-gates.js is the single source of truth for the free-scan quota.
+
 ### v10.0.6
 - Patch: cost reporting fixed (was ~9x off on multi-pass POI scans), selective reconfigure menu added, GitHub token now keychain-secured, prompt injection two-stage architecture, race condition in projects fixed, and four additional findings from Ghost POI self-scan.
 

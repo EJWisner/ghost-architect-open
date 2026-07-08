@@ -66,7 +66,7 @@ import {
   getAdminToken,
   saveAdminToken,
 } from '../src/license/store.js';
-import { setActiveLicense, getActiveTier, trialDaysRemaining } from '../src/license/session.js';
+import { setActiveLicense, getActiveLicense, getActiveTier, trialDaysRemaining } from '../src/license/session.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
 import { getScanCount, renderAuditPaywall, renderQuotaPaywall, renderUpgradePaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
 import { PRICING } from '../src/constants/pricing.js';
@@ -2458,7 +2458,10 @@ async function main() {
       }
 
       if (method === 'reconfigure') {
-        await runSelectiveReconfigure(licenseResult?.state || 'unknown');
+        // licenseResult is block-scoped to the license-validation try above, so
+        // it is not in scope here. Read the state from the session-stored active
+        // license (set via setActiveLicense during validation) instead.
+        await runSelectiveReconfigure(getActiveLicense()?.state || 'unknown');
         printBanner();
         continue;
       }

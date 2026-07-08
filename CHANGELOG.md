@@ -5,6 +5,13 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.7 -- July 8, 2026
+
+### Hotfix: Reconfigure Menu Crash and SCAN_QUOTA Single Source of Truth
+
+- Reconfigure Ghost no longer crashes with "ReferenceError: licenseResult is not defined." The selective reconfigure menu (added in v10.0.6) referenced a variable that was out of scope at the call site; it now reads the active license state from the session module.
+- FREE_QUOTA constant removed from freemium.js entirely. Previously CC2 imported SCAN_QUOTA from tier-gates.js but left FREE_QUOTA as a parallel constant alongside it. Ghost Watcher correctly flagged the split twice. FREE_QUOTA now has zero references anywhere in the codebase. SCAN_QUOTA from tier-gates.js is the only quota constant. Enforcement gate and paywall copy can no longer drift apart.
+
 ## v10.0.6 -- July 8, 2026
 
 ### Patch: Cost Reporting, Reconfigure Menu, Security, and Reliability

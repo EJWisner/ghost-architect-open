@@ -99,10 +99,10 @@ const TIER_POLICY = {
   'feature:pdf-watermark-free': { open: true,  trial: false, pro: true, 'pro-max': true, team: true, 'team-max': true, enterprise: true, 'enterprise-max': true },
 };
 
-// Per D1: bumped from 2 to 4. The bump lives here, not in src/freemium.js's
-// FREE_QUOTA constant, so the policy lookup is the single source of truth.
-// src/freemium.js's FREE_QUOTA is bumped in parallel for backward compatibility
-// with the existing renderQuotaPaywall copy that references it.
+// Per D1: bumped from 2 to 4. SCAN_QUOTA is the SINGLE SOURCE OF TRUTH for the
+// free saved-report quota. There is no parallel constant: src/freemium.js
+// imports SCAN_QUOTA directly, so both the enforcement gate here and the quota
+// paywall copy in freemium.js read the same value and can never drift apart.
 export const SCAN_QUOTA = 4;
 
 // Commit Forecast quota for Open tier. One free Forecast per install.
