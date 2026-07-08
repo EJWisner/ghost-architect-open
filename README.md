@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.8
+- Patch: GitHub reconfigure menu repo URL bugs fixed, session recovery visibility added, verifier regeneration fires on UNVERIFIED findings, audit JSON parse confirmed hardened, profile model validation added, audit log durable failure record.
+
 ### v10.0.7
 - Hotfix: Reconfigure menu no longer crashes with a ReferenceError (out-of-scope licenseResult), and FREE_QUOTA is removed entirely so SCAN_QUOTA from tier-gates.js is the single source of truth for the free-scan quota.
 

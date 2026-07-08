@@ -201,6 +201,8 @@ function parseArgs(argv) {
     // License management flags.
     if (a === '--activate')         { out.activate = argv[++i] || ''; continue; }
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
+    if (a === '--recover-session')          { out.recoverSession = argv[++i] || ''; continue; }
+    if (a.startsWith('--recover-session=')) { out.recoverSession = a.slice('--recover-session='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
@@ -1993,20 +1995,36 @@ async function reconfigureGithubToken(currentStatus) {
         if (retry === 'back') return currentStatus;
         continue; // loop back to the token prompt
       }
-      // Valid: persist via the keychain path (CC5). setPublishConfig needs a
-      // repo; preserve the configured one, or prompt for it if none is set.
+      // Valid: persist via the keychain path (CC5). Always confirm/collect the
+      // reports repo (BUG 1) so an existing value can be kept or changed, and
+      // accept owner/repo shorthand (BUG 2).
       const cfg = getPublishConfig();
-      let repo = cfg?.repo;
-      if (!repo) {
-        const { repoInput } = await inquirer.prompt([{
-          type: 'input', name: 'repoInput',
-          message: chalk.cyan("Reports repo (owner/repo or GitHub URL, type 'back' to cancel):"),
-        }]);
-        repo = (repoInput || '').trim();
-        if (!repo || repo.toLowerCase() === 'back') {
-          console.log(chalk.gray('  No repo provided. Token not saved.'));
-          return currentStatus;
-        }
+      const currentRepo = cfg?.repo || '';
+      const { repoInput } = await inquirer.prompt([{
+        type: 'input', name: 'repoInput',
+        message: currentRepo
+          ? chalk.cyan(`Reports repo (current: ${currentRepo}) [Enter to keep, or type a new one, 'back' to cancel]:`)
+          : chalk.cyan("Reports repo (owner/repo or GitHub URL, type 'back' to cancel):"),
+      }]);
+      let repo = (repoInput || '').trim();
+      if (!repo) repo = currentRepo; // Enter with a current value keeps it
+      if (!repo || repo.toLowerCase() === 'back') {
+        console.log(chalk.gray('  No repo provided. Token not saved.'));
+        return currentStatus;
+      }
+      // BUG 2: expand owner/repo shorthand to a full GitHub URL.
+      if (!repo.startsWith('https://') && !repo.startsWith('git@')) {
+        repo = 'https://github.com/' + repo;
+      }
+      // Show the final (possibly expanded) URL and confirm before saving.
+      const { confirmRepo } = await inquirer.prompt([{
+        type: 'confirm', name: 'confirmRepo',
+        message: chalk.cyan(`Save reports repo as ${repo}?`),
+        default: true,
+      }]);
+      if (!confirmRepo) {
+        console.log(chalk.gray('  Not saved.'));
+        return currentStatus;
       }
       await setPublishConfig({ repo, token: val });
       console.log(chalk.green('  Token verified and saved successfully.'));
@@ -2072,6 +2090,14 @@ async function main() {
   // before we print the banner or run the setup wizard.
   const argv = process.argv.slice(2);
   const cliOpts = parseArgs(argv);
+
+  // --recover-session <label>: force session recovery from the checkpoint sidecar
+  // for this project on the next scan, even if a main session file exists. Wired
+  // into multipass.loadSession's forced-recovery path.
+  if (cliOpts.recoverSession) {
+    const { setForceRecoverSession } = await import('../src/core/multipass.js');
+    setForceRecoverSession(cliOpts.recoverSession);
+  }
 
   // Early license-tier resolve for display surfaces (--help, --version, banner).
   // validateLicense({ skipNetworkClock: true }) skips the worldtimeapi roundtrip

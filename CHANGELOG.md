@@ -5,6 +5,31 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.8 -- July 8, 2026
+
+### Patch: Reconfigure Menu, Session Recovery, Verifier, Audit, and Profile Extraction
+
+**Reconfigure Menu**
+- GitHub reports token reconfigure now always prompts for repo URL after token verification, showing the current value as default. Previously the repo prompt was skipped on subsequent reconfigures, leaving stale values in place.
+- Repo URL now accepts owner/repo shorthand and auto-expands to https://github.com/owner/repo before saving. Previously the short form was stored as-is and caused a cryptic parse error at publish time.
+
+**Session Recovery**
+- Ghost now logs what was recovered when a previous session is salvaged, including the pass range and estimated API cost already spent. Previously salvage ran silently with no user visibility.
+- When salvage fails and a scan restarts from pass 0, Ghost now warns the user explicitly that previous progress is lost.
+- Added --recover-session <label> CLI flag to force salvage from checkpoints even when the main session file exists.
+
+**Verifier**
+- Executive summary regeneration now fires when any findings are marked UNVERIFIED, not only when findings are dropped entirely. Previously the executive summary could reference findings that were annotated UNVERIFIED but not removed.
+
+**Audit Mode**
+- Confirmed the audit roadmap JSON parse is already guarded: the parse in the audit synthesis caller is wrapped in try/catch with markdown-fence stripping and a schema-correct fallback, so a malformed LLM response degrades gracefully rather than crashing. No code change needed.
+
+**Profile Extraction**
+- extractProfile() now validates that the configured model is a Claude model before calling the API. Previously a non-Claude default model caused a cryptic API error with no hint about the real cause.
+
+**Enterprise**
+- Audit-log write failures now also write a durable failure record to org/audit-failures.json in the sync repo (best-effort), and the usage report data now includes an audit-failures summary when records exist.
+
 ## v10.0.7 -- July 8, 2026
 
 ### Hotfix: Reconfigure Menu Crash and SCAN_QUOTA Single Source of Truth

@@ -518,6 +518,29 @@ export async function appendAuditEvent(event, workspace) {
     // on-disk count stays accurate for the next process to resume. The marker
     // is cleared only after a successful write (see the success path above).
     writeAuditFailureMarker(consecutiveAuditFailures, lastAuditFailureUtc);
+
+    // Attempt a DURABLE failure record in the sync repo (org/audit-failures.json)
+    // so an admin sees the compliance gap without watching stderr. Best-effort
+    // and independently guarded: the same outage that failed the audit write can
+    // fail this too, in which case we fall back to the stderr warning below and
+    // the on-disk marker, and nothing more.
+    try {
+      const failOctokit = getOctokit(entry);
+      const { owner: failOwner, repo: failRepo } = parseRepo(entry.repo);
+      const failureRecord = {
+        timestamp: lastAuditFailureUtc,
+        event: 'audit_write_failure',
+        consecutiveFailures: consecutiveAuditFailures,
+        seatId: getSeatId(),
+        message: err.message,
+      };
+      await mutateOrgFile(failOctokit, failOwner, failRepo, 'org/audit-failures.json',
+        (c) => ({ failures: [...(c?.failures || []), failureRecord].slice(-500) }),
+        'enterprise: audit failure record');
+    } catch (recordErr) {
+      logAuditFailure('audit-failure-record', recordErr);
+    }
+
     if (consecutiveAuditFailures >= 1) {
       process.stderr.write(
         'Ghost: ' + consecutiveAuditFailures + ' consecutive audit-log '
@@ -586,10 +609,29 @@ export async function getUsageReport(workspace) {
     byProject[proj].lastScan = e.timestamp;
   }
 
+  // Surface any DURABLE audit-write failures (org/audit-failures.json, written
+  // by appendAuditEvent's failure path) so the usage report reflects gaps in the
+  // compliance trail rather than silently omitting them. Best-effort: an absent
+  // file (the normal case) or a read error means no gap is surfaced.
+  let auditFailures = null;
+  try {
+    const entry = resolveSyncEntry(workspace);
+    if (entry) {
+      const octokit = getOctokit(entry);
+      const { owner, repo } = parseRepo(entry.repo);
+      const failData = await getFileParsed(octokit, owner, repo, 'org/audit-failures.json');
+      const failures = failData?.failures || [];
+      if (failures.length) {
+        auditFailures = { count: failures.length, latest: failures[failures.length - 1] };
+      }
+    }
+  } catch { /* best-effort */ }
+
   return {
     bySeat,
     byProject,
     totals: { scans: totalScans, cost: totalCost, findings: totalFindings },
+    ...(auditFailures ? { auditFailures } : {}),
     generatedAt: new Date().toISOString(),
   };
 }

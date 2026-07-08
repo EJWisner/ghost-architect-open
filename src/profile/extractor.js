@@ -82,14 +82,26 @@ export async function extractProfile(text) {
     throw new Error('extractProfile: empty input');
   }
 
+  // Profile extraction runs through the Anthropic SDK, which only addresses
+  // Claude model IDs. Validate up front so a misconfigured model produces a
+  // clear, actionable error instead of a raw Anthropic 404 deep in the call.
+  const model = getModel();
+  if (!model || !model.startsWith('claude-')) {
+    throw new Error(
+      'Profile extraction requires a Claude model. ' +
+      'Your configured model is: ' + (model || 'not set') +
+      '. Set a Claude model in your config or use --model claude-sonnet-4-6'
+    );
+  }
+
   const anthropic = getClient();
 
   let response;
   try {
     response = await anthropic.messages.create({
-      model: getModel(),
+      model,
       max_tokens: 1500,
-      ...getSamplingParams(0, getModel()),
+      ...getSamplingParams(0, model),
       system: EXTRACTION_SYSTEM,
       messages: [
         {

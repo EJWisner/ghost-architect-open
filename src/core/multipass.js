@@ -98,6 +98,21 @@ function readSessionFile(finalPath) {
   }
 }
 
+// Rough per-pass API cost estimate (USD) for a POI multi-pass scan, used only
+// to tell a user how much of a recovered session's spend they are NOT repeating.
+// Conservative mid-point of the observed $0.30 to $0.50 per-pass range; this is
+// an informational estimate, not a billing figure.
+const EST_COST_PER_PASS = 0.40;
+
+// When set (via the --recover-session <label> CLI flag), loadSession skips the
+// primary/alternate session files for THIS label and salvages directly from the
+// checkpoint sidecar, even if a main session file exists. Lets a user force
+// recovery when the main file is stale or suspected bad.
+let _forceRecoverLabel = null;
+export function setForceRecoverSession(label) {
+  _forceRecoverLabel = label || null;
+}
+
 // Append a session-corruption event to the debug directory for post-mortem
 // diagnosis. Best-effort: if even the debug log can't be written, there is
 // nothing more we can do, so swallow that secondary failure.
@@ -177,6 +192,29 @@ function salvageSessionFromCheckpoints(label) {
 }
 
 export function loadSession(label) {
+  // Forced recovery (--recover-session <label>): bypass the main session files
+  // and salvage straight from the checkpoint sidecar, even if a main file
+  // exists. Same user-visible reporting as the corruption-recovery path.
+  if (_forceRecoverLabel && _forceRecoverLabel === label) {
+    const forced = salvageSessionFromCheckpoints(label);
+    if (forced) {
+      const done  = forced.completedPassCount || 0;
+      const total = forced.totalPassCount || done;
+      const estSpent = (done * EST_COST_PER_PASS).toFixed(2);
+      console.log(chalk.yellow(
+        'Ghost recovered a previous session for this project (forced recovery). ' +
+        `Resuming from pass ${done} of ${total}. ` +
+        `Estimated API cost already spent: $${estSpent}`
+      ));
+      return forced;
+    }
+    console.log(chalk.yellow(
+      'Ghost could not recover the previous session for this project (forced recovery). ' +
+      'Starting fresh. Previous progress is lost.'
+    ));
+    return null;
+  }
+
   // Primary location first, then the OS-temp fallback that persistSession's
   // retry path writes to when the Reports volume can't be written.
   const primary = readSessionFile(sessionFilePath(label));
@@ -198,16 +236,20 @@ export function loadSession(label) {
   logSessionCorruption(label, [primary, alternate], salvaged);
 
   if (salvaged) {
-    process.stderr.write(chalk.yellow(
-      `\n  ⚠  Session checkpoint is corrupted, but ${salvaged.completedPassCount} completed pass(es) were\n` +
-      `     recovered from the checkpoint sidecar. Resuming from recovered state.\n`
+    const done  = salvaged.completedPassCount || 0;
+    const total = salvaged.totalPassCount || done;
+    const estSpent = (done * EST_COST_PER_PASS).toFixed(2);
+    console.log(chalk.yellow(
+      'Ghost recovered a previous session for this project. ' +
+      `Resuming from pass ${done} of ${total}. ` +
+      `Estimated API cost already spent: $${estSpent}`
     ));
     return salvaged;
   }
 
-  process.stderr.write(chalk.red(
-    `\n  ⚠  Session checkpoint is corrupted — starting fresh. Prior progress was lost.\n` +
-    `     Details logged to ~/Ghost Architect Reports/.debug/session-corruption.log\n`
+  console.log(chalk.yellow(
+    'Ghost could not recover the previous session for this project. ' +
+    'Starting fresh. Previous progress is lost.'
   ));
   return null;
 }
@@ -819,14 +861,19 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   writeSynthesisStageDump(runId, '3-after-scrub', finalOutput, options.projectLabel);
 
   // Post-verifier exec summary regeneration. The original exec summary was
-  // written by the planner against the pre-drop finding set, so when the
-  // verifier drops findings, the summary can reference findings that no
-  // longer appear in the body — it lies. Detect drops and regenerate the
-  // summary against the surviving findings only.
+  // written by the planner against the pre-verification finding set, so once
+  // the verifier drops false positives OR annotates findings UNVERIFIED, the
+  // summary can misrepresent the body (referencing dropped findings, or stating
+  // confidence the annotations no longer support). Regenerate against the
+  // surviving, post-verifier body whenever the verifier changed anything.
   //
-  // Cost: ~$0.02 per scan (small prompt, ~300 token output). Skipped
-  // entirely when nothing was dropped, so default-mode scans pay nothing.
-  if (verifierCard && verifierCard.falsePositives > 0) {
+  // Cost: ~$0.02 per scan (small prompt, ~300 token output). Fires whenever the
+  // verifier reports any false positives OR any unverified findings; a scan
+  // where the verifier flagged nothing still pays nothing.
+  if (verifierCard && (
+    (verifierCard.falsePositives ?? 0) > 0 ||
+    (verifierCard.unverified ?? 0) > 0
+  )) {
     try {
       finalOutput = await regenerateExecutiveSummary(
         finalOutput,
