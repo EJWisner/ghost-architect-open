@@ -348,7 +348,8 @@ function renderPdf(payload) {
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 export async function runExecutiveBriefMode({ findings, tier, scanFile, codebaseRoot, anthropicClient, branding }) {
-  const data = buildBriefData(findings);
+  const findingsList = Array.isArray(findings) ? findings : [];
+  const data = buildBriefData(findingsList);
   const healthScore = computeHealthScore(data);
   const label = healthLabel(healthScore);
 
@@ -356,16 +357,32 @@ export async function runExecutiveBriefMode({ findings, tier, scanFile, codebase
     ? path.basename(scanFile).replace(/\.findings\.json$/i, '').replace(/\.json$/i, '')
     : (codebaseRoot ? path.basename(codebaseRoot) : 'project'));
 
-  const client = anthropicClient || new Anthropic({ apiKey: resolveApiKey() });
-
+  // Empty findings: the codebase passed pre-engagement review with nothing to
+  // remediate. Skip the narrative API call (there is nothing to summarize) and
+  // emit a clean, complete clean-bill-of-health brief rather than erroring or
+  // paying for an awkward "zero findings" narrative. computeHealthScore already
+  // returns a perfect 100 for an all-zero finding set. No em dashes (rule 1 and
+  // the narrative style contract).
   let narrative;
-  try {
-    narrative = await generateNarrative(client, { data, healthScore, label, project });
-  } catch (e) {
+  if (findingsList.length === 0) {
     narrative =
-      'An executive narrative could not be generated automatically for this brief. ' +
-      'The findings summary, cost comparison, and recommended sequence below reflect ' +
-      'the underlying scan data. (' + (e.message || 'narrative generation failed') + ')';
+      'This pre-engagement review surfaced no significant findings. The codebase ' +
+      'passed automated triage across the analyzed scope, with no critical, high, ' +
+      'medium, or low-severity issues flagged for remediation. On the evidence ' +
+      'reviewed it presents a clean baseline: no immediate remediation work is ' +
+      'indicated, and the estimated remediation effort and cost are zero. As with ' +
+      'any automated review, this reflects the findings the scan produced and is ' +
+      'not a guarantee that every possible defect is absent.';
+  } else {
+    const client = anthropicClient || new Anthropic({ apiKey: resolveApiKey() });
+    try {
+      narrative = await generateNarrative(client, { data, healthScore, label, project });
+    } catch (e) {
+      narrative =
+        'An executive narrative could not be generated automatically for this brief. ' +
+        'The findings summary, cost comparison, and recommended sequence below reflect ' +
+        'the underlying scan data. (' + (e.message || 'narrative generation failed') + ')';
+    }
   }
 
   const payload = {

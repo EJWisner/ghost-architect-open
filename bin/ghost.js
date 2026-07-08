@@ -2717,11 +2717,15 @@ async function main() {
           const { runExecutiveBriefMode } = await import('../src/modes/executive-brief.js');
 
           const raw = JSON.parse(fs.readFileSync(ebInputFile, 'utf8'));
-          const ebFindings = raw.findings || raw.prompts || [];
-          if (!Array.isArray(ebFindings) || ebFindings.length === 0) {
+          // Distinguish a MALFORMED file (no findings/prompts key at all) from a
+          // valid scan that simply has zero findings. Only the former is an
+          // error; a clean scan (findings: []) now renders a graceful
+          // "no significant findings" brief via runExecutiveBriefMode.
+          if (!Array.isArray(raw.findings) && !Array.isArray(raw.prompts)) {
             console.log(chalk.yellow('\n  Input file has no recognized findings structure.\n'));
             break;
           }
+          const ebFindings = raw.findings || raw.prompts || [];
 
           console.log(chalk.gray('  Generating Executive Brief (this calls the API once)...\n'));
           const { pdfPath } = await runExecutiveBriefMode({
@@ -3051,10 +3055,21 @@ if (process.argv.includes('--brief')) {
   }
 
   const args = process.argv.slice(2);
-  const inputFlag = args.find(a => a.startsWith('--input='));
-  const outputFlag = args.find(a => a.startsWith('--output='));
-  const inputFile = inputFlag ? inputFlag.split('=')[1] : 'ghost-report.json';
-  const outputFile = outputFlag ? outputFlag.split('=')[1] : 'ghost-brief.json';
+  // Accept both `--flag=value` and space-separated `--flag value` so
+  // `ghost --brief --output ./reports` works the same as `--output=./reports`.
+  // Previously only the `=` form was parsed, so the space form silently fell
+  // back to the default output path.
+  const readFlag = (name, def) => {
+    const eq = args.find(a => a.startsWith(name + '='));
+    if (eq) return eq.slice(name.length + 1);
+    const idx = args.indexOf(name);
+    if (idx !== -1 && idx + 1 < args.length && !args[idx + 1].startsWith('-')) {
+      return args[idx + 1];
+    }
+    return def;
+  };
+  const inputFile = readFlag('--input', 'ghost-report.json');
+  const outputFile = readFlag('--output', 'ghost-brief.json');
 
   if (!fs.existsSync(inputFile)) {
     console.error(`Ghost Brief: input file not found: ${inputFile}`);

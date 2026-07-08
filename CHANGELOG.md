@@ -5,6 +5,19 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.5 -- July 8, 2026
+
+### Patch: Executive Brief, Ghost Brief, and Install
+
+**Executive Brief**
+- Executive Brief no longer errors when the findings array is empty. It now renders a professional "no significant findings" summary (health score 100, zero remediation effort) appropriate for a deal-grade deliverable, and skips the unnecessary narrative API call on an empty scan. The caller also stops conflating a valid zero-finding scan with a malformed input file.
+
+**Ghost Brief**
+- ghost --brief --output is now wired through to the brief generator for both flag forms. Previously only the --output=path form was honored; the space-separated --output path form (as shown in the help examples) was silently ignored and fell back to the default output path. Both forms now work, for --input as well.
+
+**Install and Docs**
+- README install command updated to: npm install -g ghost-architect-open --location=global.
+
 ## v10.0.4 -- July 7, 2026
 
 ### Patch: Cost Transparency, Paywall Copy, Pricing, and Prompt Triage Redaction

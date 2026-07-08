@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.5
+- Patch: Executive Brief renders a graceful empty state instead of erroring, ghost --brief --output flag now wired through (both --output=path and --output path forms), and the README install command uses --location=global.
+
 ### v10.0.4
 - Patch: session cost summary cleaned up, keyless wizard loop fixed, wrong paywall copy corrected, pricing constants completed, POI false-positive copy removed, Prompt Triage now redacts before every API call, Node 20 deprecation warning fixed.
 
@@ -151,7 +154,7 @@ The most expensive moments in any engagement are not writing new code. They are 
 ## Install
 
 ```bash
-npm install -g ghost-architect-open
+npm install -g ghost-architect-open --location=global
 ```
 
 Then run it from any directory:
