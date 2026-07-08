@@ -2177,6 +2177,26 @@ async function main() {
     process.exit(0);
   }
 
+  // `ghost enterprise audit-status` reports audit-write failures buffered
+  // locally while the sync repo was unreachable (flushed to the repo on the
+  // next successful audit write). Purely local read, so it works offline.
+  if (positional[0] === 'enterprise' && positional[1] === 'audit-status') {
+    const { getLocalAuditFailureStatus } = await import('../src/core/enterprise.js');
+    const status = getLocalAuditFailureStatus();
+    if (status.count === 0) {
+      console.log(chalk.green(`\n${SYM.check} No unsynced audit failures. The compliance trail is up to date.\n`));
+    } else {
+      console.log(chalk.yellow(`\n${SYM.cross} ${status.count} unsynced audit-write failure(s) buffered locally.`));
+      console.log(chalk.gray(`  Local buffer: ${status.path}`));
+      console.log(chalk.gray('  These will be pushed to the sync repo on the next successful audit write.\n'));
+      for (const f of status.failures.slice(-10)) {
+        console.log(chalk.gray(`  - ${f.timestamp}  ${f.seatId || 'unknown-seat'}: ${f.message || 'audit_write_failure'}`));
+      }
+      console.log('');
+    }
+    process.exit(0);
+  }
+
   // Profile cache maintenance. Pure local housekeeping, available on every
   // tier and before any other setup so it always works.
   if (cliOpts.cleanCache) {

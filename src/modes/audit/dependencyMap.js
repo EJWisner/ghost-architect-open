@@ -386,6 +386,7 @@ export async function runDependencyMap(codebaseContext, options = {}) {
   const eolData = loadEolData();
 
   const dependencies = [];
+  let failedParses = 0;
 
   for (const filePath of filePaths) {
     const basename = path.basename(filePath);
@@ -395,8 +396,21 @@ export async function runDependencyMap(codebaseContext, options = {}) {
       // sibling package-lock.json from disk for license data. Other parsers
       // ignore the extra arg. It is undefined for ZIP/GitHub scans, where the
       // lockfile is not on disk and licenses fall back to "unknown".
-      const deps = parser(fileMap[filePath], eolData, filePath, codebaseContext?.basePath);
-      dependencies.push(...deps);
+      //
+      // A single malformed manifest must never crash the whole audit. The
+      // individual parsers already swallow JSON.parse errors, but wrap the call
+      // defensively so any unexpected throw (e.g. a pathological regex input or
+      // a lockfile read edge case) degrades to "skip this manifest and note it"
+      // rather than bricking the Inheritance Audit.
+      try {
+        const deps = parser(fileMap[filePath], eolData, filePath, codebaseContext?.basePath);
+        dependencies.push(...deps);
+      } catch (err) {
+        failedParses++;
+        console.warn(
+          `[Ghost Audit] Could not parse manifest ${filePath}: ${err?.message || err}. Skipping.`
+        );
+      }
     }
   }
 
@@ -479,10 +493,22 @@ export async function runDependencyMap(codebaseContext, options = {}) {
     });
   }
 
+  // Surface skipped manifests so the audit result never silently under-reports
+  // the dependency inventory. Callers/renderers can display `notes` alongside
+  // the risk callouts.
+  const notes = [];
+  if (failedParses > 0) {
+    notes.push(
+      `Warning: ${failedParses} manifest file${failedParses === 1 ? '' : 's'} could not be parsed and ${failedParses === 1 ? 'was' : 'were'} skipped.`
+    );
+  }
+
   return {
     totalDependencies: dependencies.length,
     dependencies,
     riskCallouts,
+    failedParses,
+    notes,
     _stub: false,
   };
 }

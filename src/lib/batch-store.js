@@ -34,18 +34,33 @@ import { getConfig } from '../config.js';
 
 const KEY = 'pendingBatches';
 
+// Normalize the persisted store to { version, batches }. Two on-disk shapes are
+// accepted: the legacy bare-array form (treated as version 0) and the current
+// { version, batches } object. The version counter is what mutatePendingBatches
+// uses for optimistic locking across processes.
+function readStore() {
+  try {
+    // @ghost-verified: split Configstore access with portal-publish.js is safe -- both use different keys (pendingBatches vs portalPublish), configstore writes atomically via write-file-atomic, and the two write paths (scan submission vs configuration) do not race in practice
+    const raw = getConfig().get(KEY);
+    if (Array.isArray(raw)) return { version: 0, batches: raw }; // legacy shape
+    if (raw && Array.isArray(raw.batches)) {
+      return {
+        version: Number.isInteger(raw.version) ? raw.version : 0,
+        batches: raw.batches,
+      };
+    }
+    return { version: 0, batches: [] };
+  } catch {
+    return { version: 0, batches: [] };
+  }
+}
+
 /**
  * Read the pending-batches array. Always returns an array (never throws);
  * a malformed/missing value resolves to [].
  */
 export function getPendingBatches() {
-  try {
-    // @ghost-verified: split Configstore access with portal-publish.js is safe -- both use different keys (pendingBatches vs portalPublish), configstore writes atomically via write-file-atomic, and the two write paths (scan submission vs configuration) do not race in practice
-    const raw = getConfig().get(KEY);
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
-  }
+  return readStore().batches;
 }
 
 /**
@@ -56,13 +71,34 @@ export function findPendingBatch(id) {
   return getPendingBatches().find(b => b && b.id === id) || null;
 }
 
-// Central read-modify-write helper. Re-reads the list immediately before
-// writing to minimise the cross-process lost-update window. fn receives the
-// current list and returns the new list to persist.
+// Central read-modify-write helper with optimistic cross-process locking.
+// Captures the store version before applying fn, re-reads immediately before
+// writing, and retries the whole read-modify sequence if another process bumped
+// the version in between. After MAX_RETRIES it warns and proceeds with
+// last-write-wins so a genuinely contended store can never deadlock a run.
+// fn receives the current batch list and returns the new list to persist.
 function mutatePendingBatches(fn) {
-  const current = getPendingBatches(); // fresh read
-  const updated = fn(current);
-  getConfig().set(KEY, updated);
+  const MAX_RETRIES = 3;
+  let updated = [];
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const before = readStore();          // capture version + batches
+    updated = fn(before.batches);
+    const current = readStore();         // re-read right before writing
+    const changed = current.version !== before.version;
+    if (changed && attempt < MAX_RETRIES) {
+      // Another process wrote between our read and our write — retry against
+      // the fresh state so we don't clobber its update.
+      continue;
+    }
+    if (changed) {
+      process.stderr.write(
+        '[Ghost] batch-store: concurrent modification detected after ' +
+        MAX_RETRIES + ' attempts; proceeding with last-write-wins.\n'
+      );
+    }
+    getConfig().set(KEY, { version: current.version + 1, batches: updated });
+    return updated;
+  }
   return updated;
 }
 

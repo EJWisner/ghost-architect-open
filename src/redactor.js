@@ -245,26 +245,53 @@ export function redactContent(content, customRules = [], filePath = null) {
  * Never throws — always returns something safe to use.
  */
 export function redactCodebase(codebaseContext) {
+  let result;
   try {
     const { redacted, findings, failedRules, partialRedaction, skippedFiles } =
       redactContent(codebaseContext.context, [], codebaseContext.path || codebaseContext.name);
     const totalRedactions = findings.length;
 
-    return {
+    result = {
       context:          { ...codebaseContext, context: redacted },
       summary:          { findings, totalRedactions, failedRules, partialRedaction, skippedFiles },
       partialRedaction,
     };
   } catch (err) {
-    // Complete redaction failure — return original with warning
-    // This should never happen but is a last-resort safety net
-    return {
+    // Complete redaction failure — flag it with warning.
+    // This should never happen but is a last-resort safety net.
+    result = {
       context:          codebaseContext,
       summary:          { findings: [], totalRedactions: 0, failedRules: [{ rule: 'ALL', error: err.message }], partialRedaction: true, skippedFiles: [] },
       partialRedaction: true,
       redactionFailed:  true,
     };
   }
+
+  // Fail-closed guard. When redaction is only partial — an oversized file
+  // exceeded the size limit and its credentials passed through unredacted, or a
+  // rule was skipped — do NOT hand the caller content that may still contain
+  // secrets. Every consumer of redactCodebase() output is protected here at the
+  // single choke point rather than relying on each caller to remember to check
+  // result.partialRedaction. Set GHOST_ALLOW_PARTIAL=1 to explicitly proceed.
+  if (result.partialRedaction) {
+    if (process.env.GHOST_ALLOW_PARTIAL === '1') {
+      console.warn(
+        '[Ghost] Redaction incomplete -- one or more files exceeded the size ' +
+        'limit and were not redacted. Continuing because GHOST_ALLOW_PARTIAL=1 ' +
+        'is set. Credentials in those files may be exposed.'
+      );
+    } else {
+      throw new Error(
+        'Redaction incomplete -- one or more files ' +
+        'exceeded the size limit and were not redacted. ' +
+        'Scan aborted to protect credentials. ' +
+        'Split large files or set GHOST_ALLOW_PARTIAL=1 ' +
+        'to proceed with partial redaction.'
+      );
+    }
+  }
+
+  return result;
 }
 
 /**

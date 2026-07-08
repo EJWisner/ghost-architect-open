@@ -104,9 +104,19 @@ export function updateLastSeenUtc(newIso) {
     );
     return false;
   }
+  const newMs = Date.parse(newIso);
+  // Reject timestamps more than 24 hours in the future
+  // to prevent permanent ratchet lock from malformed input
+  const MAX_FUTURE_MS = 86400000; // 24 hours
+  if (newMs > Date.now() + MAX_FUTURE_MS) {
+    process.stderr.write(
+      '[Ghost] Rejected implausible future timestamp: ' +
+      newIso + '\n'
+    );
+    return false;
+  }
   const r = read();
   if (!r) return true;
-  const newMs = Date.parse(newIso);
   const oldMs = r.last_seen_utc ? Date.parse(r.last_seen_utc) : 0;
   if (newMs > oldMs) {
     r.last_seen_utc = newIso;

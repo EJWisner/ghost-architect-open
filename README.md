@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.9
+- Patch: enterprise price uses PRICING constant, manifest parser crash-proofed, redactor partial redaction enforced at callers, monotonic clock future timestamp rejected, mobile publish non-atomic writes protected, batch store optimistic locking added, GitHub rate limit handled, audit log local durable failure file.
+
 ### v10.0.8
 - Patch: GitHub reconfigure menu repo URL bugs fixed, session recovery visibility added, verifier regeneration fires on UNVERIFIED findings, audit JSON parse confirmed hardened, profile model validation added, audit log durable failure record.
 

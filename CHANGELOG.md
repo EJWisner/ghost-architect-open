@@ -5,6 +5,31 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.9 -- July 8, 2026
+
+### Patch: Reliability, Data Integrity, and Credential Safety
+
+**Enterprise**
+- assertEnterprise() error message now uses PRICING.ENTERPRISE.monthly instead of a hardcoded $1,200 string. Price and error message can no longer drift apart silently.
+- Audit log write failures now write a durable record to a local file (~/.config/ghost-architect/audit-failures.json) that survives even when the sync repo is unreachable. On the next successful audit write, accumulated failures are pushed to org/audit-failures.json in a batch and the local file is cleared.
+- Added ghost enterprise audit-status command that surfaces any unsynced audit failures from the local failure log.
+
+**Inheritance Audit**
+- Manifest parser loop in runDependencyMap() now wraps every parser call in try/catch. A single malformed package.json, pom.xml, or build.gradle can no longer crash the entire Inheritance Audit. Failed manifests are skipped with a warning and counted in the audit result.
+
+**Credential Safety**
+- All callers of redactCodebase() now check the partialRedaction flag before using the output. Previously a file over 500KB bypassed redaction silently. Now callers throw unless GHOST_ALLOW_PARTIAL=1 is set explicitly.
+
+**License**
+- updateLastSeenUtc() now rejects timestamps more than 24 hours in the future. A timestamp from year 3000 could previously lock the monotonic ratchet permanently. Rejected timestamps are logged to stderr.
+
+**Mobile Publish**
+- publishProject() now writes a _pending.json marker before starting the three-file write sequence and deletes it on success. On the next publish, an existing marker triggers completion of the interrupted write before starting fresh.
+- All Octokit API calls now wrapped in withRateLimit(). GitHub 403 rate-limit errors now wait for the reset time and retry once instead of failing immediately with a cryptic error.
+
+**Batch Store**
+- mutatePendingBatches() now uses optimistic locking with a version counter. Concurrent writes retry up to 3 times before falling back to last-write-wins with a warning. Batch records can no longer be silently lost from concurrent CLI invocations.
+
 ## v10.0.8 -- July 8, 2026
 
 ### Patch: Reconfigure Menu, Session Recovery, Verifier, Audit, and Profile Extraction

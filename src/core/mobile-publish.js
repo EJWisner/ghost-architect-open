@@ -145,9 +145,36 @@ async function getOctokit() {
   return createOctokit({ auth: token });
 }
 
+// Wrap a single GitHub API call so a rate-limit (secondary or primary) 403
+// backs off until the limit resets and retries once, instead of failing the
+// publish. Non-rate-limit errors propagate unchanged.
+async function withRateLimit(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err.status === 403 &&
+        err.message.includes('rate limit')) {
+      const reset = err.response?.headers?.[
+        'x-ratelimit-reset'
+      ];
+      const waitMs = reset
+        ? (parseInt(reset) * 1000) - Date.now() + 1000
+        : 60000;
+      console.warn(
+        '[Ghost Mobile] GitHub rate limit hit. ' +
+        'Waiting ' + Math.ceil(waitMs / 1000) +
+        's before retry.'
+      );
+      await new Promise(r => setTimeout(r, waitMs));
+      return await fn();
+    }
+    throw err;
+  }
+}
+
 async function getFileSha(octokit, owner, repo, filePath) {
   try {
-    const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
+    const { data } = await withRateLimit(() => octokit.rest.repos.getContent({ owner, repo, path: filePath }));
     return data.sha;
   } catch { return null; }
 }
@@ -155,18 +182,26 @@ async function getFileSha(octokit, owner, repo, filePath) {
 async function upsertFile(octokit, owner, repo, filePath, content, message) {
   const sha = await getFileSha(octokit, owner, repo, filePath);
   const encoded = encodeFileContent(content);
-  await octokit.rest.repos.createOrUpdateFileContents({
+  await withRateLimit(() => octokit.rest.repos.createOrUpdateFileContents({
     owner, repo,
     path: filePath,
     message,
     content: encoded,
     ...(sha ? { sha } : {}),
-  });
+  }));
+}
+
+async function deleteFile(octokit, owner, repo, filePath, message) {
+  const sha = await getFileSha(octokit, owner, repo, filePath);
+  if (!sha) return; // nothing to delete
+  await withRateLimit(() => octokit.rest.repos.deleteFile({
+    owner, repo, path: filePath, message, sha,
+  }));
 }
 
 async function getFileContent(octokit, owner, repo, filePath) {
   try {
-    const { data } = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
+    const { data } = await withRateLimit(() => octokit.rest.repos.getContent({ owner, repo, path: filePath }));
     const content = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
     return { content, sha: data.sha };
   } catch { return { content: null, sha: null }; }
@@ -324,8 +359,37 @@ function buildPublishPayload(projectMeta, scanRecord) {
   };
 }
 
+// Name of the in-repo marker that records a publish-in-progress. Its presence
+// on entry means a previous publishProject() was interrupted between writes.
+const PENDING_MARKER = '_pending.json';
+
+/**
+ * Finish an interrupted publish recorded by a _pending.json marker, then clear
+ * the marker. The marker carries the payload and the exact target paths, so the
+ * three writes can be replayed idempotently. If the marker predates this field
+ * (payload absent), there is nothing to replay — just clear the stale marker so
+ * a fresh publish can proceed against consistent state.
+ */
+async function completeInterruptedPublish(octokit, owner, repo, marker) {
+  if (marker?.payload && marker.latestPath && marker.datedPath) {
+    await upsertFile(octokit, owner, repo, marker.latestPath, marker.payload,
+      `publish: resume ${marker.slug} latest scan`);
+    await upsertFile(octokit, owner, repo, marker.datedPath, marker.payload,
+      `publish: resume ${marker.slug} ${marker.dateStr}`);
+    await updateIndex(octokit, owner, repo, marker.slug, marker.payload);
+  }
+  await deleteFile(octokit, owner, repo, PENDING_MARKER, 'publish: clear pending marker');
+}
+
 /**
  * Publish the latest scan for a project to the ghost-reports repo.
+ *
+ * The three writes (latest.json, date-stamped archive, index.json) are not a
+ * single atomic transaction on GitHub, so a crash between them would leave the
+ * repo inconsistent. A _pending.json marker written before the first write and
+ * deleted after the last one makes the interruption recoverable: the next
+ * publishProject() sees the marker, replays the recorded writes, and clears it
+ * before starting the new publish.
  */
 export async function publishProject(projectMeta, scanRecord) {
   if (!isPublishConfigured()) return { ok: false, reason: 'not_configured' };
@@ -333,27 +397,69 @@ export async function publishProject(projectMeta, scanRecord) {
   const cfg = getPublishConfig();
   const octokit = await getOctokit();
   const { owner, repo } = parseRepo(cfg.repo);
+
+  // Recover an interrupted previous publish before starting a new one.
+  const { content: existingMarker } = await getFileContent(octokit, owner, repo, PENDING_MARKER);
+  if (existingMarker && existingMarker.slug) {
+    console.warn(
+      '[Ghost Mobile] Found incomplete previous publish ' +
+      'for ' + existingMarker.slug + '. Completing it now.'
+    );
+    try {
+      await completeInterruptedPublish(octokit, owner, repo, existingMarker);
+    } catch (err) {
+      console.warn(
+        '[Ghost Mobile] Could not complete previous publish for ' +
+        existingMarker.slug + ': ' + (err?.message || err)
+      );
+    }
+  }
+
   const slug = (projectMeta.slug || projectMeta.label || 'unnamed')
     .replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
 
   const payload = buildPublishPayload(projectMeta, scanRecord);
   const dateStr = new Date().toISOString().slice(0, 10);
+  const latestPath = `projects/${slug}/latest.json`;
+  const datedPath = `projects/${slug}/${dateStr}.json`;
+
+  // Write the pending marker BEFORE the first write. It records the payload and
+  // the exact paths so an interrupted run can be replayed by the next publish.
+  await upsertFile(
+    octokit, owner, repo,
+    PENDING_MARKER,
+    {
+      slug,
+      startedAt: new Date().toISOString(),
+      files: [latestPath, datedPath, 'index.json'],
+      // Extra fields (beyond the file list) let completeInterruptedPublish()
+      // actually replay the writes rather than just clearing the marker.
+      payload,
+      dateStr,
+      latestPath,
+      datedPath,
+    },
+    `publish: begin ${slug}`
+  );
 
   await upsertFile(
     octokit, owner, repo,
-    `projects/${slug}/latest.json`,
+    latestPath,
     payload,
     `publish: ${slug} latest scan`
   );
 
   await upsertFile(
     octokit, owner, repo,
-    `projects/${slug}/${dateStr}.json`,
+    datedPath,
     payload,
     `publish: ${slug} ${dateStr}`
   );
 
   await updateIndex(octokit, owner, repo, slug, payload);
+
+  // All three writes succeeded — clear the marker.
+  await deleteFile(octokit, owner, repo, PENDING_MARKER, `publish: clear pending marker for ${slug}`);
 
   return { ok: true, slug, repo: cfg.repo };
 }
@@ -408,7 +514,7 @@ export async function testPublishConnection() {
   try {
     const octokit = await getOctokit();
     const { owner, repo } = parseRepo(cfg.repo);
-    await octokit.rest.repos.get({ owner, repo });
+    await withRateLimit(() => octokit.rest.repos.get({ owner, repo }));
     return { ok: true, repo: cfg.repo };
   } catch (err) {
     return { ok: false, error: err.message };

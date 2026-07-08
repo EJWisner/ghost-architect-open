@@ -14,6 +14,7 @@
 import { createOctokit } from '../utils/octokit-client.js';
 import { getDefaultTeamSync, resolveTeamSync } from '../config.js';
 import { parseRepo } from './team-sync.js';
+import { PRICING } from '../constants/pricing.js';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -149,7 +150,7 @@ export async function assertEnterprise(workspace) {
       'Ghost Enterprise requires a dedicated enterprise sync repo.\n' +
       '  Your current repo is not an enterprise repo.\n\n' +
       '  To upgrade: contact support@ghostarchitect.dev\n' +
-      '  Ghost Enterprise starts at $1,200/mo'
+      `  Ghost Enterprise starts at $${PRICING.ENTERPRISE.monthly}/mo`
     );
     return;
   }
@@ -469,6 +470,46 @@ function clearAuditFailureMarker() {
   }
 }
 
+// ── Local durable audit-failure buffer ────────────────────────────────────────
+//
+// The previous durable record for a failed audit write lived only in
+// org/audit-failures.json in the sync repo. But the outage that fails the audit
+// write (repo unreachable, auth lapse) fails that write too, so the compliance
+// gap could vanish without a trace. This LOCAL buffer is written first and does
+// not depend on the network: on the next SUCCESSFUL audit write the buffered
+// records are flushed to org/audit-failures.json in a batch and the local file
+// is cleared. `ghost enterprise audit-status` reports anything still unsynced.
+const LOCAL_AUDIT_FAILURES = path.join(
+  os.homedir(), '.config', 'ghost-architect', 'audit-failures.json'
+);
+
+function readLocalAuditFailures() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(LOCAL_AUDIT_FAILURES, 'utf8'));
+    return Array.isArray(parsed?.failures) ? parsed.failures : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendLocalAuditFailure(record) {
+  try {
+    fs.mkdirSync(path.dirname(LOCAL_AUDIT_FAILURES), { recursive: true });
+    const failures = [...readLocalAuditFailures(), record].slice(-500);
+    fs.writeFileSync(LOCAL_AUDIT_FAILURES, JSON.stringify({ failures }, null, 2) + '\n');
+  } catch (err) {
+    logAuditFailure('local-failure-write', err);
+  }
+}
+
+function clearLocalAuditFailures() {
+  try {
+    fs.rmSync(LOCAL_AUDIT_FAILURES, { force: true });
+  } catch (err) {
+    logAuditFailure('local-failure-clear', err);
+  }
+}
+
 /**
  * Append an audit event.
  * Called automatically after every scan push.
@@ -493,6 +534,22 @@ export async function appendAuditEvent(event, workspace) {
     // on-disk marker so a future invocation doesn't re-surface a stale outage.
     consecutiveAuditFailures = 0;
     clearAuditFailureMarker();
+
+    // Flush any LOCALLY-buffered audit failures (written while the sync repo was
+    // unreachable) to the durable in-repo log now that a write has succeeded,
+    // then clear the local buffer. Best-effort: if the flush itself fails the
+    // local buffer is kept for the next successful write.
+    const bufferedFailures = readLocalAuditFailures();
+    if (bufferedFailures.length) {
+      try {
+        await mutateOrgFile(octokit, owner, repo, 'org/audit-failures.json',
+          (c) => ({ failures: [...(c?.failures || []), ...bufferedFailures].slice(-500) }),
+          'enterprise: flush buffered audit failures');
+        clearLocalAuditFailures();
+      } catch (flushErr) {
+        logAuditFailure('audit-failure-flush', flushErr);
+      }
+    }
 
     // Heartbeat — bump this seat's lastSeen on every audit event so the
     // Seat Management view reflects real activity rather than the original
@@ -519,27 +576,21 @@ export async function appendAuditEvent(event, workspace) {
     // is cleared only after a successful write (see the success path above).
     writeAuditFailureMarker(consecutiveAuditFailures, lastAuditFailureUtc);
 
-    // Attempt a DURABLE failure record in the sync repo (org/audit-failures.json)
-    // so an admin sees the compliance gap without watching stderr. Best-effort
-    // and independently guarded: the same outage that failed the audit write can
-    // fail this too, in which case we fall back to the stderr warning below and
-    // the on-disk marker, and nothing more.
-    try {
-      const failOctokit = getOctokit(entry);
-      const { owner: failOwner, repo: failRepo } = parseRepo(entry.repo);
-      const failureRecord = {
-        timestamp: lastAuditFailureUtc,
-        event: 'audit_write_failure',
-        consecutiveFailures: consecutiveAuditFailures,
-        seatId: getSeatId(),
-        message: err.message,
-      };
-      await mutateOrgFile(failOctokit, failOwner, failRepo, 'org/audit-failures.json',
-        (c) => ({ failures: [...(c?.failures || []), failureRecord].slice(-500) }),
-        'enterprise: audit failure record');
-    } catch (recordErr) {
-      logAuditFailure('audit-failure-record', recordErr);
-    }
+    // Write a DURABLE failure record to the LOCAL buffer first. The previous
+    // implementation wrote straight to org/audit-failures.json in the sync repo,
+    // but the same outage that fails the audit write (repo unreachable) fails
+    // that write too, losing the compliance gap silently. The local file does
+    // not depend on the network; it is flushed to org/audit-failures.json on the
+    // next successful audit write (see the success path above) and surfaced by
+    // `ghost enterprise audit-status` until then.
+    const failureRecord = {
+      timestamp: lastAuditFailureUtc,
+      event: 'audit_write_failure',
+      consecutiveFailures: consecutiveAuditFailures,
+      seatId: getSeatId(),
+      message: err.message,
+    };
+    appendLocalAuditFailure(failureRecord);
 
     if (consecutiveAuditFailures >= 1) {
       process.stderr.write(
@@ -562,6 +613,22 @@ export async function getAuditLog(workspace) {
   const { owner, repo } = parseRepo(entry.repo);
   const data = await getFileParsed(octokit, owner, repo, 'org/audit.json');
   return data?.events || [];
+}
+
+/**
+ * Report locally-buffered audit-write failures that have NOT yet been flushed
+ * to the sync repo (they are flushed on the next successful audit write). Backs
+ * the `ghost enterprise audit-status` command. Purely local — never touches the
+ * network — so it works even when the sync repo is down.
+ * Returns { count, failures, path }.
+ */
+export function getLocalAuditFailureStatus() {
+  const failures = readLocalAuditFailures();
+  return {
+    count: failures.length,
+    failures,
+    path: LOCAL_AUDIT_FAILURES,
+  };
 }
 
 // ── Usage reporting ───────────────────────────────────────────────────────────

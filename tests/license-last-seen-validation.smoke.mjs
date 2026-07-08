@@ -45,10 +45,16 @@ const { saveActivation, updateLastSeenUtc, getLastSeenUtc } = await import('../s
 const { getConfig } = await import('../src/config.js');
 
 // Seed a license record with a known-good baseline last_seen_utc. We set it
-// directly on the config rather than via updateLastSeenUtc so the test is not
-// coupled to wall-clock time (saveActivation stamps last_seen_utc with "now",
-// and the monotonic ratchet would reject a baseline older than that).
-const BASELINE = '2099-06-01T12:00:00Z';
+// directly on the config rather than via updateLastSeenUtc so the seed itself
+// is not subjected to the ratchet/plausibility checks. Timestamps are derived
+// relative to now: the ratchet advances forward, but updateLastSeenUtc also
+// rejects anything more than 24h in the future, so the "newer" happy-path
+// values must stay inside that plausibility window (a fixed far-future date
+// like 2099 would now be rejected as implausible).
+const iso        = (ms) => new Date(ms).toISOString();                     // canonical UTC with .mmm
+const isoNoMs    = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z'); // canonical UTC, no ms
+const NOW_MS     = Date.now();
+const BASELINE   = isoNoMs(NOW_MS - 60 * 60 * 1000);   // 1h ago
 saveActivation({ token: 'dummy-token', fingerprintHashes: null });
 const cfg = getConfig();
 const seed = cfg.get('license');
@@ -80,17 +86,27 @@ for (const [label, value] of malformed) {
 }
 
 console.log('\nTest: a well-formed newer value still writes (happy path intact)');
-const NEWER = '2099-06-02T12:00:00Z';
+// Newer than baseline but comfortably inside the 24h plausibility window.
+const NEWER = isoNoMs(NOW_MS + 60 * 60 * 1000);   // 1h future
 updateLastSeenUtc(NEWER);
 check('well-formed newer value was written', getLastSeenUtc() === NEWER);
 
-const NEWER_WITH_MS = '2099-06-03T08:30:00.250Z';
+const NEWER_WITH_MS = iso(NOW_MS + 2 * 60 * 60 * 1000); // 2h future, keeps .mmm
 updateLastSeenUtc(NEWER_WITH_MS);
 check('well-formed value with .mmm milliseconds was written', getLastSeenUtc() === NEWER_WITH_MS);
 
 console.log('\nTest: an older well-formed value does not regress the ratchet');
-updateLastSeenUtc('2026-01-01T00:00:00Z');
+updateLastSeenUtc(isoNoMs(NOW_MS - 48 * 60 * 60 * 1000)); // 2 days ago
 check('older value did not overwrite newer stored value', getLastSeenUtc() === NEWER_WITH_MS);
+
+console.log('\nTest: an implausible far-future value is rejected (24h bound)');
+// A canonical-format timestamp that is well beyond the 24h future window must
+// be refused so a poisoned clock cannot ratchet last_seen_utc into the far
+// future and permanently lock the license behind the rollback check.
+const FAR_FUTURE = '3000-01-01T00:00:00Z';
+const wrote = updateLastSeenUtc(FAR_FUTURE);
+check('updateLastSeenUtc returned false for far-future input', wrote === false);
+check('far-future value did not overwrite stored value', getLastSeenUtc() === NEWER_WITH_MS);
 
 // Cleanup temp configstore.
 try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
