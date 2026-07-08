@@ -479,10 +479,40 @@ export async function verifyReport(reportText, fileMap, options = {}) {
     results = llmResults;
   }
 
+  // ── DISPUTED reclassification ──────────────────────────────────────────────
+  // An UNVERIFIED verdict means "could not confirm" — absence of evidence. But
+  // when the verifier's own reasons/warnings say the cited code does not appear
+  // verbatim or cannot be verified from the source, the verifier is actively
+  // CONTRADICTING the citation, not merely failing to confirm it. Those are
+  // false positives: reclassify them DISPUTED and drop them entirely (not shown
+  // to the user, not counted as unverified), logged at debug level only. This
+  // removes the noise where the verifier disputes the finding rather than simply
+  // being unable to confirm it.
+  const DISPUTED_PHRASES = [
+    'specific code snippets cited do not appear verbatim',
+    'cannot be verified from the source file',
+    'cited in this finding do not appear',
+  ];
+  results = results.map(r => {
+    if (r.status !== 'unverified') return r;
+    const haystack = [...(r.reasons || []), ...(r.warnings || [])]
+      .join(' ')
+      .toLowerCase();
+    if (DISPUTED_PHRASES.some(p => haystack.includes(p))) {
+      if (process.env.GHOST_DEBUG) {
+        console.error('[Ghost] Disputed finding dropped: '
+          + (r.finding.id || r.finding.title));
+      }
+      return { ...r, status: 'disputed' };
+    }
+    return r;
+  });
+
   const report = {
     totalFindings:  findings.length,
     verified:       results.filter(r => r.status === 'verified').length,
     unverified:     results.filter(r => r.status === 'unverified').length,
+    disputed:       results.filter(r => r.status === 'disputed').length,
     falsePositives: results.filter(r => r.status === 'false_positive').length,
     details:        results.map(r => ({
       title:    r.finding.title,
@@ -535,14 +565,17 @@ export async function verifyReport(reportText, fileMap, options = {}) {
 function applyAnnotations(reportText, results) {
   let out = reportText;
 
-  // Collect dropped titles up front so we can also strip table rows
+  // Collect dropped titles up front so we can also strip table rows. Both
+  // false-positive and disputed findings are dropped from the user-facing report.
+  const isDropped = (r) => r.status === 'false_positive' || r.status === 'disputed';
   const droppedTitles = results
-    .filter(r => r.status === 'false_positive')
+    .filter(isDropped)
     .map(r => r.finding.title);
 
-  // Drop false positives: replace the whole ### section with nothing
+  // Drop false positives and disputed findings: replace the whole ### section
+  // with nothing so neither the prose nor the table row survives.
   for (const r of results) {
-    if (r.status !== 'false_positive') continue;
+    if (!isDropped(r)) continue;
     out = removeFindingSection(out, r.finding.title);
   }
 

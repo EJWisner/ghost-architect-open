@@ -115,6 +115,19 @@ export function updateLastSeenUtc(newIso) {
     );
     return false;
   }
+  // Reject timestamps more than 60 seconds behind
+  // the stored value to prevent ratchet rollback attacks
+  const stored = getLastSeenUtc();
+  if (stored) {
+    const storedMs = new Date(stored).getTime();
+    if (newMs < storedMs - 60000) {
+      process.stderr.write(
+        '[Ghost] Rejected past timestamp: ' + newIso +
+        ' is more than 60s behind stored ' + stored + '\n'
+      );
+      return false;
+    }
+  }
   const r = read();
   if (!r) return true;
   const oldMs = r.last_seen_utc ? Date.parse(r.last_seen_utc) : 0;

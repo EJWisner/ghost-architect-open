@@ -207,9 +207,24 @@ Respond with JSON only. No preamble.`;
     const raw   = response.content[0]?.text || '{}';
     const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(clean);
-  } catch {
+  } catch (err) {
+    // Log for debugging -- never silently swallow
+    // API failures
+    process.stderr.write(
+      '[Ghost Planner] API call failed: ' +
+      err.message + '\n'
+    );
+    if (process.env.GHOST_DEBUG) {
+      process.stderr.write(err.stack + '\n');
+    }
+    // Surface to user
+    console.warn(
+      'Planning call failed -- using structural ' +
+      'fallback. Results may be less precise.'
+    );
     // Fallback plan if Claude call fails
     return {
+      plannerFailed:        true,
       recommendedPasses:    costs.estimatedPasses,
       highRiskAreas:        structure.riskFiles.slice(0, 5),
       warningFlags:         structure.riskCount > 10 ? ['High number of risk files detected'] : [],

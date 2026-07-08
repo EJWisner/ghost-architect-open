@@ -245,8 +245,16 @@ export async function buildForecastOverlay(baselineContext, proposedDir, opts = 
     try {
       const result = redactContent(raw, []);
       if (result.partialRedaction) {
-        redactionErrors.push(absPath);
-        continue; // fail-closed per loader contract
+        if (!process.env.GHOST_ALLOW_PARTIAL) {
+          throw new Error(
+            'Redaction incomplete on large file. ' +
+            'Set GHOST_ALLOW_PARTIAL=1 to proceed.'
+          );
+        }
+        console.warn(
+          '[Ghost] Partial redaction: one or more ' +
+          'files exceeded the size limit.'
+        );
       }
       redacted = result.redacted;
     } catch (err) {

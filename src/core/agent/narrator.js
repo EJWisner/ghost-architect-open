@@ -471,7 +471,7 @@ function isBlastMode(context) {
 // baseline-v8: a 51-finding plan blew past the budget and the remediation
 // table never got written). When the raw finding set exceeds this cap, we
 // rank by (severity ordinal, cost midpoint descending) and keep the top N.
-const MAX_FINDINGS_FOR_PASS_2 = 25;
+const MAX_FINDINGS_FOR_PASS_2 = 30;
 
 function costMidpoint(finding) {
   const detail = finding.detail || '';
@@ -501,9 +501,14 @@ function capFindingsForPass2(sortedFindings, cap, silent) {
   const kept = ranked.slice(0, cap);
   if (!silent) {
     try {
-      console.error(
-        '  (Narrator: ' + sortedFindings.length + ' findings exceeded cap of ' + cap +
-        '; rendering top ' + cap + ' by severity and cost.)'
+      // Visible, user-facing note (stdout, not a buried spinner/stderr line) so
+      // the consultant knows during the run that the PDF is capped and where
+      // the full set lives.
+      console.log(
+        'Note: ' + sortedFindings.length + ' findings were ' +
+        'identified. The PDF report shows the top ' + cap + ' ' +
+        'by severity. All findings are in the JSON, ' +
+        'TXT, and MD files.'
       );
     } catch { /* ignore logging failures */ }
   }
@@ -524,9 +529,8 @@ function capFindingsForPass2(sortedFindings, cap, silent) {
 function getCapDisclosure(originalCount, cap) {
   if (!Number.isFinite(originalCount) || !Number.isFinite(cap)) return null;
   if (originalCount <= cap) return null;
-  return '_Note: ' + originalCount + ' findings surfaced during analysis; this report renders the top '
-    + cap + ' by severity and cost. The remaining '
-    + (originalCount - cap) + ' lower-priority findings are available in the raw scan output._';
+  return '_This report shows the top ' + cap + ' findings by severity. '
+    + originalCount + ' total findings are available in the accompanying JSON file._';
 }
 
 /**

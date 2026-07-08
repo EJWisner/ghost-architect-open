@@ -96,7 +96,23 @@ function mutatePendingBatches(fn) {
         MAX_RETRIES + ' attempts; proceeding with last-write-wins.\n'
       );
     }
-    getConfig().set(KEY, { version: current.version + 1, batches: updated });
+    // The checkpoint write is best-effort: if the configstore is unwritable
+    // (read-only disk, permissions, quota) the batch itself has still been
+    // submitted to the API and processing must continue. We surface the loss of
+    // resume capability but never throw — a failed checkpoint degrades the
+    // resume feature, it does not fail the run.
+    try {
+      getConfig().set(KEY, { version: current.version + 1, batches: updated });
+    } catch (err) {
+      process.stderr.write(
+        '[Ghost] batch-store: checkpoint write failed: ' +
+        (err && err.stack ? err.stack : (err && err.message ? err.message : String(err))) + '\n'
+      );
+      console.warn(
+        '[Ghost] Batch checkpoint write failed: ' +
+        (err && err.message ? err.message : String(err)) + '. Resume capability degraded.'
+      );
+    }
     return updated;
   }
   return updated;

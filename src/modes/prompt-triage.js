@@ -245,10 +245,16 @@ export async function runPromptTriageMode(options = {}) {
     try {
       const redaction = redactContent(file.content, [], file.path);
       if (redaction.partialRedaction) {
-        console.log(chalk.yellow('  ⚠ ' + path.basename(file.path)
-          + ' skipped: redaction incomplete (oversized file or regex timeout);'
-          + ' possibly-unredacted content was NOT sent to the API.'));
-        continue;
+        if (!process.env.GHOST_ALLOW_PARTIAL) {
+          throw new Error(
+            'Redaction incomplete on large file. ' +
+            'Set GHOST_ALLOW_PARTIAL=1 to proceed.'
+          );
+        }
+        console.warn(
+          '[Ghost] Partial redaction: one or more ' +
+          'files exceeded the size limit.'
+        );
       }
       redactedContent = redaction.redacted;
       // Debug-only signal: which redaction rules fired and how many, never the

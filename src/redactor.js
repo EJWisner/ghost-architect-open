@@ -181,6 +181,10 @@ export function redactContent(content, customRules = [], filePath = null) {
     const fileLabel = filePath || '<unnamed input>';
     skippedFiles.push(fileLabel);
     partialRedaction = true;
+    // Prepend a visible in-band marker so a downstream consumer that ignores
+    // the partialRedaction return flag still sees the skip in the content
+    // itself. This is belt-and-suspenders on top of partialRedaction/skippedFiles.
+    redacted = '[REDACTION INCOMPLETE -- file exceeds 500KB]\n\n' + redacted;
     console.warn(chalk.yellow(
       `  ⚠  File ${fileLabel} exceeds 500KB — redaction skipped (ReDoS protection). Review manually before sharing.`
     ));

@@ -72,7 +72,31 @@ function isGitRepo(basePath) {
   }
 }
 
+// Defense-in-depth validation for the basePath handed to git via `-C`. Even
+// though execFile does not spawn a shell (so classic injection is not possible),
+// we reject control characters, non-strings, and relative paths so a malformed
+// basePath fails loudly here instead of producing confusing git errors.
+function validateBasePath(basePath) {
+  if (!basePath || typeof basePath !== 'string') {
+    throw new Error('Invalid basePath: must be a string');
+  }
+  // Reject null bytes, newlines, and control chars
+  if (/[\0\n\r\x01-\x1f\x7f]/.test(basePath)) {
+    throw new Error(
+      'Invalid basePath: contains control characters'
+    );
+  }
+  // Must be absolute path
+  if (!path.isAbsolute(basePath)) {
+    throw new Error(
+      'Invalid basePath: must be an absolute path'
+    );
+  }
+  return basePath;
+}
+
 async function runGitLog(basePath) {
+  validateBasePath(basePath);
   // --numstat: per-file changed line counts
   // --pretty=format:LOG_FORMAT: machine-parseable commit headers
   // --no-merges: skip merge commits (they distort line-count attribution)

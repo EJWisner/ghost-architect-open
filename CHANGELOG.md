@@ -5,6 +5,30 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.10 -- July 8, 2026
+
+### Patch: License Ratchet, Quota Safety, Verifier Quality, and Reliability
+
+**License**
+- Monotonic clock ratchet now rejects timestamps more than 60 seconds behind the stored value. Previously only future timestamps were rejected. Coordinated clock-rollback and configstore attacks can no longer extend trial periods.
+
+**Quota System**
+- Quota counter reads and writes now fail-closed. Previously a corrupted config file caused getStore() to throw, leaving counters at zero and granting infinite free scans. Now read failures return MAX_SAFE_INTEGER (quota exhausted) and write failures block the scan with a clear error message.
+
+**Verifier Quality**
+- Findings where the verifier actively disputes the cited code snippets are now classified as DISPUTED and dropped from the report entirely. Previously they appeared as UNVERIFIED findings, creating false positives. Set GHOST_DEBUG=1 to see dropped findings in stderr.
+
+**Narrator**
+- Finding cap raised from 25 to 30.
+- When cap fires, user sees a clear note before the scan completes: total finding count, cap applied, and confirmation that all findings are in the JSON file.
+- PDF report includes the same note when cap fires.
+
+**Reliability**
+- Batch checkpoint write failures now surface a visible warning instead of failing silently. Processing continues without resume capability.
+- Planner API failures now logged to stderr and surfaced to the user as a warning with plannerFailed flag in the fallback result.
+- basePath in keyPersonRisk.js now validated before passing to git. Null bytes, newlines, control characters, and relative paths rejected.
+- Direct callers of redactContent() now check the partialRedaction flag. Large files that bypass redaction now prepend a visible marker to the output.
+
 ## v10.0.9 -- July 8, 2026
 
 ### Patch: Reliability, Data Integrity, and Credential Safety

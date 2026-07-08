@@ -98,15 +98,44 @@ function getStore() {
   return getConfig();
 }
 
+// Quota counters are the paywall's only enforcement surface. A configstore
+// read/write failure must never open the gate. safeGetCount fails closed: an
+// unreadable counter is treated as "quota exhausted" (MAX_SAFE_INTEGER) so the
+// free tier blocks rather than granting unlimited scans. safeIncrementCount
+// fails closed too: if the post-scan bump can't persist, the scan is blocked as
+// a precaution rather than letting the counter silently stay put.
+function safeGetCount(key) {
+  try {
+    return getStore().get(key) || 0;
+  } catch (_) {
+    // On read failure assume quota exhausted
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
+function safeIncrementCount(key) {
+  try {
+    const current = getStore().get(key) || 0;
+    getStore().set(key, current + 1);
+  } catch (err) {
+    process.stderr.write(
+      '[Ghost] Quota counter write failed: ' +
+      err.message + '. Scan blocked as a precaution.\n'
+    );
+    throw new Error(
+      'Quota system error. Please contact ' +
+      'support@ghostarchitect.dev if this persists.'
+    );
+  }
+}
+
 export function getScanCount() {
-  return getStore().get(COUNT_KEY) || 0;
+  return safeGetCount(COUNT_KEY);
 }
 
 export function incrementScanCount(prefix) {
   if (!COUNTED_PREFIXES.has(prefix)) return;
-  const store = getStore();
-  const current = store.get(COUNT_KEY) || 0;
-  store.set(COUNT_KEY, current + 1);
+  safeIncrementCount(COUNT_KEY);
 }
 
 // Test helper. Not exposed in CLI flags — only callable from code or by
@@ -119,13 +148,11 @@ export function resetScanCount() {
 // Isolated from the main scan counter. See FORECAST_COUNT_KEY comment above.
 
 export function getForecastCount() {
-  return getStore().get(FORECAST_COUNT_KEY) || 0;
+  return safeGetCount(FORECAST_COUNT_KEY);
 }
 
 export function incrementForecastCount() {
-  const store = getStore();
-  const current = store.get(FORECAST_COUNT_KEY) || 0;
-  store.set(FORECAST_COUNT_KEY, current + 1);
+  safeIncrementCount(FORECAST_COUNT_KEY);
 }
 
 // Test helper.
@@ -142,13 +169,11 @@ const FIX_FORECAST_COUNT_KEY = 'ghostOpenFixForecastCount';
 // FIX_FORECAST_QUOTA imported from tier-gates.js above — do not re-declare.
 
 export function getFixForecastCount() {
-  return getStore().get(FIX_FORECAST_COUNT_KEY) || 0;
+  return safeGetCount(FIX_FORECAST_COUNT_KEY);
 }
 
 export function incrementFixForecastCount() {
-  const store = getStore();
-  const current = store.get(FIX_FORECAST_COUNT_KEY) || 0;
-  store.set(FIX_FORECAST_COUNT_KEY, current + 1);
+  safeIncrementCount(FIX_FORECAST_COUNT_KEY);
 }
 
 // Test helper.

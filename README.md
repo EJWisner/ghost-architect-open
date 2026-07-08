@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.10
+- Patch: monotonic clock ratchet rejects past timestamps, quota counters fail-closed, verifier drops DISPUTED findings, narrator cap raised to 30 with transparency note, batch checkpoint write warnings, planner API error visibility, keyPersonRisk basePath validation, redactContent direct callers enforce partial-redaction guard.
+
 ### v10.0.9
 - Patch: enterprise price uses PRICING constant, manifest parser crash-proofed, redactor partial redaction enforced at callers, monotonic clock future timestamp rejected, mobile publish non-atomic writes protected, batch store optimistic locking added, GitHub rate limit handled, audit log local durable failure file.
 
