@@ -326,7 +326,7 @@ export async function runBlastMode(codebaseContext, options = {}) {
     // "still working" signal. The full report lives in `buffer` and
     // is what we save to disk; the user reads it from the saved files.
     const blastTracker = new SessionCostTracker();
-    const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m);
+    const blastUsage   = (i, o, m, stage) => blastTracker.record('blast', i, o, m, stage || 'scan');
 
     const result = await runBlastRadius(
       codebaseContext,

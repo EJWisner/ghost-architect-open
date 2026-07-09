@@ -392,12 +392,20 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   const prNumber = parseInt(prMatch[1], 10);
   const [owner, repo] = repository.split('/');
 
-  // Severity breakdown
-  const critical = findings.filter(f => f.severity === 'CRITICAL').length;
-  const high     = findings.filter(f => f.severity === 'HIGH').length;
-  const medium   = findings.filter(f => f.severity === 'MEDIUM').length;
-  const low      = findings.filter(f => f.severity === 'LOW').length;
-  const total    = findings.length;
+  // Blast Radius findings are impact observations (files that import from
+  // modules this commit touched), not defects. Separate them from the
+  // action-required findings so a reviewer never reads "exposed" as "broken".
+  // They render in their own "No Action Required" section at the bottom.
+  const blastRadiusFindings = findings.filter(f => f.source_mode === 'blast');
+  const actionFindings      = findings.filter(f => f.source_mode !== 'blast');
+
+  // Severity breakdown (action-required findings only; blast observations do
+  // not carry an action-required severity into the summary or phases).
+  const critical = actionFindings.filter(f => f.severity === 'CRITICAL').length;
+  const high     = actionFindings.filter(f => f.severity === 'HIGH').length;
+  const medium   = actionFindings.filter(f => f.severity === 'MEDIUM').length;
+  const low      = actionFindings.filter(f => f.severity === 'LOW').length;
+  const total    = actionFindings.length;
 
   // Severity summary line
   const parts = [];
@@ -408,8 +416,8 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   const severitySummary = parts.length ? parts.join(' · ') : 'none';
 
   // Phase grouping for the comment body
-  const phase1 = findings.filter(f => ['CRITICAL', 'HIGH'].includes(f.severity));
-  const phase2 = findings.filter(f => ['MEDIUM', 'LOW'].includes(f.severity));
+  const phase1 = actionFindings.filter(f => ['CRITICAL', 'HIGH'].includes(f.severity));
+  const phase2 = actionFindings.filter(f => ['MEDIUM', 'LOW'].includes(f.severity));
 
   const shortSha = sha.slice(0, 7);
   const date     = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -441,12 +449,24 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
     body += `  → Prompts ready in Ghost Portal\n\n`;
   }
 
-  if (total === 0) {
+  if (total === 0 && blastRadiusFindings.length === 0) {
     body += `No findings detected for this commit.\n\n`;
   }
 
   if (portalUrl) {
     body += `[Open Ghost Portal to copy prompts into your AI coding tool.](${portalUrl})\n`;
+  }
+
+  // Group 2: Blast Radius Observations -- impact map, no action required. Kept
+  // visually distinct from the action-required findings above so stakeholders
+  // do not mistake "exposed" for "broken".
+  if (blastRadiusFindings.length > 0) {
+    body += `\n### 🔍 ${blastRadiusFindings.length} · Blast Radius Observations -- No Action Required\n`;
+    body += `These files import from modules touched by this commit. No issues were identified -- review if making further changes to these areas.\n\n`;
+    for (const f of blastRadiusFindings) {
+      body += `  - ${escapeMarkdown(f.title)}\n`;
+    }
+    body += `\n`;
   }
 
   body += buildVerifiedSection(verifiedFindings);
@@ -2115,6 +2135,14 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       const baseFileName = `watch-${commitSha}-${timestamp}`;
       const basePath     = `projects/${projectSlug}/scans/watch/${devSlug}`;
 
+      // Split the same way the PR comment does: action-required findings drive
+      // findingCount / severityCounts and stay in `findings`; Blast Radius impact
+      // observations move to their own `blastRadiusObservations` bucket so the
+      // portal can render "exposed" separately from "broken" and the finding
+      // count reflects real defects, not blast noise.
+      const portalActionFindings   = allFindings.filter(f => f.source_mode !== 'blast');
+      const portalBlastObservations = allFindings.filter(f => f.source_mode === 'blast');
+
       // Build the Watch result payload
       const watchResult = {
         schema:      '1.0',
@@ -2124,17 +2152,18 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         branch,
         developer,
         projectSlug,
-        findingCount: allFindings.length,
+        findingCount: portalActionFindings.length,
         severityCounts: {
-          critical: allFindings.filter(f => f.severity === 'CRITICAL').length,
-          high:     allFindings.filter(f => f.severity === 'HIGH').length,
-          medium:   allFindings.filter(f => f.severity === 'MEDIUM').length,
-          low:      allFindings.filter(f => f.severity === 'LOW').length,
+          critical: portalActionFindings.filter(f => f.severity === 'CRITICAL').length,
+          high:     portalActionFindings.filter(f => f.severity === 'HIGH').length,
+          medium:   portalActionFindings.filter(f => f.severity === 'MEDIUM').length,
+          low:      portalActionFindings.filter(f => f.severity === 'LOW').length,
         },
         blastFileCount,
         briefPromptCount,
         narratorFailed,
-        findings:    allFindings,
+        findings:    portalActionFindings,
+        blastRadiusObservations: portalBlastObservations,
         verifiedFindings,
         brief:       brief || null,
         tokenUsage:  buildTokenUsage(totalInputTokens, totalOutputTokens),

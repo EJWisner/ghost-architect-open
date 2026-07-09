@@ -34,7 +34,7 @@
 import chalk from 'chalk';
 import { getModel } from './models.js';
 import { resolveApiKey } from '../config.js';
-import { PRICING as MODEL_PRICING } from '../core/estimator.js';
+import { MODEL_RATES as MODEL_PRICING } from '../core/estimator.js';
 
 // Session-scoped usage accumulator. Reset by the mode file before a scan,
 // read after. Tracks token totals across all Tier 2 detector calls in the
@@ -604,7 +604,7 @@ export async function auditPromptForDefect(params) {
 // ── Public: cost estimation helpers ──────────────────────────────────────
 
 // Per-million-token rates in USD. Derived from the single source of truth for
-// model pricing (src/core/estimator.js PRICING) rather than duplicated here, so
+// model pricing (src/core/estimator.js MODEL_RATES) rather than duplicated here, so
 // a rate change lands in one place. Rates are only used for the informational
 // pre-scan estimate — actual billing comes from Anthropic. An unknown modelId
 // (e.g. a non-Claude target) is absent from the map, which estimateAuditCost

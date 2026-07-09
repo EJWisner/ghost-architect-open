@@ -5,6 +5,20 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.16 -- July 9, 2026
+
+### Patch: Ghost Watcher Trust and Display
+
+**Verifier / Cost**
+- PRICING export in src/core/estimator.js renamed to MODEL_RATES, eliminating the name collision with src/constants/pricing.js PRICING (tier subscription prices). Any file importing PRICING from the wrong module would have silently received a table of incompatible shape. Ghost Watcher flagged this HIGH on two consecutive runs.
+- SessionCostTracker.record() argument order corrected in blast.js. Stage was being passed as mode, so per-stage cost breakdowns always showed scan regardless of actual stage. Fixed to record('blast', i, o, m, stage).
+- resolveContextCap in forecast-overlay.js now passes null explicitly as userRequested with the source label 'forecast-overlay', documenting that the overlay legitimately has no live CLI override in scope.
+
+**Ghost Watcher Display**
+- Blast Radius findings separated from action-required findings in PR comments and portal payload. Previously all findings appeared in a flat list, making blast impact observations look identical to confirmed defects.
+- PR comment now shows two groups: action-required findings (severity-ranked, PHASE 1/2) and a new section at the bottom labeled exactly: "Blast Radius Observations -- No Action Required" with subtext explaining these are files that import from modules touched by the commit, not broken code.
+- Portal payload findings field now contains only action-required findings. A new blastRadiusObservations field carries the blast entries separately. findingCount and severityCounts reflect action-required findings only.
+
 ## v10.0.15 -- July 9, 2026
 
 ### Patch: Chat Response Calibration

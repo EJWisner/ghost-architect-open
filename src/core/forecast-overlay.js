@@ -348,7 +348,11 @@ export async function buildForecastOverlay(baselineContext, proposedDir, opts = 
 
   // ── Step 4: Rebuild context string from patched fileMap ──────────────────
   // Mirrors the token-budget loop in loader/index.js exactly.
-  const maxTokens  = resolveContextCap(tier).effective;
+  // The overlay rebuilds context from saved baseline + proposed files and has no
+  // live CLI --max-context override in scope (opts carries only tier/profile/
+  // verbose). Pass null explicitly so the tier cap applies and the intent is
+  // documented; the 'forecast-overlay' source labels any clamp warning.
+  const maxTokens  = resolveContextCap(tier, null, 'forecast-overlay').effective;
   let   context    = '';
   const fileIndex  = [];
   let   approxTokens = 0;

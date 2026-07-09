@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.16
+- Patch: PRICING export name collision fixed, forecast-overlay context cap intent documented, blast cost tracker stage argument corrected, blast radius observations separated from action-required findings in PR comments and portal.
+
 ### v10.0.15
 - Patch: chat and question mode system prompt rewritten to calibrate response depth to question complexity.
 

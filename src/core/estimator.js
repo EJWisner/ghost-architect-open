@@ -16,7 +16,7 @@
 //     callers that pin to those IDs)
 //   - Sonnet 4.6 / 4.5: $3 in / $15 out
 //   - Haiku 4.5: $1 in / $5 out
-export const PRICING = {
+export const MODEL_RATES = {
   // Current Opus generation (post Nov 2025 67% price drop)
   'claude-opus-4-8':   { label: 'Claude Opus 4.8',   inputPerM:  5.00, outputPerM: 25.00 },
   'claude-opus-4-7':   { label: 'Claude Opus 4.7',   inputPerM:  5.00, outputPerM: 25.00 },
@@ -60,7 +60,7 @@ const MODE_OUTPUT_ESTIMATES = {
 };
 
 export function getPricing(model, now = new Date()) {
-  const entry = PRICING[model] || PRICING['claude-sonnet-4-6'];
+  const entry = MODEL_RATES[model] || MODEL_RATES['claude-sonnet-4-6'];
   // Sonnet 5 introductory pricing ($2/$10) runs through Aug 31 2026 (UTC).
   // Auto-switch to standard pricing ($3/$15) from Sep 1 2026 onward so the
   // estimator never silently under-quotes once the promo ends.
