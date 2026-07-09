@@ -100,5 +100,16 @@ export async function runMultiPassPOI(fileMap, projectLabel, onChunk) {
     },
   };
 
-  return coreRunMultiPassPOI(fileMap, projectLabel, callbacks);
+  try {
+    const result = await coreRunMultiPassPOI(fileMap, projectLabel, callbacks);
+    return result;
+  } catch (err) {
+    console.error(
+      'Multi-pass scan failed: ' + err.message
+    );
+    if (process.env.GHOST_DEBUG) {
+      console.error(err.stack);
+    }
+    return null;
+  }
 }

@@ -382,6 +382,22 @@ async function completeInterruptedPublish(octokit, owner, repo, marker) {
 }
 
 /**
+ * Force-clear a stuck _pending.json marker in the reports repo. Backs the
+ * `ghost --force-clear-markers` escape hatch for when a marker somehow survives
+ * the automatic stale-marker cleanup. Returns { ok, reason }.
+ */
+export async function clearPendingMarker() {
+  if (!isPublishConfigured()) return { ok: false, reason: 'not_configured' };
+  const cfg = getPublishConfig();
+  const octokit = await getOctokit();
+  const { owner, repo } = parseRepo(cfg.repo);
+  const { content: existingMarker } = await getFileContent(octokit, owner, repo, PENDING_MARKER);
+  if (!existingMarker) return { ok: true, reason: 'no_marker' };
+  await deleteFile(octokit, owner, repo, PENDING_MARKER, 'publish: force-clear pending marker');
+  return { ok: true, reason: 'cleared', slug: existingMarker.slug || null };
+}
+
+/**
  * Publish the latest scan for a project to the ghost-reports repo.
  *
  * The three writes (latest.json, date-stamped archive, index.json) are not a
@@ -401,17 +417,36 @@ export async function publishProject(projectMeta, scanRecord) {
   // Recover an interrupted previous publish before starting a new one.
   const { content: existingMarker } = await getFileContent(octokit, owner, repo, PENDING_MARKER);
   if (existingMarker && existingMarker.slug) {
-    console.warn(
-      '[Ghost Mobile] Found incomplete previous publish ' +
-      'for ' + existingMarker.slug + '. Completing it now.'
-    );
-    try {
-      await completeInterruptedPublish(octokit, owner, repo, existingMarker);
-    } catch (err) {
+    // Stale-marker guard: a marker older than 1 hour is from a publish that will
+    // never resume. Clear it rather than retrying recovery on every future
+    // publish, which would otherwise block publishing indefinitely. A marker
+    // with no startedAt is treated as stale for the same reason.
+    const startedMs = existingMarker.startedAt ? new Date(existingMarker.startedAt).getTime() : 0;
+    const markerAge = startedMs ? Date.now() - startedMs : Infinity;
+    if (markerAge > 3600000) { // 1 hour
+      try {
+        await deleteFile(octokit, owner, repo, PENDING_MARKER, 'publish: clear stale pending marker');
+      } catch (_) { /* best effort */ }
       console.warn(
-        '[Ghost Mobile] Could not complete previous publish for ' +
-        existingMarker.slug + ': ' + (err?.message || err)
+        '[Ghost Mobile] Stale marker cleared ' +
+        '(older than 1 hour).'
       );
+    } else {
+      console.warn(
+        '[Ghost Mobile] Found incomplete previous publish ' +
+        'for ' + existingMarker.slug + '. Completing it now.'
+      );
+      try {
+        await completeInterruptedPublish(octokit, owner, repo, existingMarker);
+      } catch (err) {
+        // Recovery failed: clear the marker BEFORE warning so a persistently
+        // failing recovery can't block every future publish forever.
+        try {
+          await deleteFile(octokit, owner, repo, PENDING_MARKER, 'publish: clear stale pending marker');
+        } catch (_) { /* best effort */ }
+        console.warn('[Ghost Mobile] Recovery failed: ' +
+          (err?.message || err) + '. Stale marker cleared.');
+      }
     }
   }
 

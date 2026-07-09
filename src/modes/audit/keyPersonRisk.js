@@ -72,23 +72,39 @@ function isGitRepo(basePath) {
   }
 }
 
+// Typed error so callers (e.g. audit/index.js) can distinguish a malformed
+// basePath from a transient git failure and skip only the Key-Person Risk step
+// instead of aborting the whole audit.
+export class InvalidBasePathError extends Error {
+  constructor(msg) {
+    super(msg);
+    this.name = 'InvalidBasePathError';
+  }
+}
+
 // Defense-in-depth validation for the basePath handed to git via `-C`. Even
 // though execFile does not spawn a shell (so classic injection is not possible),
 // we reject control characters, non-strings, and relative paths so a malformed
 // basePath fails loudly here instead of producing confusing git errors.
 function validateBasePath(basePath) {
   if (!basePath || typeof basePath !== 'string') {
-    throw new Error('Invalid basePath: must be a string');
+    throw new InvalidBasePathError('Invalid basePath: must be a string');
+  }
+  // Trim surrounding whitespace (a trailing newline or stray space from a
+  // shell/env source should not by itself fail validation).
+  basePath = basePath.trim();
+  if (!basePath) {
+    throw new InvalidBasePathError('Invalid basePath: must be a string');
   }
   // Reject null bytes, newlines, and control chars
   if (/[\0\n\r\x01-\x1f\x7f]/.test(basePath)) {
-    throw new Error(
+    throw new InvalidBasePathError(
       'Invalid basePath: contains control characters'
     );
   }
   // Must be absolute path
   if (!path.isAbsolute(basePath)) {
-    throw new Error(
+    throw new InvalidBasePathError(
       'Invalid basePath: must be an absolute path'
     );
   }
@@ -96,7 +112,8 @@ function validateBasePath(basePath) {
 }
 
 async function runGitLog(basePath) {
-  validateBasePath(basePath);
+  // Use the trimmed, validated value so a trailing newline/space does not reach git.
+  basePath = validateBasePath(basePath);
   // --numstat: per-file changed line counts
   // --pretty=format:LOG_FORMAT: machine-parseable commit headers
   // --no-merges: skip merge commits (they distort line-count attribution)
@@ -242,6 +259,10 @@ export async function runKeyPersonRisk(codebaseContext, options = {}) {
   try {
     stdout = await runGitLog(basePath);
   } catch (err) {
+    // A malformed basePath is a distinct, non-transient condition: let it
+    // propagate so the audit orchestrator can skip only this analyzer with a
+    // clear warning. Genuine git failures still degrade gracefully to a callout.
+    if (err instanceof InvalidBasePathError) throw err;
     return {
       ...emptyResult,
       callouts: [`Git log failed: ${err.message.slice(0, 120)}`],

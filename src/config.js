@@ -88,7 +88,27 @@ export function reconcileSudoOwnership() {
   // pre-existed user-owned, chown is a harmless no-op; if root just created it,
   // this hands it back. We never recurse into .config (other apps live there).
   for (const p of [dotConfigDir, configstoreDir, CONFIG_PATH]) {
-    try { fs.chownSync(p, uid, gid); } catch { /* best effort */ }
+    try {
+      fs.chownSync(p, uid, gid);
+    } catch (err) {
+      // Best-effort, but no longer silent: surface the failure so a user whose
+      // config is left root-owned understands why later non-root runs EACCES.
+      process.stderr.write(
+        '[Ghost] Warning: could not restore ownership ' +
+        'of ' + p + ': ' + err.message + '\n'
+      );
+    }
+    // Verify the chown actually took effect. A swallowed or partial failure can
+    // leave the file root-owned; tell the user exactly how to fix it themselves.
+    try {
+      const stat = fs.statSync(p);
+      if (stat.uid !== uid) {
+        console.warn(
+          'Config file remains root-owned. ' +
+          'Run: sudo chown $USER ' + p
+        );
+      }
+    } catch { /* stat failed — nothing more we can do here */ }
   }
 }
 

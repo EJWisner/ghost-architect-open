@@ -305,7 +305,12 @@ function buildDependencyMapSection(dependencyMap) {
 
 function buildRoadmapSection(roadmap) {
   if (!roadmap || roadmap._error) {
-    const errMsg = roadmap?._error || 'unavailable';
+    // _error may be a message string (legacy shape) or the boolean `true` with
+    // the text in errorMessage (roadmapStub synthesis-failure shape). Prefer the
+    // explicit message so we never render a bare "true".
+    const errMsg = roadmap?.errorMessage
+      || (typeof roadmap?._error === 'string' ? roadmap._error : null)
+      || 'unavailable';
     return `## Modernization Roadmap\n\n_Section unavailable: ${errMsg}_`;
   }
 

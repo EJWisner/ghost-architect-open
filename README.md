@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.11
+- Patch: clock ratchet window widened to 5 minutes with GHOST_CLOCK_TOLERANCE override, session salvage filters checkpoints by project label, interrupted publish recovery no longer loops forever plus --force-clear-markers flag, basePath trimmed with typed InvalidBasePathError, audit synthesis and multipass CLI unhandled rejections wrapped, sudo chown failures logged, DISPUTED drops logged at INFO, watcher email shows auto-verified count.
+
 ### v10.0.10
 - Patch: monotonic clock ratchet rejects past timestamps, quota counters fail-closed, verifier drops DISPUTED findings, narrator cap raised to 30 with transparency note, batch checkpoint write warnings, planner API error visibility, keyPersonRisk basePath validation, redactContent direct callers enforce partial-redaction guard.
 

@@ -52,8 +52,22 @@ export async function runRoadmapStub(analyzerOutputs, options = {}) {
   }
 
   // Real call. The analyst module handles model selection, API key
-  // resolution, JSON parsing, and error normalization.
-  const result = await runAuditSynthesis(analyzerOutputs, options);
+  // resolution, JSON parsing, and error normalization. Guard it so a synthesis
+  // failure (API outage, unparseable response) degrades to a clean error marker
+  // the renderer can show, instead of an unhandled rejection that crashes audit.
+  let result;
+  try {
+    result = await runAuditSynthesis(analyzerOutputs, options);
+  } catch (err) {
+    console.error(
+      '[Ghost Audit] Synthesis failed: ' + err.message
+    );
+    return {
+      _stub: false,
+      _error: true,
+      errorMessage: err.message,
+    };
+  }
 
   return {
     ...result,

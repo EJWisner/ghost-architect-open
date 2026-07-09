@@ -499,10 +499,13 @@ export async function verifyReport(reportText, fileMap, options = {}) {
       .join(' ')
       .toLowerCase();
     if (DISPUTED_PHRASES.some(p => haystack.includes(p))) {
-      if (process.env.GHOST_DEBUG) {
-        console.error('[Ghost] Disputed finding dropped: '
-          + (r.finding.id || r.finding.title));
-      }
+      // One INFO line per dropped finding, always shown (not gated behind
+      // GHOST_DEBUG) so the user understands why a finding is absent from the
+      // report rather than wondering where it went.
+      console.info(
+        '[Ghost] Finding dropped (DISPUTED): ' +
+        (r.finding.id || r.finding.title) + ' -- verifier contradicted cited code.'
+      );
       return { ...r, status: 'disputed' };
     }
     return r;

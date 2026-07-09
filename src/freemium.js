@@ -135,7 +135,14 @@ export function getScanCount() {
 
 export function incrementScanCount(prefix) {
   if (!COUNTED_PREFIXES.has(prefix)) return;
-  safeIncrementCount(COUNT_KEY);
+  try {
+    safeIncrementCount(COUNT_KEY);
+  } catch (err) {
+    throw new Error(
+      'Scan quota update failed: ' + err.message +
+      '. Check disk space and config file permissions.'
+    );
+  }
 }
 
 // Test helper. Not exposed in CLI flags — only callable from code or by
@@ -152,7 +159,14 @@ export function getForecastCount() {
 }
 
 export function incrementForecastCount() {
-  safeIncrementCount(FORECAST_COUNT_KEY);
+  try {
+    safeIncrementCount(FORECAST_COUNT_KEY);
+  } catch (err) {
+    throw new Error(
+      'Scan quota update failed: ' + err.message +
+      '. Check disk space and config file permissions.'
+    );
+  }
 }
 
 // Test helper.
@@ -173,7 +187,14 @@ export function getFixForecastCount() {
 }
 
 export function incrementFixForecastCount() {
-  safeIncrementCount(FIX_FORECAST_COUNT_KEY);
+  try {
+    safeIncrementCount(FIX_FORECAST_COUNT_KEY);
+  } catch (err) {
+    throw new Error(
+      'Scan quota update failed: ' + err.message +
+      '. Check disk space and config file permissions.'
+    );
+  }
 }
 
 // Test helper.

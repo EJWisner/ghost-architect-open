@@ -32,7 +32,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { spawn } from 'child_process';
 import { runStackRealityCheck } from './stackReality.js';
-import { runKeyPersonRisk, DEPARTED_THRESHOLD_DAYS } from './keyPersonRisk.js';
+import { runKeyPersonRisk, DEPARTED_THRESHOLD_DAYS, InvalidBasePathError } from './keyPersonRisk.js';
 import { runDependencyMap } from './dependencyMap.js';
 import { runRoadmapStub } from './roadmapStub.js';
 import { buildAuditReport } from './reportBuilder.js';
@@ -231,8 +231,18 @@ export async function runAuditMode(codebaseContext, options = {}) {
     const tag = results.keyPersonRisk._stub ? chalk.gray(' (stub)') : '';
     spinner.succeed(chalk.green(`  ${SYM.check} Key-Person Risk${tag}`));
   } catch (err) {
-    spinner.fail(chalk.red(`  Key-Person Risk failed: ${err.message}`));
-    results.keyPersonRisk = { _error: err.message };
+    if (err instanceof InvalidBasePathError) {
+      // Malformed basePath: skip only this analyzer and continue the audit
+      // rather than halting the whole run.
+      spinner.warn(chalk.yellow(`  Key-Person Risk skipped: ${err.message}`));
+      process.stderr.write(
+        '[Ghost Audit] Skipping Key-Person Risk analysis (' + err.message + '). Audit continues.\n'
+      );
+      results.keyPersonRisk = { _error: err.message, _skipped: true };
+    } else {
+      spinner.fail(chalk.red(`  Key-Person Risk failed: ${err.message}`));
+      results.keyPersonRisk = { _error: err.message };
+    }
   }
 
   // Analyzer 3: Hidden Dependency Map

@@ -7,7 +7,7 @@ import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
 import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey, reconcileSudoOwnership, isLinuxRootWithoutSudoUser, getConfig, secureConfigFile } from '../src/config.js';
-import { getPublishConfig, setPublishConfig, getPublishToken } from '../src/core/mobile-publish.js';
+import { getPublishConfig, setPublishConfig, getPublishToken, clearPendingMarker } from '../src/core/mobile-publish.js';
 import { createOctokit } from '../src/utils/octokit-client.js';
 import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
 import { runChatMode } from '../src/modes/chat.js';
@@ -2193,6 +2193,26 @@ async function main() {
         console.log(chalk.gray(`  - ${f.timestamp}  ${f.seatId || 'unknown-seat'}: ${f.message || 'audit_write_failure'}`));
       }
       console.log('');
+    }
+    process.exit(0);
+  }
+
+  // `ghost --force-clear-markers` force-clears a stuck Ghost Mobile publish
+  // marker (_pending.json) in the reports repo. Escape hatch for the rare case
+  // where the automatic stale-marker cleanup did not run.
+  if (argv.includes('--force-clear-markers')) {
+    try {
+      const result = await clearPendingMarker();
+      if (result.reason === 'not_configured') {
+        console.log(chalk.gray('\n  Ghost Mobile publish is not configured. Nothing to clear.\n'));
+      } else if (result.reason === 'no_marker') {
+        console.log(chalk.green(`\n${SYM.check} No pending publish marker found. Nothing to clear.\n`));
+      } else {
+        console.log(chalk.green(`\n${SYM.check} Cleared pending publish marker${result.slug ? ` (was for ${result.slug})` : ''}.\n`));
+      }
+    } catch (err) {
+      console.log(chalk.red(`\n  Could not clear pending marker: ${err.message}\n`));
+      process.exit(1);
     }
     process.exit(0);
   }

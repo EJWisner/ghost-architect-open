@@ -5,6 +5,33 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.11 -- July 9, 2026
+
+### Patch: Clock Tolerance, Session Safety, Publish Recovery, and Error Visibility
+
+**License**
+- Clock ratchet rejection window widened from 60 seconds to 5 minutes. GHOST_CLOCK_TOLERANCE env var added for CI and container environments with non-monotonic clocks. NTP corrections and VM snapshot restores no longer trigger false license validation failures.
+- Clock ratchet boundary unit tests added covering 59s behind (pass), 301s behind (reject), and 25h future (reject).
+
+**Audit Mode**
+- basePath now trimmed before validation. Trailing newlines from user input no longer abort the Inheritance Audit.
+- InvalidBasePathError typed error added. Audit orchestrator catches it, logs a warning, and continues without Key Person Risk rather than halting the entire audit.
+- Unhandled rejection in audit synthesis wrapped. roadmapStub.js now returns a structured error result instead of crashing with a stack trace.
+
+**Session Management**
+- Session salvage now filters checkpoints by project label. Previously salvage picked the freshest checkpoint regardless of project, potentially mixing findings from two unrelated codebases.
+
+**Mobile Publish**
+- Interrupted publish recovery no longer loops forever. Stale marker is now cleared in the recovery catch block before logging the warning. Markers older than 1 hour are cleared automatically.
+- --force-clear-markers CLI flag added for operators to manually clear stale markers.
+
+**Reliability**
+- safeIncrementCount callers now throw actionable errors including the config file path instead of a generic support prompt.
+- Sudo ownership reconciliation failures now logged to stderr with the actual error and a recovery command. Post-chown verification warns if file remains root-owned.
+- Unhandled rejection in multipass CLI wrapped. Users see clean error message instead of stack trace on scan failure.
+- DISPUTED finding drops now logged at INFO level without requiring GHOST_DEBUG=1.
+- Ghost Watcher email now shows auto-verified count: "N findings (M verified, X need attention)."
+
 ## v10.0.10 -- July 8, 2026
 
 ### Patch: License Ratchet, Quota Safety, Verifier Quality, and Reliability

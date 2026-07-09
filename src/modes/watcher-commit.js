@@ -992,7 +992,7 @@ function emailCleanScan({ repo, shortSha, fileCount, portalSlug }) {
   };
 }
 
-function emailFindings({ repo, shortSha, findingsCount, criticalCount, highCount, mediumCount, lowCount, findings, portalSlug }) {
+function emailFindings({ repo, shortSha, findingsCount, criticalCount, highCount, mediumCount, lowCount, findings, portalSlug, verifiedCount = 0 }) {
   const findingsHtml = (findings || []).map(f =>
     `  <li style="margin-bottom:12px;">\n` +
     `    <strong style="color:#ff5555;">[${escapeHtml(f.severity)}]</strong> ${escapeHtml(f.title)}<br>\n` +
@@ -1001,11 +1001,18 @@ function emailFindings({ repo, shortSha, findingsCount, criticalCount, highCount
     `  </li>`
   ).join('\n');
 
+  // findingsCount is the ACTIVE (needs-attention) set. verifiedCount is the
+  // @ghost-verified set pulled out as expected behavior. Surface the full
+  // picture so a reader is not alarmed by the total without the context that
+  // some were auto-verified.
+  const attentionCount = findingsCount;
+  const totalCount     = findingsCount + verifiedCount;
+
   return {
-    subject: `Ghost Watcher™ — ${findingsCount} findings on ${repo} commit ${shortSha}`,
+    subject: `Ghost Watcher™: ${totalCount} findings (${verifiedCount} verified, ${attentionCount} need attention) on ${repo} commit ${shortSha}`,
     html:
-      `<h2 style="color:#ff5555;">Ghost Watcher™ — ${findingsCount} findings</h2>\n` +
-      `<p>Ghost Watcher™ scanned commit <code>${escapeHtml(shortSha)}</code> on <strong>${escapeHtml(repo)}</strong> and found ${findingsCount} issues requiring attention.</p>\n` +
+      `<h2 style="color:#ff5555;">Ghost Watcher™: ${totalCount} findings</h2>\n` +
+      `<p>Ghost Watcher™ scanned commit <code>${escapeHtml(shortSha)}</code> on <strong>${escapeHtml(repo)}</strong> and found ${totalCount} issues. ${verifiedCount} were automatically verified as expected patterns. ${attentionCount} require your attention.</p>\n` +
       `<p><strong>Severity summary:</strong><br>\n` +
       `Critical: ${criticalCount} | High: ${highCount} | Medium: ${mediumCount} | Low: ${lowCount}</p>\n` +
       `<ul>\n${findingsHtml}\n</ul>\n` +
@@ -1974,6 +1981,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           repo:          repoPath,
           shortSha:      commitSha,
           findingsCount: allFindings.length,
+          verifiedCount: verifiedFindings.length,
           criticalCount: sev.critical,
           highCount:     sev.high,
           mediumCount:   sev.medium,

@@ -115,15 +115,21 @@ export function updateLastSeenUtc(newIso) {
     );
     return false;
   }
-  // Reject timestamps more than 60 seconds behind
-  // the stored value to prevent ratchet rollback attacks
+  // Reject timestamps more than the tolerance window behind the stored value
+  // to prevent ratchet rollback attacks. The window defaults to 5 minutes so a
+  // benign NTP correction or minor clock skew does not lock a valid user out;
+  // GHOST_CLOCK_TOLERANCE (seconds) overrides it for tighter or looser policy.
+  const MAX_PAST_MS = process.env.GHOST_CLOCK_TOLERANCE
+    ? parseInt(process.env.GHOST_CLOCK_TOLERANCE) * 1000
+    : 300000; // 5 minutes default
   const stored = getLastSeenUtc();
   if (stored) {
     const storedMs = new Date(stored).getTime();
-    if (newMs < storedMs - 60000) {
+    if (newMs < storedMs - MAX_PAST_MS) {
       process.stderr.write(
         '[Ghost] Rejected past timestamp: ' + newIso +
-        ' is more than 60s behind stored ' + stored + '\n'
+        ' is more than ' + Math.round(MAX_PAST_MS / 1000) + 's behind stored ' +
+        stored + '\n'
       );
       return false;
     }

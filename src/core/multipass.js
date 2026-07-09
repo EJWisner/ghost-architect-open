@@ -154,8 +154,15 @@ function salvageSessionFromCheckpoints(label) {
     if (!fs.existsSync(dir)) return null;
 
     const safe = (label || 'unnamed').replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+    // Match ONLY this project's checkpoint. A bare startsWith(safe) prefix match
+    // mixes projects: label "app" would match "app-backend.checkpoint.json" and
+    // could salvage an unrelated project's session. Checkpoints are written as
+    // exactly `<safe>.checkpoint.json` (getCheckpointPath), so require the exact
+    // filename. If no checkpoint for THIS label exists, return null rather than
+    // picking the freshest unrelated one.
+    const target = safe + '.checkpoint.json';
     const candidates = fs.readdirSync(dir).filter(f =>
-      f.endsWith('.checkpoint.json') && f.toLowerCase().startsWith(safe)
+      f.toLowerCase() === target
     );
     if (candidates.length === 0) return null;
 
@@ -202,7 +209,7 @@ export function loadSession(label) {
       const total = forced.totalPassCount || done;
       const estSpent = (done * EST_COST_PER_PASS).toFixed(2);
       console.log(chalk.yellow(
-        'Ghost recovered a previous session for this project (forced recovery). ' +
+        `Ghost recovered session for project: ${label} (forced recovery). ` +
         `Resuming from pass ${done} of ${total}. ` +
         `Estimated API cost already spent: $${estSpent}`
       ));
@@ -240,7 +247,7 @@ export function loadSession(label) {
     const total = salvaged.totalPassCount || done;
     const estSpent = (done * EST_COST_PER_PASS).toFixed(2);
     console.log(chalk.yellow(
-      'Ghost recovered a previous session for this project. ' +
+      `Ghost recovered session for project: ${label}. ` +
       `Resuming from pass ${done} of ${total}. ` +
       `Estimated API cost already spent: $${estSpent}`
     ));
