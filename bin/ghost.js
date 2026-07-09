@@ -203,6 +203,8 @@ function parseArgs(argv) {
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
     if (a === '--recover-session')          { out.recoverSession = argv[++i] || ''; continue; }
     if (a.startsWith('--recover-session=')) { out.recoverSession = a.slice('--recover-session='.length); continue; }
+    if (a === '--sessions-dir')          { out.sessionsDir = argv[++i] || ''; continue; }
+    if (a.startsWith('--sessions-dir=')) { out.sessionsDir = a.slice('--sessions-dir='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
@@ -2026,8 +2028,15 @@ async function reconfigureGithubToken(currentStatus) {
         console.log(chalk.gray('  Not saved.'));
         return currentStatus;
       }
-      await setPublishConfig({ repo, token: val });
+      const saveResult = await setPublishConfig({ repo, token: val });
       console.log(chalk.green('  Token verified and saved successfully.'));
+      if (saveResult && saveResult.secure === false) {
+        console.log(chalk.yellow(
+          '  Note: token is stored in plaintext config (OS keychain unavailable).\n' +
+          '  For better security, export GHOST_PUBLISH_TOKEN in your shell instead;\n' +
+          '  when set it takes priority and the on-disk copy is not used.'
+        ));
+      }
       return true;
     }
   } catch (_) {
@@ -2097,6 +2106,14 @@ async function main() {
   if (cliOpts.recoverSession) {
     const { setForceRecoverSession } = await import('../src/core/multipass.js');
     setForceRecoverSession(cliOpts.recoverSession);
+  }
+
+  // --sessions-dir <path>: relocate the primary resume-checkpoint directory for
+  // this run. Useful when the default Reports volume is read-only or unsuitable.
+  // Must be applied before any scan begins so every session read/write uses it.
+  if (cliOpts.sessionsDir) {
+    const { setSessionsDir } = await import('../src/core/multipass.js');
+    setSessionsDir(cliOpts.sessionsDir);
   }
 
   // Early license-tier resolve for display surfaces (--help, --version, banner).

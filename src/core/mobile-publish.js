@@ -73,9 +73,17 @@ export function getPublishConfig() {
 // plaintext token into the keychain on first use when a keychain is available,
 // so existing installs are upgraded without the user re-running setup.
 export async function getPublishToken() {
+  // Priority 1: environment variable. Lets a user keep the PAT entirely off
+  // disk (no keychain, no plaintext config) by exporting it per-session or in
+  // CI. Takes precedence over any stored token.
+  if (process.env.GHOST_PUBLISH_TOKEN) {
+    return process.env.GHOST_PUBLISH_TOKEN;
+  }
+
   const cfg = config.get('mobilePublish');
   if (!cfg) return null;
 
+  // Priority 2: OS keychain.
   if (cfg.inKeychain) {
     const keytar = await loadKeytar();
     if (keytar) {
@@ -84,20 +92,40 @@ export async function getPublishToken() {
         if (token) return token;
       } catch { /* keychain unreadable -- fall through to any remnant below */ }
     }
-    return cfg.token || null;
+    // Sentinel says keychain but the keychain gave us nothing. A leftover inline
+    // token is a plaintext credential on disk -- warn and recommend the env var.
+    if (cfg.token) {
+      console.warn(
+        '[Ghost] GitHub token found in plaintext config. ' +
+        'For better security, set GHOST_PUBLISH_TOKEN ' +
+        'environment variable instead.'
+      );
+      return cfg.token;
+    }
+    return null;
   }
 
-  // Plaintext mode. If a keychain is now available, migrate the token into it
-  // and drop the plaintext copy (best-effort; keep working either way).
+  // Priority 3: plaintext fallback. If a keychain is now available, migrate the
+  // token into it and drop the plaintext copy (best-effort). If migration is
+  // not possible, the token stays on disk -- warn and recommend the env var.
   const token = cfg.token || null;
   if (token) {
     const keytar = await loadKeytar();
+    let migrated = false;
     if (keytar) {
       try {
         await keytar.setPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_GITHUB, token);
         config.set('mobilePublish', { repo: cfg.repo, inKeychain: true });
         secureConfigFile();
+        migrated = true;
       } catch { /* migration best-effort; keep using the plaintext token */ }
+    }
+    if (!migrated) {
+      console.warn(
+        '[Ghost] GitHub token found in plaintext config. ' +
+        'For better security, set GHOST_PUBLISH_TOKEN ' +
+        'environment variable instead.'
+      );
     }
   }
   return token;
@@ -116,11 +144,15 @@ export async function setPublishConfig({ repo, token }) {
       return { secure: true };
     } catch { /* keychain write failed at runtime -- fall back below */ }
   }
-  // Fallback: chmod-600 plaintext. Warn so the user knows the token is on disk.
+  // Fallback: chmod-600 plaintext. Warn so the user knows the token is on disk,
+  // and recommend the env var, which keeps the PAT off disk entirely and takes
+  // priority over this stored copy when set.
   config.set('mobilePublish', { repo, token, inKeychain: false });
   secureConfigFile();
   console.warn(
-    'Warning: OS keychain unavailable. GitHub token stored with owner-only (0600) file permissions.'
+    'Warning: OS keychain unavailable. GitHub token stored with owner-only (0600) file permissions.\n' +
+    'For better security, set the GHOST_PUBLISH_TOKEN environment variable instead. ' +
+    'When set, it takes priority over the stored token and keeps the PAT off disk.'
   );
   return { secure: false };
 }
@@ -501,46 +533,81 @@ export async function publishProject(projectMeta, scanRecord) {
 
 /**
  * Update the portfolio index.
+ *
+ * index.json is shared state: every seat's publish rewrites the same file. A
+ * naive read-modify-write races — two publishes that read the same version both
+ * write back, and the second silently clobbers the first project's entry. We
+ * guard with GitHub's optimistic concurrency: the write is tied to the exact
+ * SHA we read, so a version that changed underneath us is rejected with 409
+ * (or 422 on a first-publish create collision) instead of overwriting. On
+ * conflict we re-read and retry up to 3 times with exponential backoff.
  */
 async function updateIndex(octokit, owner, repo, slug, payload) {
-  const { content: existing } = await getFileContent(octokit, owner, repo, 'index.json');
-  const projects = (existing && existing.projects) || [];
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  const idx = projects.findIndex(p => p.slug === slug);
-  const entry = {
-    slug,
-    project:         payload.project,
-    lastScan:        payload.scanDate,
-    publishedAt:     payload.publishedAt,
-    publishedBy:     payload.publishedBy,
-    totalFindings:   payload.summary.totalFindings,
-    critical:        payload.summary.critical,
-    high:            payload.summary.high,
-    percentComplete: payload.progress.percentComplete,
-    hasBaseline:     payload.progress.hasBaseline,
-    estimatedHours:  payload.summary.estimatedHours,
-    estimatedCost:   payload.summary.estimatedCost,
-    newFindings:     payload.progress.new,
-  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Read the current index AND its SHA together so the write below is bound to
+    // exactly the version we just read.
+    const { content: existing, sha: currentSha } = await getFileContent(octokit, owner, repo, 'index.json');
+    const projects = (existing && existing.projects) || [];
 
-  if (idx >= 0) {
-    projects[idx] = entry;
-  } else {
-    projects.push(entry);
+    const idx = projects.findIndex(p => p.slug === slug);
+    const entry = {
+      slug,
+      project:         payload.project,
+      lastScan:        payload.scanDate,
+      publishedAt:     payload.publishedAt,
+      publishedBy:     payload.publishedBy,
+      totalFindings:   payload.summary.totalFindings,
+      critical:        payload.summary.critical,
+      high:            payload.summary.high,
+      percentComplete: payload.progress.percentComplete,
+      hasBaseline:     payload.progress.hasBaseline,
+      estimatedHours:  payload.summary.estimatedHours,
+      estimatedCost:   payload.summary.estimatedCost,
+      newFindings:     payload.progress.new,
+    };
+
+    if (idx >= 0) {
+      projects[idx] = entry;
+    } else {
+      projects.push(entry);
+    }
+
+    projects.sort((a, b) => new Date(b.lastScan) - new Date(a.lastScan));
+
+    try {
+      await withRateLimit(() => octokit.rest.repos.createOrUpdateFileContents({
+        owner, repo,
+        path: 'index.json',
+        message: 'publish: update portfolio index',
+        content: encodeFileContent({
+          updatedAt: new Date().toISOString(),
+          totalProjects: projects.length,
+          projects,
+        }),
+        // Bind to the version we read. GitHub rejects if index.json changed.
+        ...(currentSha ? { sha: currentSha } : {}),
+      }));
+      return; // success
+    } catch (err) {
+      // 409 = SHA mismatch (file changed under us). 422 = create collision
+      // (another publish created index.json between our read and write). Both
+      // mean a concurrent publish landed; re-read and retry.
+      const isConflict = err.status === 409 || err.status === 422;
+      if (isConflict && attempt < 2) {
+        await sleep(500 * Math.pow(2, attempt));
+        continue;
+      }
+      if (isConflict) {
+        throw new Error(
+          'Could not update mobile index after 3 attempts. ' +
+          'Concurrent publish detected. Try again.'
+        );
+      }
+      throw err;
+    }
   }
-
-  projects.sort((a, b) => new Date(b.lastScan) - new Date(a.lastScan));
-
-  await upsertFile(
-    octokit, owner, repo,
-    'index.json',
-    {
-      updatedAt: new Date().toISOString(),
-      totalProjects: projects.length,
-      projects,
-    },
-    `publish: update portfolio index`
-  );
 }
 
 export async function testPublishConnection() {

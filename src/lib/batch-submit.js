@@ -7,7 +7,15 @@
  *   2. basePath    — a directory load; read git origin in that directory.
  *   3. zipPath     — a ZIP load; use the archive filename (no git context).
  *   4. cwd git origin — last-ditch, when context carries no source signal.
- *   5. cwd basename — final fallback so this never throws.
+ *      Falling this far means no signal tied to the actual scanned target
+ *      survived; we warn on stderr before using a cwd-based guess.
+ *
+ * When even tier 4 fails, deriveRepoName returns null rather than silently
+ * mislabeling the batch with the cwd basename — the caller decides what
+ * placeholder to record for an unknown repo name.
+ *
+ * Returns { name, derivedFrom } where derivedFrom is 'tier-1'..'tier-4', or
+ * null when no real source signal could be resolved.
  *
  * Parsing of git origin URLs reuses parseRepo() from team-sync.js (handles
  * https, SSH git@, Enterprise subpaths, trailing .git) — the same parser Ghost
@@ -85,30 +93,41 @@ function repoNameFromGit(dir) {
 /**
  * Resolve the repository name for a scan, using the source signal that the
  * loader attached to codebaseContext (owner/repo, basePath, or zipPath).
- * Always returns a non-empty string; never throws.
+ * Returns { name, derivedFrom } on success, or null when no real source signal
+ * resolves; never throws.
  */
 export function deriveRepoName(codebaseContext = {}) {
   const ctx = codebaseContext || {};
 
   // 1. GitHub load — owner/repo already parsed by the loader.
-  if (ctx.owner && ctx.repo) return ctx.repo;
+  if (ctx.owner && ctx.repo) return { name: ctx.repo, derivedFrom: 'tier-1' };
 
   // 2. Directory load — run git against the scanned directory itself.
   if (ctx.basePath) {
     const name = repoNameFromGit(ctx.basePath);
-    if (name) return name;
+    if (name) return { name, derivedFrom: 'tier-2' };
   }
 
   // 3. ZIP load — no git context; use the archive filename without extension.
   if (ctx.zipPath) {
     const base = path.basename(ctx.zipPath, path.extname(ctx.zipPath));
-    if (base) return base;
+    if (base) return { name: base, derivedFrom: 'tier-3' };
   }
 
-  // 4. Fallback — git origin from the current working directory.
+  // 4. Fallback — git origin from the current working directory. Falling past
+  //    tier 3 means no signal tied to the scanned target survived, so this is a
+  //    cwd-based guess. Warn on stderr before trusting it.
   const cwdName = repoNameFromGit();
-  if (cwdName) return cwdName;
+  if (cwdName) {
+    process.stderr.write(
+      '[Ghost] Warning: could not derive repo name ' +
+      'from source signals. Using directory name: ' +
+      cwdName + '\n'
+    );
+    return { name: cwdName, derivedFrom: 'tier-4' };
+  }
 
-  // 5. Last resort — the cwd basename.
-  return path.basename(process.cwd()) || 'project';
+  // All real source signals failed. Return null and let the caller decide what
+  // to record for an unknown repo name rather than silently using cwd basename.
+  return null;
 }

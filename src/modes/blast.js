@@ -493,7 +493,8 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
   // Derive save metadata now (at submit time) so retrieve can save under the
   // same project label the streaming path would have used. Mirrors the
   // saveLabel/changeSet logic in the streaming save block.
-  const repo = deriveRepoName(codebaseContext);
+  const derivedRepo = deriveRepoName(codebaseContext);
+  const repo = derivedRepo ? derivedRepo.name : 'unknown-project';
   const fallbackLabel = targetCount > 1
     ? `change-set-${targetCount}-files`
     : (Array.isArray(target) ? target[0] : target);

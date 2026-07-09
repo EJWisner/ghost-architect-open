@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.12
+- Patch: license detection copy corrected, fallback session path now read on resume, repo name derivation warns on fallback, concurrent index.json writes use optimistic locking, clock state validated on read, GitHub PAT env var priority added, em dashes removed from emails, narrator patcher timeout now visible.
+
 ### v10.0.11
 - Patch: clock ratchet window widened to 5 minutes with GHOST_CLOCK_TOLERANCE override, session salvage filters checkpoints by project label, interrupted publish recovery no longer loops forever plus --force-clear-markers flag, basePath trimmed with typed InvalidBasePathError, audit synthesis and multipass CLI unhandled rejections wrapped, sudo chown failures logged, DISPUTED drops logged at INFO, watcher email shows auto-verified count.
 

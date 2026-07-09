@@ -296,7 +296,7 @@ function buildVerifiedSection(verifiedFindings) {
   for (const f of verifiedFindings) {
     const file = Array.isArray(f.files) && f.files.length > 0 ? f.files[0] : null;
     let line = `  - **${escapeMarkdown(f.severity || 'INFO')}:** ${escapeMarkdown(f.title || 'Untitled finding')}`;
-    if (file) line += ` — \`${escapeMarkdown(file)}\``;
+    if (file) line += ` -- \`${escapeMarkdown(file)}\``;
     if (f.verifiedReason) line += ` _(${escapeMarkdown(f.verifiedReason)})_`;
     s += line + `\n`;
   }
@@ -331,7 +331,7 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
       const shortSha = sha.slice(0, 7);
       const date = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const body = [
-        `## 👻 Ghost Watcher™ — Commit Analysis`,
+        `## 👻 Ghost Watcher™ -- Commit Analysis`,
         ``,
         `**Branch:** \`${escapeMarkdown(refName)}\``,
         `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}`,
@@ -373,7 +373,7 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
             `Do not treat this as a full clean result. Re-run after resolving the issue above.`,
           ];
       const body = [
-        `## 👻 Ghost Watcher™ — Commit Analysis`,
+        `## 👻 Ghost Watcher™ -- Commit Analysis`,
         ``,
         `**Branch:** \`${escapeMarkdown(refName)}\``,
         `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}`,
@@ -414,7 +414,7 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   const shortSha = sha.slice(0, 7);
   const date     = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
-  let body = `## 👻 Ghost Watcher™ — Commit Analysis\n\n`;
+  let body = `## 👻 Ghost Watcher™ -- Commit Analysis\n\n`;
   body    += `**Branch:** \`${escapeMarkdown(refName)}\`\n`;
   body    += `**Commit:** \`${shortSha}\` · ${escapeMarkdown(actor)} · ${date}\n\n`;
   body    += `**Findings:** ${total} (${severitySummary})\n`;
@@ -426,7 +426,7 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   }
 
   if (phase1.length > 0) {
-    body += `### PHASE 1 — Fix first (surgical)\n`;
+    body += `### PHASE 1 -- Fix first (surgical)\n`;
     for (const f of phase1) {
       body += `  - **${escapeMarkdown(f.severity)}:** ${escapeMarkdown(f.title)}\n`;
     }
@@ -434,7 +434,7 @@ async function postPRComment({ findings, verifiedFindings = [], blastFileCount, 
   }
 
   if (phase2.length > 0) {
-    body += `### PHASE 2 — Fix second (moderate)\n`;
+    body += `### PHASE 2 -- Fix second (moderate)\n`;
     for (const f of phase2) {
       body += `  - **${escapeMarkdown(f.severity)}:** ${escapeMarkdown(f.title)}\n`;
     }
@@ -889,12 +889,12 @@ function sendWatcherEmail(recipients, subject, html) {
 
 function emailIncompleteRun({ repo, shortSha }) {
   return {
-    subject: `Ghost Watcher™ — Run incomplete on ${repo}`,
+    subject: `Ghost Watcher™ -- Run incomplete on ${repo}`,
     html:
-      `<h2 style="color:#00bfd8;">Ghost Watcher™ — Run incomplete</h2>\n` +
+      `<h2 style="color:#00bfd8;">Ghost Watcher™ -- Run incomplete</h2>\n` +
       `<p>Your Ghost Watcher™ run on <strong>${escapeHtml(repo)}</strong> commit <code>${escapeHtml(shortSha)}</code> did not complete before the GitHub Actions job ended.</p>\n` +
       `<p>It is likely this happened because your GitHub account has reached its monthly Actions minutes limit. Free and Pro GitHub plans include 2,000–3,000 minutes per month. A full Ghost Watcher™ scan on a large codebase can take 15–30 minutes per run.</p>\n` +
-      `<p><strong>The good news</strong> — your scan is still processing on Anthropic's servers. Ghost Watcher™ will automatically retrieve and deliver your results on the next commit push. No action needed on your part.</p>\n` +
+      `<p><strong>The good news</strong> -- your scan is still processing on Anthropic's servers. Ghost Watcher™ will automatically retrieve and deliver your results on the next commit push. No action needed on your part.</p>\n` +
       `<p>To prevent this in the future:</p>\n` +
       `<ul>\n` +
       `  <li>Upgrade your GitHub plan for more Actions minutes</li>\n` +
@@ -903,54 +903,54 @@ function emailIncompleteRun({ repo, shortSha }) {
       `  <li>Increase <code>batch.poll_interval_seconds</code> in <code>ghost-watcher.yaml</code> to reduce Actions minutes used while polling</li>\n` +
       `</ul>\n` +
       `<p>Your results will be delivered automatically on the next push. No action required.</p>\n` +
-      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+      `<p style="color:#666;">-- Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
 function emailResumeDetected({ repo, shortSha, type }) {
   return {
-    subject: `Ghost Watcher™ — Resuming incomplete scan from commit ${shortSha}`,
+    subject: `Ghost Watcher™ -- Resuming incomplete scan from commit ${shortSha}`,
     html:
-      `<h2 style="color:#00bfd8;">Ghost Watcher™ — Resuming your scan</h2>\n` +
+      `<h2 style="color:#00bfd8;">Ghost Watcher™ -- Resuming your scan</h2>\n` +
       `<p>Ghost Watcher™ has detected an incomplete scan from a previous run.</p>\n` +
       `<p><strong>Repository:</strong> ${escapeHtml(repo)}<br>\n` +
       `<strong>Commit:</strong> <code>${escapeHtml(shortSha)}</code><br>\n` +
       `<strong>Scan type:</strong> ${type}</p>\n` +
       `<p>Your results are being retrieved now from Anthropic's servers. You will receive another email when the analysis is complete.</p>\n` +
-      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+      `<p style="color:#666;">-- Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
 function emailResumeComplete({ repo, shortSha, findingsCount, criticalCount, highCount, mediumCount, lowCount, portalSlug }) {
   return {
-    subject: `Ghost Watcher™ — Results ready for commit ${shortSha}`,
+    subject: `Ghost Watcher™ -- Results ready for commit ${shortSha}`,
     html:
-      `<h2 style="color:#00bfd8;">Ghost Watcher™ — Results delivered</h2>\n` +
+      `<h2 style="color:#00bfd8;">Ghost Watcher™ -- Results delivered</h2>\n` +
       `<p>Your incomplete Ghost Watcher™ scan has been successfully retrieved and delivered.</p>\n` +
       `<p><strong>Repository:</strong> ${escapeHtml(repo)}<br>\n` +
       `<strong>Commit:</strong> <code>${escapeHtml(shortSha)}</code><br>\n` +
       `<strong>Findings:</strong> ${findingsCount} total (${criticalCount} critical, ${highCount} high, ${mediumCount} medium, ${lowCount} low)</p>\n` +
       `<p>View your full results and Ghost Brief™ prompts in <a href="https://ghostarchitect.dev/portal-${escapeHtml(portalSlug)}.html">Ghost Portal</a>.</p>\n` +
-      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+      `<p style="color:#666;">-- Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
 function emailSetupWarning({ repo }) {
   return {
-    subject: `Ghost Watcher™ — Action required: GitHub Actions minutes insufficient`,
+    subject: `Ghost Watcher™ -- Action required: GitHub Actions minutes insufficient`,
     html:
-      `<h2 style="color:#ff5555;">Ghost Watcher™ — Action required</h2>\n` +
+      `<h2 style="color:#ff5555;">Ghost Watcher™ -- Action required</h2>\n` +
       `<p>Ghost Watcher™ has attempted to scan <strong>${escapeHtml(repo)}</strong> three times but has not been able to complete a full scan due to GitHub Actions minute limits.</p>\n` +
       `<p>It is likely this happened because your GitHub account's free Actions minutes are insufficient for the size of your codebase. Ghost Watcher™ requires 15–30 minutes of Actions time per scan.</p>\n` +
       `<p><strong>To resolve this, choose one of the following:</strong></p>\n` +
       `<ol>\n` +
-      `  <li><strong>Upgrade your GitHub plan</strong> — Team and Enterprise plans include significantly more Actions minutes. <a href="https://github.com/pricing">View GitHub pricing</a></li>\n` +
-      `  <li><strong>Increase the poll interval</strong> — In your <code>ghost-watcher.yaml</code>, set <code>batch.poll_interval_seconds: 120</code>. This reduces Actions minutes used while waiting for results, at the cost of slightly delayed delivery.</li>\n` +
-      `  <li><strong>Reduce scan frequency</strong> — Add <code>[ghost-skip]</code> to commits that do not need analysis. Reserve Ghost Watcher™ for high-risk commits only.</li>\n` +
-      `  <li><strong>Watch fewer branches</strong> — Edit your <code>ghost-watcher.yaml</code> to remove low-priority branches from the trigger list.</li>\n` +
+      `  <li><strong>Upgrade your GitHub plan</strong> -- Team and Enterprise plans include significantly more Actions minutes. <a href="https://github.com/pricing">View GitHub pricing</a></li>\n` +
+      `  <li><strong>Increase the poll interval</strong> -- In your <code>ghost-watcher.yaml</code>, set <code>batch.poll_interval_seconds: 120</code>. This reduces Actions minutes used while waiting for results, at the cost of slightly delayed delivery.</li>\n` +
+      `  <li><strong>Reduce scan frequency</strong> -- Add <code>[ghost-skip]</code> to commits that do not need analysis. Reserve Ghost Watcher™ for high-risk commits only.</li>\n` +
+      `  <li><strong>Watch fewer branches</strong> -- Edit your <code>ghost-watcher.yaml</code> to remove low-priority branches from the trigger list.</li>\n` +
       `</ol>\n` +
       `<p>Ghost Watcher™ will continue attempting to deliver results automatically. Your pending scans are safe on Anthropic's servers.</p>\n` +
-      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+      `<p style="color:#666;">-- Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
@@ -961,7 +961,7 @@ function emailDegradedRun({ repo, shortSha, portalSlug }) {
     ? `https://ghostarchitect.dev/portal-${escapeHtml(portalSlug)}.html#watch`
     : null;
   return {
-    subject: `Ghost Watcher™ — scan needs attention (${repoDisplay} @ ${shaDisplay})`,
+    subject: `Ghost Watcher™ -- scan needs attention (${repoDisplay} @ ${shaDisplay})`,
     html:
       `<p>Ghost Watcher™ ran on <strong>${repoDisplay}</strong> at commit ` +
       `<code>${shaDisplay}</code> but encountered an issue generating the ` +
@@ -978,9 +978,9 @@ function emailDegradedRun({ repo, shortSha, portalSlug }) {
 
 function emailCleanScan({ repo, shortSha, fileCount, portalSlug }) {
   return {
-    subject: `Ghost Watcher™ — Clean scan on ${repo} commit ${shortSha}`,
+    subject: `Ghost Watcher™ -- Clean scan on ${repo} commit ${shortSha}`,
     html:
-      `<h2 style="color:#00e5a8;">Ghost Watcher™ — Clean scan</h2>\n` +
+      `<h2 style="color:#00e5a8;">Ghost Watcher™ -- Clean scan</h2>\n` +
       `<p>Ghost Watcher™ scanned commit <code>${escapeHtml(shortSha)}</code> on <strong>${escapeHtml(repo)}</strong> and found no issues.</p>\n` +
       `<p>Your codebase is clean. No action required.</p>\n` +
       `<p><strong>Scan summary:</strong><br>\n` +
@@ -988,7 +988,7 @@ function emailCleanScan({ repo, shortSha, fileCount, portalSlug }) {
       `Blast Radius: 0 findings<br>\n` +
       `Conflict Detection: 0 findings</p>\n` +
       `<p>View your scan history in <a href="https://ghostarchitect.dev/portal-${escapeHtml(portalSlug)}.html">Ghost Portal</a>.</p>\n` +
-      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+      `<p style="color:#666;">-- Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
@@ -1017,7 +1017,7 @@ function emailFindings({ repo, shortSha, findingsCount, criticalCount, highCount
       `Critical: ${criticalCount} | High: ${highCount} | Medium: ${mediumCount} | Low: ${lowCount}</p>\n` +
       `<ul>\n${findingsHtml}\n</ul>\n` +
       `<p>View the full report in <a href="https://ghostarchitect.dev/portal-${escapeHtml(portalSlug)}.html">Ghost Portal</a>.</p>\n` +
-      `<p style="color:#666;">— Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
+      `<p style="color:#666;">-- Ghost Watcher™ · <a href="https://ghostarchitect.dev">ghostarchitect.dev</a></p>`,
   };
 }
 
@@ -1449,7 +1449,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
             if (pending.prNumber) {
               const body =
-                `## 👻 Ghost Watcher™ — Detailed prompts ready\n\n` +
+                `## 👻 Ghost Watcher™ -- Detailed prompts ready\n\n` +
                 `Detailed remediation prompts for commit \`${shortSha}\` are ready ` +
                 `(${promptCount} prompt${promptCount === 1 ? '' : 's'}).\n\n` +
                 (portalSlug ? `[Open Ghost Portal to copy prompts into your AI coding tool.](https://ghostarchitect.dev/portal-${portalSlug}.html)\n` : '');
@@ -1510,7 +1510,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           if (pending.prNumber) {
             const summary = `${pendingFindings.length} finding${pendingFindings.length === 1 ? '' : 's'} (${sev.critical} critical, ${sev.high} high, ${sev.medium} medium, ${sev.low} low)`;
             const body =
-              `## 👻 Ghost Watcher™ — Results delivered\n\n` +
+              `## 👻 Ghost Watcher™ -- Results delivered\n\n` +
               `The batched ${pending.type} analysis for commit \`${(pending.commitHash || '').slice(0, 7)}\` has completed.\n\n` +
               `**Findings:** ${summary}\n\n` +
               (portalSlug ? `[Open Ghost Portal to copy prompts into your AI coding tool.](https://ghostarchitect.dev/portal-${portalSlug}.html)\n` : '');
@@ -1650,7 +1650,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       if (prNumber && watchConfig.notifications?.pr_comment !== false) {
         await postCommentToPR(repoPath, prNumber,
           `👻 **Ghost Watcher™** is analyzing this commit using the Anthropic Batches API.\n\n` +
-          `Results will be posted here automatically when complete — usually within 15 minutes.\n\n` +
+          `Results will be posted here automatically when complete -- usually within 15 minutes.\n\n` +
           `_Batch ID: ${blastBatchId}_`);
       }
 

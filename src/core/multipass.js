@@ -25,7 +25,15 @@ import { mergeRates } from '../profile/index.js';
 const PASS_TOKEN_LIMIT = 45000;
 const MERGE_BATCH_SIZE = 6;
 const DEFAULT_PASS_CAP = 20;
-const SESSIONS_DIR     = path.join(os.homedir(), 'Ghost Architect Reports', 'sessions');
+let SESSIONS_DIR       = path.join(os.homedir(), 'Ghost Architect Reports', 'sessions');
+
+// Override the primary sessions directory (via the --sessions-dir <path> CLI
+// flag). Lets a user relocate resume checkpoints when the default Reports
+// volume is read-only, on a slow network mount, or otherwise unsuitable. Must
+// be called before any scan begins so every read/write uses the same location.
+export function setSessionsDir(dir) {
+  if (dir && typeof dir === 'string') SESSIONS_DIR = path.resolve(dir);
+}
 
 // ── Session management ────────────────────────────────────────────────────────
 
@@ -228,7 +236,13 @@ export function loadSession(label) {
   if (primary.session) return primary.session;
 
   const alternate = readSessionFile(alternateSessionFilePath(label));
-  if (alternate.session) return alternate.session;
+  if (alternate.session) {
+    console.warn(
+      '[Ghost] Session loaded from fallback temp path. ' +
+      'Primary sessions directory may be unavailable.'
+    );
+    return alternate.session;
+  }
 
   // Neither location yielded a session. If either file was corrupted (rather
   // than simply absent), a real scan's resume state was just lost. Silently

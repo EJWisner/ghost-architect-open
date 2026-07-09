@@ -1446,11 +1446,18 @@ async function validateAndPatchProse(report, plan, memoryResult, context) {
 
   let patched = workingReport;
 
+  // Track patcher findings that renderSingleFinding could not produce (timeout
+  // or API error → null). They are silently filtered out below; we count them so
+  // the user gets one visible note at the end rather than a mystery gap.
+  let totalDropped = 0;
+
   for (const [categoryHeader, missingFindings] of missingByCategory) {
     const prose = await Promise.all(
       missingFindings.map(f => renderSingleFinding(f, categoryHeader, rates, profile))
     );
-    const joined = prose.filter(p => p && p.trim()).join('\n\n\n');
+    const kept = prose.filter(p => p && p.trim());
+    totalDropped += prose.length - kept.length;
+    const joined = kept.join('\n\n\n');
     if (!joined) {
       writePatcherDebugLog_append('All renderSingleFinding calls returned null for category: ' + categoryHeader);
       continue;
@@ -1468,6 +1475,19 @@ async function validateAndPatchProse(report, plan, memoryResult, context) {
     }
     patched = spliceIntoSection(patched, headerIdx, joined);
     writePatcherDebugLog_append('Spliced ' + missingFindings.length + ' findings into: ' + categoryHeader);
+  }
+
+  // Visible note when the patcher could not enrich one or more findings. The
+  // core findings are already in the report; these are the defense-in-depth
+  // completeness patches that timed out or errored. Surface it once so the gap
+  // is explained rather than silent.
+  if (totalDropped > 0) {
+    console.warn(
+      '[Ghost] ' + totalDropped + ' finding(s) could ' +
+      'not be enriched due to timeout or API error. ' +
+      'Core findings are complete. Set GHOST_DEBUG=1 ' +
+      'for details.'
+    );
   }
 
   // Final pass: remove any category headers that ended up with no

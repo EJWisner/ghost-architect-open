@@ -313,7 +313,8 @@ async function submitQuestionBatch({ codebaseContext, question, tier }) {
     return;
   }
 
-  const repo = deriveRepoName(codebaseContext);
+  const derivedRepo = deriveRepoName(codebaseContext);
+  const repo = derivedRepo ? derivedRepo.name : 'unknown-project';
   const projectIntelEnabled = requireTier('feature:project-tracking', { tier }).allowed;
   const saveLabel = projectIntelEnabled ? 'question' : null;
 

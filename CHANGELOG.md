@@ -5,6 +5,33 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.12 -- July 9, 2026
+
+### Patch: Session Recovery, Publish Reliability, License Copy, and Email Polish
+
+**Inheritance Audit**
+- License detection methodology copy corrected. The v10.0.6 fix (classifyLicense wired, package-lock.json read for npm deps) is confirmed in place for local directory scans. The methodology footer now accurately states that ZIP and GitHub scan paths fall back to unknown where the lockfile is unavailable.
+
+**Session Management**
+- loadSession() now checks both the primary sessions directory and the OS temp fallback path. Previously a session saved to the fallback on primary write failure was never found on resume, silently restarting from pass 0 and wasting API quota already spent.
+- --sessions-dir flag added for users who need a custom sessions location.
+
+**Batch Submission**
+- deriveRepoName() now emits a stderr warning when falling back past tier 3 (zip path). Returns null instead of the cwd basename when all real source signals fail, preventing wrong repo names in batch records.
+
+**Mobile Publish**
+- updateIndex() now uses SHA-based optimistic locking. Concurrent publishes from two seats no longer silently overwrite each other. On SHA conflict, retries up to 3 times with exponential backoff.
+- GitHub PAT lookup now checks GHOST_PUBLISH_TOKEN environment variable first, then OS keychain, then plaintext fallback with explicit warning. Users in CI or container environments can set the env var instead of relying on keychain availability.
+
+**License**
+- Clock state now validated on read. A corrupted or malformed clock state object now returns a sentinel value that forces a network check rather than silently resetting the offline grace counter to 0. Clock state corruption can no longer bypass offline validation.
+
+**Ghost Watcher Email**
+- Em dashes removed from all Ghost Watcher email subject lines and body strings. Replaced with double hyphen per standing copy rule.
+
+**Narrator**
+- Patcher timeout now surfaces a visible warning when findings are dropped due to API timeout or error. Previously only visible with GHOST_DEBUG=1. Users now see how many findings could not be enriched without enabling debug mode.
+
 ## v10.0.11 -- July 9, 2026
 
 ### Patch: Clock Tolerance, Session Safety, Publish Recovery, and Error Visibility

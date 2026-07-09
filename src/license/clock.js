@@ -75,15 +75,53 @@ let clockTelemetrySink = null;
 // (simulating an offline machine) without real network access.
 let networkTimeFetcher = fetchNetworkTimeMs;
 
+// Validate the persisted clock-state shape. A present-but-malformed record
+// (partial write, type confusion, deliberate tampering) must NOT be silently
+// coerced to {}: doing so resets the offline-grace counter, handing an attacker
+// who can deny network access a fresh grace window every time the record is
+// corrupted. We accept exactly the shapes writeClockState() emits:
+//   - offlineStreak:    a finite, non-negative number
+//   - lastNetworkOkMs:  null (a machine that has never completed a network
+//                       check) OR a finite, non-negative epoch-ms number
+// Anything else is malformed. Note this cannot defend against an attacker who
+// forges a well-formed record; it turns accidental corruption into a forced
+// network check rather than a silent grace reset.
+function validateClockState(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+  if (typeof state.offlineStreak !== 'number' ||
+      !Number.isFinite(state.offlineStreak) ||
+      state.offlineStreak < 0) return false;
+  if (state.lastNetworkOkMs !== null &&
+      (typeof state.lastNetworkOkMs !== 'number' ||
+       !Number.isFinite(state.lastNetworkOkMs) ||
+       state.lastNetworkOkMs < 0)) return false;
+  return true;
+}
+
 function readClockState() {
+  let s;
   try {
-    const s = getConfig().get(CLOCK_STATE_KEY);
-    return (s && typeof s === 'object') ? s : {};
+    s = getConfig().get(CLOCK_STATE_KEY);
   } catch (_) {
     // Config unavailable (e.g. read-only/missing store): degrade to a fresh
     // counter rather than blocking. Persistence is best-effort bookkeeping.
     return {};
   }
+  // Absent key = legitimate fresh state (first run, or before the first write).
+  // This is not corruption -- start a clean counter, no warning.
+  if (s === undefined || s === null) return {};
+  // Present but malformed = corruption or tampering. Do NOT coerce to {}, which
+  // would silently reset the offline-grace counter. Return a sentinel with an
+  // exhausted streak so the next validation is forced to make a real network
+  // check instead of trusting the local clock on a reset grace window.
+  if (!validateClockState(s)) {
+    process.stderr.write(
+      '[Ghost] Clock state invalid or corrupted. ' +
+      'Forcing network check on next run.\n'
+    );
+    return { offlineStreak: 999, lastNetworkOkMs: 0 };
+  }
+  return s;
 }
 
 function writeClockState(state) {
