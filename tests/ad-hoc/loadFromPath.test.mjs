@@ -6,16 +6,26 @@
 //
 // Run: node tests/ad-hoc/loadFromPath.test.mjs
 
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { loadFromPath } from '../../src/loader/index.js';
 
-// ── Test against known fixture ────────────────────────────────────────────────
-const FIXTURE = '/tmp/ghost-e2e-fixture';
+// ── Build a self-contained fixture in an OS temp dir ──────────────────────────
+// Previously this test hardcoded /tmp/ghost-e2e-fixture, which does not exist on
+// every system and had to be created out of band. Create (and later remove) a
+// throwaway fixture so the test runs anywhere.
+const fixtureDir = mkdtempSync(path.join(tmpdir(), 'ghost-e2e-'));
+writeFileSync(path.join(fixtureDir, 'moduleA.js'), 'export const moduleA = () => "A";\n');
+writeFileSync(path.join(fixtureDir, 'moduleB.js'), 'export const moduleB = () => "B";\n');
+writeFileSync(path.join(fixtureDir, 'moduleC.js'), 'export const moduleC = () => "C";\n');
 
 let result;
 try {
-  result = await loadFromPath(FIXTURE);
+  result = await loadFromPath(fixtureDir);
 } catch (err) {
   console.error('✗  loadFromPath threw:', err.message);
+  rmSync(fixtureDir, { recursive: true, force: true });
   process.exit(1);
 }
 
@@ -27,16 +37,18 @@ const checks = [
   ['fileMap values are strings (not objects)',       Object.values(result.fileMap).every(v => typeof v === 'string')],
   ['Has loadedFiles count',                          typeof result.loadedFiles === 'number' && result.loadedFiles === 3],
   ['Has totalFiles count',                           typeof result.totalFiles === 'number'],
-  ['Has basePath set to fixture dir',                result.basePath === FIXTURE],
+  ['Has basePath set to fixture dir',                result.basePath === fixtureDir],
   ['Context contains moduleA.js content',            result.context.includes('moduleA')],
   ['Context contains moduleB.js content',            result.context.includes('moduleB')],
 ];
 
 let failures = 0;
-for (const [label, result] of checks) {
-  console.log(`${result ? '✓' : '✗'}  ${label}`);
-  if (!result) failures++;
+for (const [label, ok] of checks) {
+  console.log(`${ok ? '✓' : '✗'}  ${label}`);
+  if (!ok) failures++;
 }
+
+rmSync(fixtureDir, { recursive: true, force: true });
 
 console.log('');
 console.log(`${checks.length} checks — ${failures} failure(s)`);

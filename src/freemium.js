@@ -343,7 +343,7 @@ export function renderAuditPaywall(paywallPromo = '') {
   lines.push('');
   lines.push(...trialCtaLines());
   lines.push('');
-  lines.push(chalk.white('Upgrade to Pro or Pro Max for unlimited Audit. Ghost Brief™ requires Pro Max.'));
+  lines.push(chalk.white('Upgrade to Pro or Pro Max for unlimited Audit. Ghost Brief™ requires a Max plan (Pro Max, Team Max, or Enterprise Max).'));
   lines.push(chalk.cyan('  https://ghostarchitect.dev/pricing'));
   lines.push('');
   lines.push(chalk.white('Have a license? Activate it:'));
@@ -397,8 +397,11 @@ export function renderQuotaPaywall(paywallPromo = '') {
 export function renderUpgradePaywall(paywall = {}, paywallPromo = '') {
   const modeName = paywall.modeName || 'This mode';
   const requiredTier = paywall.requiredTier || 'a paid tier';
+  // requiredExact means requiredTier is a self-contained phrase (e.g. a Max-plan
+  // list) that must not get " or higher" appended.
+  const tierSuffix = paywall.requiredExact ? '' : ' or higher';
   const lines = [
-    chalk.yellow.bold(`${modeName} requires ${requiredTier} or higher.`),
+    chalk.yellow.bold(`${modeName} requires ${requiredTier}${tierSuffix}.`),
   ];
   if (paywallPromo) {
     lines.push('');

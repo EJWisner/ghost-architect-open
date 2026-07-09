@@ -488,22 +488,22 @@ export async function runStackRealityCheck(codebaseContext, options = {}) {
 
     if (top.language === 'PHP' && top.pct >= 30 && !hasComposer) {
       surprises.push(
-        `${top.pct}% of code is PHP but no composer.json was found — dependency management may be ad-hoc or vendored.`
+        `${top.pct}% of code is PHP but no composer.json was found -- dependency management may be ad-hoc or vendored.`
       );
     }
     if ((top.language === 'JavaScript' || top.language === 'TypeScript') && top.pct >= 30 && !hasPackageJson) {
       surprises.push(
-        `${top.pct}% of code is ${top.language} but no package.json was found — dependency management may be missing.`
+        `${top.pct}% of code is ${top.language} but no package.json was found -- dependency management may be missing.`
       );
     }
     if (top.language === 'Ruby' && top.pct >= 30 && !hasGemfile) {
       surprises.push(
-        `${top.pct}% of code is Ruby but no Gemfile was found — dependency management may be missing.`
+        `${top.pct}% of code is Ruby but no Gemfile was found -- dependency management may be missing.`
       );
     }
     if (top.language === 'Python' && top.pct >= 30 && !hasRequirements) {
       surprises.push(
-        `${top.pct}% of code is Python but no requirements.txt was found — dependency declarations may be missing or in pyproject.toml (not yet parsed in v1).`
+        `${top.pct}% of code is Python but no requirements.txt was found -- dependency declarations may be missing or in pyproject.toml (not yet parsed in v1).`
       );
     }
   }

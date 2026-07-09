@@ -1327,6 +1327,12 @@ async function renderSingleFinding(finding, categoryHeader, rates, profile) {
       ...getSamplingParams(0.3, getModel()),
       messages: [{ role: 'user', content: prompt }],
     });
+    // If the timeout below wins the race, this apiCall promise is abandoned. Its
+    // settlement is still awaited by Promise.race, but attach an explicit no-op
+    // catch so a late rejection (e.g. a slow-network error arriving after the 30s
+    // timeout already resolved the race) is consumed here rather than surfacing
+    // as an unhandledRejection that the global handler treats as fatal mid-scan.
+    apiCall.catch(() => {});
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('renderSingleFinding timeout after 30s')), 30000)
     );

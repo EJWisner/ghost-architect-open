@@ -34,6 +34,7 @@
 import chalk from 'chalk';
 import { getModel } from './models.js';
 import { resolveApiKey } from '../config.js';
+import { PRICING as MODEL_PRICING } from '../core/estimator.js';
 
 // Session-scoped usage accumulator. Reset by the mode file before a scan,
 // read after. Tracks token totals across all Tier 2 detector calls in the
@@ -602,16 +603,16 @@ export async function auditPromptForDefect(params) {
 
 // ── Public: cost estimation helpers ──────────────────────────────────────
 
-// Per-million-token rates in USD. Conservative numbers; if Anthropic
-// updates pricing, update here. Rates only used for the informational
-// pre-scan estimate — actual billing comes from Anthropic.
+// Per-million-token rates in USD. Derived from the single source of truth for
+// model pricing (src/core/estimator.js PRICING) rather than duplicated here, so
+// a rate change lands in one place. Rates are only used for the informational
+// pre-scan estimate — actual billing comes from Anthropic. An unknown modelId
+// (e.g. a non-Claude target) is absent from the map, which estimateAuditCost
+// treats as "no rate data" and returns null.
 // @ghost-verified: the capSeverity HIGH→MEDIUM split across detectors is intentional policy -- poorOrganization/poorDocumentation/inefficientFewShot cap at MEDIUM by design; siblings allow HIGH per v5.3 policy documented in each detector file
-const MODEL_RATES = {
-  'claude-opus-4-7':   { input: 5.00, output: 25.00 },
-  'claude-opus-4-6':   { input: 5.00, output: 25.00 },
-  'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
-  'claude-haiku-4-5':  { input: 1.00, output:  5.00 },
-};
+const MODEL_RATES = Object.fromEntries(
+  Object.entries(MODEL_PRICING).map(([id, p]) => [id, { input: p.inputPerM, output: p.outputPerM }])
+);
 
 /**
  * Estimate the USD cost of running N Tier 2 audits against a given

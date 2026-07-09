@@ -277,11 +277,34 @@ export async function pullReports(projectSlug, workspace) {
     if (file.type !== 'file') continue;
     try {
       const { data } = await octokit.rest.repos.getContent({ owner, repo, path: file.path });
-      const raw = Buffer.from(data.content, 'base64');
+      let raw;
+      // The contents API returns empty content for files over 1MB (its
+      // documented limit): encoding is 'none' and content is ''. Decoding that
+      // would write a 0-byte file. GitHub still supplies a pre-signed
+      // download_url (valid for private repos) that serves the raw bytes, so
+      // fetch from there instead.
+      if (data.content === '' && (data.size > 0 || data.download_url)) {
+        if (!data.download_url) {
+          throw new Error('Report file exceeds 1MB GitHub contents API limit. Contact support or reduce report size.');
+        }
+        const resp = await fetch(data.download_url);
+        if (!resp.ok) {
+          throw new Error('Report file exceeds 1MB GitHub contents API limit. Contact support or reduce report size.');
+        }
+        raw = Buffer.from(await resp.arrayBuffer());
+      } else {
+        raw = Buffer.from(data.content, 'base64');
+      }
       const localPath = path.join(localDir, file.name);
       fs.writeFileSync(localPath, raw);
       pulled.push(localPath);
-    } catch { /* skip */ }
+    } catch (err) {
+      // A 1MB-limit failure is actionable and must not be silently swallowed
+      // into a 0-byte file. Surface it; transient per-file errors (a network
+      // blip, a vanished file) stay best-effort skips as before.
+      if (err && /exceeds 1MB/.test(err.message || '')) throw err;
+      /* skip other per-file errors */
+    }
   }
 
   return pulled;

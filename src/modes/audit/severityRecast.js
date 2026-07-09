@@ -25,6 +25,19 @@
 //     or unrecognized, we default to "Post-Close Risk" and add an
 //     'unknown_severity' tag for the report appendix.
 //
+// TODO(severity-recast-wiring): this module is complete and tested but NOT yet
+// wired into the audit report pipeline. The audit MD/PDF is currently rendered
+// directly from the four analyzer outputs (reportBuilder.buildAuditReport),
+// not from a severity-grouped findings array, so surfacing deal tiers means
+// adding a new "Findings by Deal Impact" section (MD + PDF + portal sidecar) and
+// deciding whether it replaces or augments the existing analyzer sections. That
+// is a deliberate report-structure change to a live, deal-grade customer
+// artifact, not a mechanical call-site wire-up, so it is deferred. Planned
+// integration point: src/modes/audit/index.js, immediately after
+// findingsFromAuditResults(results) produces the flat findings array (see the
+// matching TODO there) -- call groupByDealTier(parsedFindings) and pass the
+// grouped result into buildAuditReport for rendering.
+//
 
 export const DEAL_TIERS = {
   DEAL_BLOCKER: 'Deal-Blocker',

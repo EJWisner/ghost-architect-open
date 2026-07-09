@@ -16,7 +16,7 @@
 //     callers that pin to those IDs)
 //   - Sonnet 4.6 / 4.5: $3 in / $15 out
 //   - Haiku 4.5: $1 in / $5 out
-const PRICING = {
+export const PRICING = {
   // Current Opus generation (post Nov 2025 67% price drop)
   'claude-opus-4-8':   { label: 'Claude Opus 4.8',   inputPerM:  5.00, outputPerM: 25.00 },
   'claude-opus-4-7':   { label: 'Claude Opus 4.7',   inputPerM:  5.00, outputPerM: 25.00 },

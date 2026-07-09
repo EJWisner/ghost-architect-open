@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.14
+- Patch: em dashes and bare branding swept from reports, false-positives phrasing removed, assets/ in npm tarball, verifier now keeps source-confirmed findings, AWS redactor SHA fix, Windows menu descriptions restored, clock-skew license panel fixed, Max-plan copy corrected, and ten additional polish fixes.
+
 ### v10.0.13
 - Patch: assets/ directory and common binary asset extensions (.png, .jpg, .gif, .svg, .woff, .ttf, .eot, .ico, .mp4, .mp3, .pdf) excluded from scans, audit paywall pricing corrected to read from the canonical pricing constants (Pro was shown at $99/mo instead of $25/mo).
 
@@ -157,11 +160,11 @@
 
 **v9.4.1** Fix Ghost Brief and Executive Brief interactive menu gating. BRIEF_TIERS in bin/ghost.js incorrectly included team and enterprise tiers, allowing non-Max users to run Ghost Brief interactively while Watcher blocked them. Replaced with shared MAX_TIERS constant (pro-max, team-max, enterprise-max) matching tier-gates.js policy. Also fixes Executive Brief which shared the same incorrect gate.
 
-**v9.4.0** Add @ghost-verified annotation system. Developers can mark false positives with @ghost-verified in source files. Ghost Watcher segregates these as Reviewed · Expected Behavior in PR comments and scan files, keeping real findings clean.
+**v9.4.0** Add @ghost-verified annotation system. Developers can mark low-signal findings with @ghost-verified in source files. Ghost Watcher segregates these as Reviewed · Expected Behavior in PR comments and scan files, keeping real findings clean.
 
 **v9.3.9** Add Max tier support to CLI license parser and token validator. Pro Max, Team Max, and Enterprise Max licenses now activate correctly via ghost --activate.
 
-**v9.3.8** Wire Ghost Brief tier gate (Max-tier only: pro-max, team-max, enterprise-max). Wire conflict_verify verifier in Ghost Watcher (opt-in, quick mode, drops false positives). Refactor redactor.js PEM replacement strings to named constants. Fix buildTokenUsage to derive batch rates from estimator.js pricing table. Add detailed_prompts to ghost-watcher.yaml config.
+**v9.3.8** Wire Ghost Brief tier gate (Max-tier only: pro-max, team-max, enterprise-max). Wire conflict_verify verifier in Ghost Watcher (opt-in, quick mode, drops low-signal findings). Refactor redactor.js PEM replacement strings to named constants. Fix buildTokenUsage to derive batch rates from estimator.js pricing table. Add detailed_prompts to ghost-watcher.yaml config.
 
 **v9.3.7** Fix Max-tier context caps (Pro Max/Team Max/Enterprise Max now correctly get 100K/150K/200K tokens). Remove iteration limit from Ghost Watcher (no-config = no limit, opt-in only). Extract shouldSkipForIterationLimit as exported pure helper with full test coverage. Fix FREE_QUOTA duplication in freemium.js.
 
@@ -411,7 +414,7 @@ Auto-generates a structured intelligence report organized into four categories:
 - ⚰️ **Dead Zones**: abandoned code nobody knows if they still need
 - ⚡ **Fault Lines**: fragile seams where assumptions don't match
 
-Every finding is severity-rated, includes effort and complexity estimates, a dollar-cost remediation range, and concrete fix steps. Findings are verified against actual source code; false positives are dropped or flagged before they reach the report.
+Every finding is severity-rated, includes effort and complexity estimates, a dollar-cost remediation range, and concrete fix steps. Findings are verified against actual source code; low-signal findings are dropped or flagged before they reach the report.
 
 **💥 Blast Radius Analysis + Rollback Plan**
 Pick any file, class, method, or coordinated change set. Ghost maps the full impact (direct dependencies, ripple effects, danger zones, silent-failure risks) and produces a complete rollback plan so your team is protected if anything goes wrong.
@@ -425,7 +428,7 @@ The rollback plan includes:
 - Smoke test checklist to confirm rollback succeeded
 
 **⚡ Conflict Detection**
-Scan a codebase for places where two or more parts make conflicting assumptions about the same thing: shared config keys, API contracts, database schemas, data shapes, constants. Each candidate conflict is verified against the source code and rated as confirmed, possible, or false positive.
+Scan a codebase for places where two or more parts make conflicting assumptions about the same thing: shared config keys, API contracts, database schemas, data shapes, constants. Each candidate conflict is verified against the source code and rated as confirmed, possible, or low-signal.
 
 Useful before deployments, integration work, or migrations.
 

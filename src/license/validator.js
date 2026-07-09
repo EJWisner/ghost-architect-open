@@ -41,6 +41,25 @@ function isoNoMicro(d) {
   return new Date(d).toISOString().replace(/\.\d+Z$/, 'Z');
 }
 
+// The customer/tier/expiry fields every non-error result must carry so `ghost
+// --license` shows the real customer and trialDaysRemaining() has a number to
+// read. Shared by the happy-path result and the valid_warn clock-degradation
+// returns, which fire before the main baseResult is built and would otherwise
+// omit these fields (rendering "Customer: (unknown)" for a paying customer).
+function computeBaseResult(payload, nowMs, clockResult) {
+  return {
+    payload,
+    customer: payload.customer,
+    tier: payload.tier,
+    expires: payload.expires,
+    grace_until: payload.grace_until,
+    hard_stop: payload.hard_stop,
+    daysUntilExpires: daysBetween(nowMs, Date.parse(payload.expires)),
+    daysUntilHardStop: daysBetween(nowMs, Date.parse(payload.hard_stop)),
+    networkOk: !!(clockResult && clockResult.networkOk),
+  };
+}
+
 // Main entry — async because clock validation may hit the network.
 // Options:
 //   skipNetworkClock: if true, don't hit worldtimeapi (used by `--version`,
@@ -117,15 +136,15 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
       }
       if (clockResult.reason === 'clock_offline_grace_exceeded') {
         return {
+          ...computeBaseResult(payload, clockResult.nowMs || Date.now(), clockResult),
           state: 'valid_warn',
-          payload,
           message: 'Ghost could not verify network time for several consecutive runs. Running in offline mode. Connect to the internet to re-sync.',
         };
       }
       // clock_skew: local clock differs significantly from network time.
       return {
+        ...computeBaseResult(payload, clockResult.nowMs || Date.now(), clockResult),
         state: 'valid_warn',
-        payload,
         message:
           'Your system clock appears to be out of sync with network time. Ghost will continue but accuracy may be affected.\n' +
           'To fix: Mac: System Settings > General > Date & Time > enable Set automatically. ' +
@@ -173,17 +192,7 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   const graceMs = Date.parse(payload.grace_until);
   const hardStopMs = Date.parse(payload.hard_stop);
 
-  const baseResult = {
-    payload,
-    customer: payload.customer,
-    tier: payload.tier,
-    expires: payload.expires,
-    grace_until: payload.grace_until,
-    hard_stop: payload.hard_stop,
-    daysUntilExpires: daysBetween(nowMs, expiresMs),
-    daysUntilHardStop: daysBetween(nowMs, hardStopMs),
-    networkOk: !!clockResult.networkOk,
-  };
+  const baseResult = computeBaseResult(payload, nowMs, clockResult);
 
   if (nowMs >= hardStopMs) {
     const message = payload.tier === 'trial'

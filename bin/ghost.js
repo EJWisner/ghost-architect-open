@@ -237,6 +237,10 @@ function parseArgs(argv) {
     if (a === '--label')                 { out.cfLabel = argv[++i] || ''; continue; }
     if (a.startsWith('--label='))        { out.cfLabel = a.slice('--label='.length); continue; }
     if (a === '--no-verify')             { out.cfNoVerify = true; continue; }
+    // --force-clear-markers is a boolean flag consumed later via argv.includes,
+    // not through the parsed opts object; recognize it here so it is not
+    // reported as an unknown flag before it runs.
+    if (a === '--force-clear-markers')   { continue; }
     // Unknown arg — warn but don't crash, preserves interactive usage.
     if (a.startsWith('-')) {
       console.error(chalk.yellow(`⚠ Unknown flag: ${a} (ignored)`));
@@ -311,7 +315,7 @@ Commit Forecast (non-interactive / CI mode):
   runs fully non-interactive. Any missing required flag drops back to the
   interactive prompt flow.
 
-Ghost Brief™ (Pro Max and above):
+Ghost Brief™ (Max plans: Pro Max, Team Max, Enterprise Max):
   --brief                  Convert scan findings into a validated,
                            blast-radius-aware Claude Code prompt pack.
                            Writes ghost-brief.json to the current directory.
@@ -328,6 +332,15 @@ Transport (streaming vs batch):
   ghost batch-retrieve <id>
                            Pull a finished batch and produce the same report,
                            sidecar, and PDF a streaming run would have.
+
+Session recovery:
+  --recover-session <label>
+                           Force-recover a scan for <label> from its checkpoint
+                           sidecar on the next run, even if a main session file
+                           exists. Use when the saved session is stale or bad.
+  --sessions-dir <path>    Relocate the resume-checkpoint directory for this run
+                           (default: ~/Ghost Architect Reports/sessions). Useful
+                           when the default location is read-only or unsuitable.
 
 Misc:
   --clean-cache            Delete the profile extraction cache and exit.
@@ -417,9 +430,11 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
     },
   ];
 
-  if (!usingEnvKey()) {
-    choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect' : '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
-  }
+  // Always offer Reconfigure. Even when the API key comes from the environment,
+  // this menu still manages the GitHub reports token and license key, which an
+  // env-key user needs. The API-key row itself is disabled inside the submenu
+  // when usingEnvKey() is true.
+  choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect' : '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
   // Universal escape: top-level menu uses a single "← Exit Ghost" choice
   // (no separate Back vs Exit). Returning BACK_VALUE here means the same
   // thing as selecting Exit at the top level — there is no higher level
@@ -456,30 +471,30 @@ async function selectMode(codebaseContext, tier = 'open') {
   // rule is part of the clean tier-product story. Pro+ tiers see both
   // Question (one-shot Q&A) and Chat (multi-turn) as distinct choices.
   const choices = [
-    { name: IS_WINDOWS ? '[ASK] Ask a Question  ' : '❓  Ask a Question  ' + chalk.gray('- Single Q&A, save the answer if you like'), value: 'question' },
+    { name: (IS_WINDOWS ? '[ASK] Ask a Question  ' : '❓  Ask a Question  ') + chalk.gray('- Single Q&A, save the answer if you like'), value: 'question' },
   ];
   if (tier !== 'open') {
-    choices.push({ name: IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ' + chalk.gray('- Ongoing conversation about this project'), value: 'chat' });
+    choices.push({ name: (IS_WINDOWS ? '[CHT] Chat  ' : '💬  Chat  ') + chalk.gray('- Ongoing conversation about this project'), value: 'chat' });
   }
   choices.push(
-    { name: IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ' + chalk.gray('- Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
-    { name: IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ' + chalk.gray('- Impact map + rollback plan'), value: 'blast' },
-    { name: IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ' + chalk.gray('- Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
-    { name: IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ' + chalk.gray('- Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
-    { name: IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ' + chalk.gray('- Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
+    { name: (IS_WINDOWS ? '[POI] Points of Interest Scan  ' : '🗺   Points of Interest Scan  ') + chalk.gray('- Auto-map red flags, landmarks, dead zones, fault lines'), value: 'poi' },
+    { name: (IS_WINDOWS ? '[BLT] Blast Radius Analysis  ' : '💥  Blast Radius Analysis  ') + chalk.gray('- Impact map + rollback plan'), value: 'blast' },
+    { name: (IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ') + chalk.gray('- Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
+    { name: (IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ') + chalk.gray('- Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
+    { name: (IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ') + chalk.gray('- Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
     {
       name: IS_WINDOWS
         ? '[GBR] Ghost Brief™     - Generate AI remediation prompt pack'
         : '📋  Ghost Brief™     ' + chalk.gray('- Generate AI remediation prompt pack'),
       value: 'ghost-brief',
-      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
+      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max, Team Max, or Enterprise Max)') : false,
     },
     {
       name: IS_WINDOWS
         ? '[EXB] Executive Brief  - One-page business intelligence report'
         : '📊  Executive Brief  ' + chalk.gray('- One-page business intelligence report'),
       value: 'executive-brief',
-      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max or higher)') : false,
+      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max, Team Max, or Enterprise Max)') : false,
     },
     new inquirer.Separator(IS_WINDOWS ? '── Ghost Watcher ──' : '─── Ghost Watcher™ ─────────────────────────────────'),
     {
@@ -525,8 +540,8 @@ async function selectMode(codebaseContext, tier = 'open') {
       value: 'profiles',
       disabled: TIER === 'open' ? chalk.gray('(Pro or higher)') : false,
     },
-    { name: IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ' + chalk.gray('- Sizing & engagement plan, no analysis'), value: 'recon' },
-    { name: IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ' + chalk.gray('- Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
+    { name: (IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ') + chalk.gray('- Sizing & engagement plan, no analysis'), value: 'recon' },
+    { name: (IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ') + chalk.gray('- Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('- Before/after diff of two saved reports')), value: 'compare' },
     { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('- Remediation progress across all projects')), value: 'dashboard' },
     new inquirer.Separator(),
@@ -2070,7 +2085,13 @@ async function runSelectiveReconfigure(licenseState) {
   let githubOk = await testGithubToken();
   while (true) {
     const reconfigureChoices = [
-      { name: `Anthropic API key ${resolveApiKey() ? '(configured)' : '(not set)'}`, value: 'apiKey' },
+      {
+        name: `Anthropic API key ${resolveApiKey() ? '(configured)' : '(not set)'}`,
+        value: 'apiKey',
+        // When the key comes from the environment, it cannot be changed here --
+        // disable this row but keep the GitHub token and license rows usable.
+        disabled: usingEnvKey() ? chalk.gray('(set via ANTHROPIC_API_KEY env var)') : false,
+      },
       { name: `GitHub reports token ${githubOk ? '(verified)' : '(bad credentials: needs update)'}`, value: 'githubToken' },
       { name: `License key (${TIER}: ${licenseState})`, value: 'license' },
       { name: 'Run full setup wizard', value: 'full' },
@@ -3000,10 +3021,11 @@ async function main() {
 
         const { repoUrl } = await inquirer.prompt([{
           type: 'input', name: 'repoUrl',
-          message: chalk.cyan('GitHub repo URL to watch:'),
+          message: chalk.cyan("GitHub repo URL to watch (blank or 'back' to cancel):"),
           default: '',
-          validate: v => v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
+          validate: v => (v.trim() === '' || isBackKeyword(v) || v.includes('github.com')) ? true : 'Please enter a valid GitHub URL',
         }]);
+        if (repoUrl.trim() === '' || isBackKeyword(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
 
         const { branches: selectedBranches } = await inquirer.prompt([{
           type: 'checkbox', name: 'branches',
@@ -3056,9 +3078,10 @@ async function main() {
 
         const { token } = await inquirer.prompt([{
           type: 'password', name: 'token',
-          message: chalk.cyan('GitHub Personal Access Token (repo write scope):'),
-          validate: v => v.trim().length > 0 ? true : 'Token is required',
+          message: chalk.cyan("GitHub Personal Access Token (repo write scope, blank or 'back' to cancel):"),
+          validate: v => (v.trim() === '' || isBackKeyword(v) || v.trim().length > 0) ? true : 'Token is required',
         }]);
+        if (token.trim() === '' || isBackKeyword(token)) { console.log(chalk.gray('\nCancelled.\n')); break; }
 
         const { commitsPerDay } = await inquirer.prompt([{
           type: 'input', name: 'commitsPerDay',
@@ -3294,7 +3317,7 @@ if (process.argv.includes('--brief')) {
 
   const BRIEF_TIERS = MAX_TIERS;
   if (!BRIEF_TIERS.includes(briefTier)) {
-    console.error('Ghost Brief requires Ghost Pro Max or higher.');
+    console.error('Ghost Brief requires a Max plan (Pro Max, Team Max, or Enterprise Max).');
     console.error('Upgrade at: https://ghostarchitect.dev/upgrade');
     process.exit(1);
   }

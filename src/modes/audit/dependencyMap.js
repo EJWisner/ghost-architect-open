@@ -485,7 +485,7 @@ export async function runDependencyMap(codebaseContext, options = {}) {
     }
 
     riskCallouts.push({
-      category: 'unknown-license',
+      category: 'unknown_license',
       count: unknownLicenseDeps.length,
       packages: unknownLicenseDeps.slice(0, 20).map(d => d.name),
       severity: 'low',

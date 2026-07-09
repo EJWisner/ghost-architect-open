@@ -45,6 +45,7 @@ const EFFORT_HOURS_BY_CATEGORY = {
   eol_framework: 40,        // EOL framework upgrade is multi-week work
   eol_dependency: 8,        // single EOL dep package upgrade
   copyleft_license: 4,      // legal review per finding
+  commercial_license: 4,    // confirm commercial/proprietary license transfer
   abandoned: 8,             // replace abandoned package
   security: 8,              // security-sensitive dep audit
   unknown_license: 2,       // verify license manually
@@ -112,6 +113,7 @@ export function findingsFromAuditResults(results) {
       const effortKey =
         category === 'eol' ? 'eol_dependency' :
         category === 'copyleft' ? 'copyleft_license' :
+        category === 'commercial' ? 'commercial_license' :
         category === 'abandoned' ? 'abandoned' :
         category === 'security' ? 'security' :
         category === 'unknown_license' ? 'unknown_license' :

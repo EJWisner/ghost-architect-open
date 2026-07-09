@@ -26,7 +26,7 @@
 // userId is generated client-side (UUID v4) and stored only locally.
 //
 // Failure modes:
-//   • GHOST_NO_PING=1 set     → silent no-op
+//   • GHOST_NO_PING set (any value) → silent no-op
 //   • Network error           → silent no-op (single attempt, no retry —
 //                                Pro/Team users running modes are not the
 //                                "first impression" surface, so we keep
@@ -45,7 +45,10 @@ const POST_TIMEOUT_MS = 5000;
 const config = getConfig();
 
 function pingDisabled() {
-  return process.env.GHOST_NO_PING === '1';
+  // Opt out on ANY set, non-empty value (GHOST_NO_PING=1, true, yes, ...), not
+  // only the exact string '1'. Users reasonably expect setting the var at all
+  // to disable telemetry.
+  return !!process.env.GHOST_NO_PING;
 }
 
 // Persistent anonymous userId. Generated once, stored in configstore,

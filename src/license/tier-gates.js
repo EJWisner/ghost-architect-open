@@ -256,7 +256,22 @@ const TIER_DISPLAY = {
 };
 const PAID_TIER_ORDER = ['pro', 'pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
 
+// A Max-only gate (Ghost Brief, Executive Brief) allows exactly the three Max
+// tiers and blocks their non-Max siblings. Naming only "Ghost Pro Max" (the
+// lowest) reads as "Pro Max or higher", which is wrong: Team and Enterprise are
+// blocked while Team Max and Enterprise Max are not. Detect that shape so the
+// copy can name all three Max plans instead.
+const MAX_ONLY_TIERS = ['pro-max', 'team-max', 'enterprise-max'];
+const MAX_ONLY_LABEL = 'a Max plan (Pro Max, Team Max, or Enterprise Max)';
+
+function isMaxOnlyGate(gateId) {
+  const allowed = new Set(allowedTiers(gateId));
+  return MAX_ONLY_TIERS.every(t => allowed.has(t)) &&
+    !allowed.has('pro') && !allowed.has('team') && !allowed.has('enterprise');
+}
+
 function minRequiredTierLabel(gateId) {
+  if (isMaxOnlyGate(gateId)) return MAX_ONLY_LABEL;
   const allowed = new Set(allowedTiers(gateId));
   for (const t of PAID_TIER_ORDER) {
     if (allowed.has(t)) return TIER_DISPLAY[t];
@@ -287,6 +302,10 @@ export function paywallFor(gateId, tier) {
       tier,
       modeName: MODE_DISPLAY[gateId] || gateId.replace(/^mode:/, ''),
       requiredTier: minRequiredTierLabel(gateId),
+      // When true, requiredTier is already a complete phrase (a Max-plan list);
+      // the renderer must NOT append " or higher", which would misrepresent the
+      // gate (there is nothing "higher" than the Max tiers to upgrade to).
+      requiredExact: isMaxOnlyGate(gateId),
     };
   }
   // Feature gates currently have no rendered paywall — Phase 2/3 will wire

@@ -160,7 +160,7 @@ function buildStackRealitySection(stackReality) {
     lines.push('|---|---|---|');
     for (const f of frameworks) {
       const status = f.eolFlag
-        ? `**EOL** — ${f.eolNote || 'past end-of-life'}`
+        ? `**EOL** -- ${f.eolNote || 'past end-of-life'}`
         : 'In support';
       // A missing/unparsed version must read as a fact about the manifest, not
       // as a tool failure. The raw internal 'unparsed' sentinel (and any empty
@@ -229,8 +229,8 @@ function buildKeyPersonRiskSection(keyPersonRisk) {
     lines.push('| Author | Lines | Share | Commits | First commit | Last commit | Status |');
     lines.push('|---|---|---|---|---|---|---|');
     for (const c of topContributors.slice(0, 10)) {
-      const firstD = c.firstCommitAt ? c.firstCommitAt.slice(0, 10) : '—';
-      const lastD = c.lastCommitAt ? c.lastCommitAt.slice(0, 10) : '—';
+      const firstD = c.firstCommitAt ? c.firstCommitAt.slice(0, 10) : '--';
+      const lastD = c.lastCommitAt ? c.lastCommitAt.slice(0, 10) : '--';
       const status = c.likelyDeparted
         ? `**Likely departed** (${c.daysSinceLastCommit}d since last commit; flagged after ${DEPARTED_THRESHOLD_DAYS}d of inactivity)`
         : 'Active';
@@ -282,7 +282,7 @@ function buildDependencyMapSection(dependencyMap) {
       const severityLabel = callout.severity === 'high' ? 'HIGH'
         : callout.severity === 'medium' ? 'MEDIUM'
         : 'LOW';
-      lines.push(`### ${severityLabel} — ${callout.category.toUpperCase()}`);
+      lines.push(`### ${severityLabel} -- ${callout.category.toUpperCase()}`);
       lines.push('');
       lines.push(callout.summary);
       lines.push('');

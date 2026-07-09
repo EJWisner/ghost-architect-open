@@ -466,6 +466,19 @@ export async function verifyReport(reportText, fileMap, options = {}) {
               reasons:  [...(r.reasons  || []), `LLM verifier marked as partial: ${verdict.reason || ''}`],
             };
           }
+          if (verdict.verdict === 'supports') {
+            // The LLM read the actual source and confirmed the finding is real.
+            // Mark it verified and clear ONLY the cheap Pass-1 snippet-mismatch
+            // warning (the "does not appear verbatim" heuristic): source-level
+            // confirmation overrules it. Left in place, that warning phrase would
+            // be matched by the DISPUTED sweep below and a source-confirmed
+            // finding would be silently dropped.
+            return {
+              ...r,
+              status: 'verified',
+              warnings: (r.warnings || []).filter(w => !/do not appear verbatim/i.test(w)),
+            };
+          }
           return r;
         } catch (err) {
           llmVerdicts[idx] = {

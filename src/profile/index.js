@@ -628,7 +628,7 @@ export function getBranding(profile) {
 
   const confidentiality =
        toTrimmedString(branding.confidentiality)
-    || `Confidential \u2014 Prepared for ${companyName} engagement use`;
+    || `Confidential -- Prepared for ${companyName} engagement use`;
 
   return {
     isWhiteLabeled: true,

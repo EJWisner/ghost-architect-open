@@ -5,6 +5,51 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.14 -- July 9, 2026
+
+### Patch: Report Polish, Verifier Trust, and Copy Accuracy
+
+**Reports**
+- Em dashes removed from all customer-facing report output strings across reports.js, pdf-generator.js, profile/index.js, stackReality.js, and reportBuilder.js. Replaced with double hyphen per standing copy rule.
+- Ghost Architect trademark symbol added to all report headers, footers, PDF metadata, and title strings where bare name appeared.
+- assets/ added to package.json files whitelist. Ghost logo now ships in the npm tarball so PDF headers are not blank on npm installs.
+- PDF clean() function no longer rewrites !' to ->.
+
+**Verifier**
+- Source-confirmed findings no longer dropped. When the LLM verifier returns supports (the finding is real), the snippet-mismatch warning is cleared so the DISPUTED sweep does not silently remove a verified finding.
+- AWS secret redactor no longer rewrites 40-char git SHAs. Added negative lookahead to exclude pure-hex strings. Fixes hundreds of false [REDACTED:AWS_SECRET] hits in Magento codebases with composer.lock. Env-secret rule now preserves colon separators.
+
+**CLI**
+- Windows menu descriptions restored. Ternary precedence bug caused mode descriptions to display only on non-Windows systems. Fixed for all nine affected menu entries.
+- Reconfigure menu now always visible. Previously hidden when ANTHROPIC_API_KEY was set in the environment, blocking access to license and GitHub token management. API key row is now disabled within the submenu instead.
+- Enable Watch wizard now accepts blank or back to cancel at the repo URL and PAT prompts instead of trapping the user.
+- --force-clear-markers no longer prints Unknown flag warning before running.
+- --recover-session and --sessions-dir added to --help output.
+
+**License**
+- Clock-skew and offline-grace warnings no longer blank the license panel. Customer name, tier, and expiry now display correctly during clock-degraded states. Trial countdown restored for offline trial users.
+- Pro Max or higher copy corrected for Ghost Brief and Executive Brief. These features require a Max plan (Pro Max, Team Max, or Enterprise Max). Team Max and Enterprise Max customers were previously shown an incorrect upgrade prompt.
+
+**Audit**
+- Dependency effort hours key mismatch fixed. unknown-license (hyphen) normalized to unknown_license (underscore) so the 2h effort estimate applies instead of the 8h default. Commercial license category now has a correct 4h effort mapping.
+- severityRecast.js marked with TODO at both the module and its pipeline integration point.
+
+**Mobile / Team**
+- Mobile publish resolved list now carries finding id. The cf.id === bf.id equality test was always failing, over-reporting every baseline finding as resolved.
+- Team sync now fetches files over 1MB via download_url instead of writing 0-byte files.
+- Blast batch synthesis now falls back to per-pass reports on canceled or expired batch states instead of returning empty.
+- Narrator Promise.race abandoned rejection consumed. A slow-network late rejection from the losing API call can no longer kill the process mid-scan via unhandledRejection.
+
+**Telemetry**
+- GHOST_NO_PING now opts out on any set value, not only the string 1.
+- Duplicate MODEL_RATES table removed from llmAuditClient.js. Now derived from the single source of truth in estimator.js.
+
+**Tests**
+- loadFromPath.test.mjs now self-contained. Fixture is created in a temp dir and cleaned up. No longer requires a pre-existing /tmp/ghost-e2e-fixture directory.
+
+**Copy**
+- low-signal findings replaces false positives in conflict.js, watcher-commit.js, and README.md product copy.
+
 ## v10.0.13 -- July 9, 2026
 
 ### Patch: Scan Quality and Audit Pricing

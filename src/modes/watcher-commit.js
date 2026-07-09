@@ -1774,7 +1774,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           console.log(`Ghost Watcher: verifying ${conflictCandidates.length} conflict candidates...`);
           const vr = await verifyConflicts(conflictCandidates, codebaseContext.fileMap || {}, {}, 'quick', tier);
           conflictCandidates = [...vr.confirmed, ...vr.possible];
-          console.log(`Ghost Watcher: ${vr.stats.eliminated} false positives eliminated, ${conflictCandidates.length} kept\n`);
+          console.log(`Ghost Watcher: ${vr.stats.eliminated} low-signal findings filtered, ${conflictCandidates.length} kept\n`);
         }
 
         // Drop self-refuting conflict findings: if the model flagged a conflict

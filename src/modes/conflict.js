@@ -316,8 +316,8 @@ export async function runConflictMode(codebaseContext, options = {}) {
     if (result.verified && result.stats) {
       const s = result.stats;
       console.log(chalk.magenta(
-        `  👻 Agent verified ${s.total} candidates — ` +
-        `${s.confirmed} confirmed, ${s.possible} possible, ${s.falsePositives} false positives eliminated\n`
+        `  👻 Agent verified ${s.total} candidates -- ` +
+        `${s.confirmed} confirmed, ${s.possible} possible, ${s.falsePositives} low-signal findings filtered\n`
       ));
     }
 

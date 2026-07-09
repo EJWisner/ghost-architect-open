@@ -84,7 +84,7 @@ function stripMd(s) { return s.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*
 // the literal '#' character renders in the PDF body next to the title text.
 function stripLeadingHash(s) { return s.replace(/^#+\s*/, ''); }
 
-function clean(s)   { return stripLeadingHash(stripEmoji(stripMd(stripAnsi(s)))).replace(/!'/g, '->').trim(); }
+function clean(s)   { return stripLeadingHash(stripEmoji(stripMd(stripAnsi(s)))).trim(); }
 
 function sevColor(t) {
   const u = t.toUpperCase();
@@ -150,7 +150,7 @@ function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
         ? trialInfo.trialExpires.slice(0, 10)
         : '(unknown)';
     const stampLines = [
-      'TRIAL OUTPUT — NOT FOR DISTRIBUTION',
+      'TRIAL OUTPUT -- NOT FOR DISTRIBUTION',
       `Lic: ${trialInfo.trialLicenseId || 'unknown'}  ·  Expires: ${trialExpires}`,
     ];
     doc.text(stampLines.join('\n'), 0, HEADER_H + 2, {
@@ -185,7 +185,7 @@ function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
     }
   } else {
     doc.font('Helvetica-Bold').fontSize(11).fillColor(C.WHITE)
-       .text('Ghost Architect', 46, 11, { lineBreak: false });
+       .text('Ghost Architect™', 46, 11, { lineBreak: false });
     doc.font('Helvetica').fontSize(8).fillColor(C.TEAL)
        .text('AI-powered codebase intelligence  |  ghostarchitect.dev', 46, 25, { lineBreak: false });
   }
@@ -204,7 +204,7 @@ function drawChrome(doc, pageNum, logoPath, branding = null, trialInfo = null) {
     doc.font('Helvetica').fontSize(7).fillColor(C.MED_GRAY)
        .text(`Generated ${ts}  |  ghostarchitect.dev`, 20, PH - 18, { lineBreak: false });
     doc.font('Helvetica-Bold').fontSize(7).fillColor(C.TEAL)
-       .text('© 2026 Ghost Architect. All rights reserved. Confidential.', 0, PH - 18, { width: PW - 20, align: 'right', lineBreak: false });
+       .text('© 2026 Ghost Architect™. All rights reserved. Confidential.', 0, PH - 18, { width: PW - 20, align: 'right', lineBreak: false });
   }
 
   // Reset cursor to content area so pdfkit internals don't drift
@@ -221,8 +221,8 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
 
       // PDF metadata: title and author reflect the consultant in white-label
       // mode so a downloaded file's properties don't leak "Ghost Architect".
-      const pdfTitle  = isWL ? `${branding.companyName} — ${meta.reportType || 'Analysis'}` : 'Ghost Architect Report';
-      const pdfAuthor = isWL ? (branding.author || branding.companyName)                    : 'Ghost Architect';
+      const pdfTitle  = isWL ? `${branding.companyName} -- ${meta.reportType || 'Analysis'}` : 'Ghost Architect™ Report';
+      const pdfAuthor = isWL ? (branding.author || branding.companyName)                    : 'Ghost Architect™';
 
       const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: true,
         info: { Title: pdfTitle, Author: pdfAuthor } });
@@ -322,7 +322,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
           : branding.companyName;
         doc.text(finalLine, mx, my, { width: mw });
       } else {
-        doc.text(`Ghost Architect v${meta.version || GHOST_VERSION}  |  ghostarchitect.dev`, mx, my, { width: mw });
+        doc.text(`Ghost Architect™ v${meta.version || GHOST_VERSION}  |  ghostarchitect.dev`, mx, my, { width: mw });
       }
       y += cardH + 14;
 
@@ -459,7 +459,7 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
 
         // Detect truncated remediation summary — add graceful note
         if (line.toLowerCase().includes('analysis coverage') && line.toLowerCase().endsWith('covers')) {
-          writeLine('Analysis Coverage: Partial scan — run additional passes for complete cost estimate.', { font: 'Helvetica', color: C.MED_GRAY });
+          writeLine('Analysis Coverage: Partial scan -- run additional passes for complete cost estimate.', { font: 'Helvetica', color: C.MED_GRAY });
           writeLine('Re-run with more passes to generate the full remediation cost table.', { font: 'Helvetica', color: C.MED_GRAY });
           i++; continue;
         }
@@ -512,7 +512,7 @@ export async function generateDashboardPDF(projects, outputPath) {
     try {
       const logoPath = path.join(__dirname, '..', 'assets', 'logo.jpeg');
       const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: true,
-        info: { Title: 'Ghost Architect — Project Intelligence Dashboard', Author: 'Ghost Architect' } });
+        info: { Title: 'Ghost Architect™ -- Project Intelligence Dashboard', Author: 'Ghost Architect™' } });
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
@@ -536,7 +536,7 @@ export async function generateDashboardPDF(projects, outputPath) {
 
       const ts = new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
       doc.font('Helvetica').fontSize(9).fillColor(C.MED_GRAY)
-         .text('Generated: ' + ts + '  |  Ghost Architect v' + GHOST_VERSION + '  |  ghostarchitect.dev', ML, y, { width: CW });
+         .text('Generated: ' + ts + '  |  Ghost Architect™ v' + GHOST_VERSION + '  |  ghostarchitect.dev', ML, y, { width: CW });
       y += 18;
 
       const totalProjects = projects.length;
@@ -619,7 +619,7 @@ export async function generateDashboardPDF(projects, outputPath) {
       doc.save().moveTo(ML, y).lineTo(ML + CW, y).lineWidth(0.5).stroke(C.LIGHT_GRAY).restore();
       y += 8;
       doc.font('Helvetica').fontSize(8).fillColor(C.MED_GRAY)
-         .text('Report generated by Ghost Architect  |  Senior Architect Review  |  ghostarchitect.dev', ML, y, { width: CW, align: 'center' });
+         .text('Report generated by Ghost Architect™  |  Senior Architect Review  |  ghostarchitect.dev', ML, y, { width: CW, align: 'center' });
 
       doc.end();
       stream.on('finish', resolve);

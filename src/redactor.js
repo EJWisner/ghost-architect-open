@@ -107,7 +107,11 @@ const REDACTION_RULES = [
   // API Keys & Tokens — specific service patterns (high confidence, low false positive)
   { name: 'Anthropic API Key',     regex: /sk-ant-[a-zA-Z0-9\-_]{20,}/g,                         replacement: '[REDACTED:ANTHROPIC_KEY]' },
   { name: 'AWS Access Key',        regex: /AKIA[0-9A-Z]{16}/g,                                    replacement: '[REDACTED:AWS_ACCESS_KEY]' },
-  { name: 'AWS Secret Key',        regex: /(?<=["'\s])[a-zA-Z0-9/+=]{40}(?=["'\s])/g,             replacement: '[REDACTED:AWS_SECRET]' },
+  // Negative lookahead (?![0-9a-fA-F]{40}) excludes 40-char pure-hex strings,
+  // which are git SHAs (composer.lock, package-lock.json, git output), not AWS
+  // secrets. Without it every commit SHA was rewritten to [REDACTED:AWS_SECRET],
+  // producing hundreds of false hits and corrupting content sent to the model.
+  { name: 'AWS Secret Key',        regex: /(?<=["'\s])(?![0-9a-fA-F]{40})[a-zA-Z0-9/+=]{40}(?=["'\s])/g, replacement: '[REDACTED:AWS_SECRET]' },
   { name: 'GitHub Token',          regex: /gh[ps]_[a-zA-Z0-9]{36,}/g,                             replacement: '[REDACTED:GITHUB_TOKEN]' },
   { name: 'Stripe Key',            regex: /sk_(live|test)_[a-zA-Z0-9]{24,}/g,                     replacement: '[REDACTED:STRIPE_KEY]' },
   { name: 'Twilio Key',            regex: /SK[a-f0-9]{32}/g,                                      replacement: '[REDACTED:TWILIO_KEY]' },
@@ -147,7 +151,7 @@ const REDACTION_RULES = [
   { name: 'Azure Connection',      regex: /DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]{1,256}/gi, replacement: '[REDACTED:AZURE_CONNECTION_STRING]' },
 
   // Environment variable assignments — specific known-dangerous key names only (avoids false positives on getUserPassword(), etc.)
-  { name: 'Env Secret Assignment', regex: /(CRYPT_KEY|ENCRYPTION_KEY|HASH_SALT|AUTH_SECRET|APP_SECRET|DB_PASSWORD|DB_PASS|REDIS_PASSWORD|ANTHROPIC_API_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|GITHUB_TOKEN|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*["']?[^\s"'\n]{4,256}["']?/gi, replacement: '$1=[REDACTED:ENV_SECRET]' },
+  { name: 'Env Secret Assignment', regex: /(CRYPT_KEY|ENCRYPTION_KEY|HASH_SALT|AUTH_SECRET|APP_SECRET|DB_PASSWORD|DB_PASS|REDIS_PASSWORD|ANTHROPIC_API_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|GITHUB_TOKEN|AWS_SECRET_ACCESS_KEY)(\s*[=:]\s*)["']?[^\s"'\n]{4,256}["']?/gi, replacement: '$1$2[REDACTED:ENV_SECRET]' },
 ];
 
 /**

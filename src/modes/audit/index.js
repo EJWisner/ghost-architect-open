@@ -307,6 +307,14 @@ export async function runAuditMode(codebaseContext, options = {}) {
       // findings schema rather than asking the model to emit and re-parse.
       const { findingsFromAuditResults } = await import('./findingsFromResults.js');
       const parsedFindings = findingsFromAuditResults(results);
+      // TODO(severity-recast-wiring): this is the planned integration point for
+      // src/modes/audit/severityRecast.js (currently unwired). parsedFindings is
+      // the flat, severity-bearing findings array; groupByDealTier(parsedFindings)
+      // would recast it into Deal-Blocker / Post-Close Risk / Day-91 Cleanup /
+      // Healthy tiers for a "Findings by Deal Impact" report section. Deferred
+      // because it requires a report-structure decision (new section vs. replacing
+      // the analyzer sections) across MD, PDF, and the portal sidecar. See the
+      // matching TODO in severityRecast.js.
       const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
       const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
       const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;

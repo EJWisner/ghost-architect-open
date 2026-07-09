@@ -178,14 +178,16 @@ ${combinedResults}`;
   }
   if (!batchResult) throw new Error('Blast synthesis batch timed out after 20 minutes');
 
-  // Extract the synthesis output from the batch result.
+  // Extract the synthesis output from the batch result. The Batch API can settle
+  // a request as succeeded, errored, canceled, or expired. We must handle every
+  // non-succeeded state explicitly: falling through would return '' and silently
+  // discard the paid per-pass reports we already have in combinedResults.
   let synthesisOutput = '';
-  for await (const item of await anthropic.messages.batches.results(batch.id)) {
-    if (item.custom_id === 'blast-synthesis') {
-      if (item.result?.type === 'errored') {
-        throw new Error(`Blast synthesis batch request failed: ${JSON.stringify(item.result.error)}`);
-      }
-      if (item.result?.type === 'succeeded') {
+  try {
+    for await (const item of await anthropic.messages.batches.results(batch.id)) {
+      if (item.custom_id !== 'blast-synthesis') continue;
+      const resultType = item.result?.type;
+      if (resultType === 'succeeded') {
         const msg = item.result.message;
         synthesisOutput = msg.content
           .filter(b => b.type === 'text')
@@ -200,8 +202,28 @@ ${combinedResults}`;
             synthesisModel
           );
         }
+      } else if (resultType === 'errored') {
+        throw new Error(`Blast synthesis batch request failed: ${JSON.stringify(item.result.error)}`);
+      } else {
+        // canceled, expired, or any unexpected/absent type. Surface a clear
+        // error; the catch below preserves the per-pass reports rather than
+        // returning an empty synthesis.
+        throw new Error(`Batch returned unexpected status: ${resultType || 'unknown'}. Per-pass reports preserved in session file.`);
       }
     }
+    if (!synthesisOutput.trim()) {
+      throw new Error('Batch returned unexpected status: no synthesis output. Per-pass reports preserved in session file.');
+    }
+  } catch (err) {
+    // Synthesis failed for some reason (errored/canceled/expired/empty). Do not
+    // discard the paid per-pass reports: return them concatenated, with a visible
+    // note explaining the synthesis pass did not complete, instead of ''.
+    console.warn(`[Ghost] Blast synthesis did not complete: ${err.message} Falling back to the ${total} unmerged per-pass reports.`);
+    return (
+      `> Note: automated synthesis of the ${total} Blast Radius passes did not complete. ` +
+      `${err.message} The unmerged per-pass reports are included below; review them individually.\n\n` +
+      combinedResults
+    );
   }
 
   return synthesisOutput;

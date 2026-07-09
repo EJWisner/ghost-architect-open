@@ -262,6 +262,11 @@ function parseFindings(reportText) {
     effort:      f.effortHours ? `${f.effortHours} hours` : null,
     cost:        null,
     description: f.detail || '',
+    // Carry the finding id so the resolved/new equality test (cf.id === bf.id)
+    // in the publish path can match against baseline findings, which do include
+    // id. Without this, current findings had no id and the id-based comparison
+    // never matched, over-reporting every id-bearing baseline finding as resolved.
+    id:          f.id          || null,
   }));
 }
 
