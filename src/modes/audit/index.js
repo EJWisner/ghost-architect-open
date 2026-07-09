@@ -41,6 +41,7 @@ import { saveReport } from '../../reports.js';
 import { promptProjectLabel } from '../../projects.js';
 import { showAuditCostEstimate, showActualCost } from '../../estimator.js';
 import { getConfig } from '../../config.js';
+import { PRICING } from '../../constants/pricing.js';
 
 const IS_WINDOWS = process.platform === 'win32';
 const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', warn: IS_WINDOWS ? '[!]' : '⚠' };
@@ -76,8 +77,8 @@ async function runAuditOpenPaywall() {
     chalk.white('in roughly 30 to 60 seconds at roughly $0.02 to $0.04 per audit') + '\n' +
     chalk.white('in API charges, on top of your subscription.') + '\n\n' +
     chalk.cyan.bold('Available on:') + '\n' +
-    chalk.white('  •  Ghost Pro  ($99/mo)   full audit, one engagement at a time') + '\n' +
-    chalk.white('  •  Ghost Team ($399/mo)  full audit + audit-over-time') + '\n' +
+    chalk.white('  •  Ghost Pro  ($' + PRICING.PRO.monthly + '/mo)   full audit, one engagement at a time') + '\n' +
+    chalk.white('  •  Ghost Team ($' + PRICING.TEAM.monthly + '/mo)  full audit + audit-over-time') + '\n' +
     chalk.gray( '                          comparison for modernization') + '\n' +
     chalk.gray( '                          engagements') + '\n' +
     chalk.white('  •  Ghost Enterprise      custom branding + multi-engagement') + '\n' +

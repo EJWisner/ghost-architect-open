@@ -5,6 +5,17 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.13 -- July 9, 2026
+
+### Patch: Scan Quality and Audit Pricing
+
+**Loader**
+- assets/ directory added to the default scan excludes alongside node_modules, vendor, build artifacts, and lock files. Any code kept under assets/ is now skipped by default; pass --no-default-excludes to include it.
+- Common binary asset extensions (.png, .jpg, .gif, .svg, .woff, .ttf, .eot, .ico, .mp4, .mp3, .pdf, and related image, font, audio, video, and archive types) are now excluded by an explicit denylist enforced ahead of the code allowlist. These were already skipped by the code-extension allowlist; the explicit denylist documents the intent and keeps them out even if a binary type is ever added to the allowlist.
+
+**Inheritance Audit**
+- Audit paywall pricing corrected. The Open-tier Audit upsell listed Ghost Pro at $99/mo when Pro is $25/mo. Prices now read from the canonical pricing constants in src/constants/pricing.js so a price change lands in one place and cannot drift across surfaces.
+
 ## v10.0.12 -- July 9, 2026
 
 ### Patch: Session Recovery, Publish Reliability, License Copy, and Email Polish

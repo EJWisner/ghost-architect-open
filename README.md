@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.13
+- Patch: assets/ directory and common binary asset extensions (.png, .jpg, .gif, .svg, .woff, .ttf, .eot, .ico, .mp4, .mp3, .pdf) excluded from scans, audit paywall pricing corrected to read from the canonical pricing constants (Pro was shown at $99/mo instead of $25/mo).
+
 ### v10.0.12
 - Patch: license detection copy corrected, fallback session path now read on resume, repo name derivation warns on fallback, concurrent index.json writes use optimistic locking, clock state validated on read, GitHub PAT env var priority added, em dashes removed from emails, narrator patcher timeout now visible.
 

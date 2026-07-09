@@ -121,6 +121,11 @@ const IGNORED_DIRS = [
   'coverage', '.nyc_output',
   // Misc cache
   '.cache',
+  // Static / binary asset bundles (images, fonts, compiled front-end output).
+  // Commonly vendored or compiled and rarely carry reviewable source signal.
+  // Any real code kept under assets/ is skipped too; pass --no-default-excludes
+  // to include it.
+  'assets',
 ];
 const IGNORED_FILES = [
   // JS/TS lock files
@@ -149,12 +154,26 @@ const GIT_HOOKS = new Set([
   'post-rewrite', 'sendemail-validate',
 ]);
 
+// Binary / non-source asset extensions (images, fonts, audio, video, compiled
+// documents, archives). These never carry reviewable source signal and only
+// inflate token counts, so they are excluded explicitly. This denylist is
+// enforced ahead of the code allowlist, so a binary type stays excluded even if
+// it is ever added to CODE_EXTENSIONS.
+const IGNORED_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp',
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.mp4', '.mov', '.webm', '.mp3', '.wav', '.ogg',
+  '.pdf', '.zip', '.gz', '.tar',
+]);
+
 // A file is scanned if its extension is a known code type OR its basename is a
-// known Git hook (extensionless). Shared by all three loader paths (directory,
-// ZIP, GitHub). path.basename handles the forward-slash paths used by ZIP
-// entryName and GitHub tree paths on every platform.
+// known Git hook (extensionless), and never when its extension is a known
+// binary asset type. Shared by all three loader paths (directory, ZIP, GitHub).
+// path.basename handles the forward-slash paths used by ZIP entryName and GitHub
+// tree paths on every platform.
 export function isScannablePath(filePath) {
   const ext = path.extname(filePath).toLowerCase();
+  if (IGNORED_EXTENSIONS.has(ext)) return false;
   if (CODE_EXTENSIONS.includes(ext)) return true;
   return GIT_HOOKS.has(path.basename(filePath));
 }
