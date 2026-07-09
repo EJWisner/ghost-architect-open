@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.15
+- Patch: chat and question mode system prompt rewritten to calibrate response depth to question complexity.
+
 ### v10.0.14
 - Patch: em dashes and bare branding swept from reports, false-positives phrasing removed, assets/ in npm tarball, verifier now keeps source-confirmed findings, AWS redactor SHA fix, Windows menu descriptions restored, clock-skew license panel fixed, Max-plan copy corrected, and ten additional polish fixes.
 

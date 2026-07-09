@@ -5,6 +5,17 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.15 -- July 9, 2026
+
+### Patch: Chat Response Calibration
+
+**Chat / Question Mode**
+- System prompt rewritten to scale response length and depth to the question asked. Simple factual questions now get one direct sentence. Analysis questions get full senior-architect treatment. Previously every question received the same verbose checklist treatment regardless of complexity.
+- Meta questions about Ghost itself (version, tier, mode) now resolve in one line from the identity header without touching the codebase context.
+- Unsolicited codebase overviews and summaries suppressed. Ghost now answers the question asked rather than volunteering a full project tour on first input.
+- Opening framing changed from analyze this project to answer questions on demand, one at a time. Removes the structural pull toward comprehensive dumps.
+- Em dashes removed from system prompt.
+
 ## v10.0.14 -- July 9, 2026
 
 ### Patch: Report Polish, Verifier Trust, and Copy Accuracy
