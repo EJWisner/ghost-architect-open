@@ -178,7 +178,13 @@ Use your verification budget efficiently — you have a limited number of steps 
   if (result.findings.length > 0) {
     // Agent flagged a finding — it's confirmed or possible
     const finding = result.findings[0];
-    confidence    = finding.confidence || 75;
+    // Number.isFinite, not `||`. Two distinct reasons:
+    //   1. flagFinding now records confidence: null when the model omitted it.
+    //      Unstated confidence must fall to 75 and land in POSSIBLE, never be
+    //      promoted to CONFIRMED by a tool-layer default of 90.
+    //   2. `||` also swallowed a legitimate confidence of 0, silently rewriting
+    //      the model's least-confident possible answer as 75.
+    confidence    = Number.isFinite(finding.confidence) ? finding.confidence : 75;
     evidence      = finding.detail || '';
     verdict       = confidence >= 80 ? Verdict.CONFIRMED : Verdict.POSSIBLE;
   } else {

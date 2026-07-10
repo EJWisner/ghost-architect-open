@@ -459,6 +459,17 @@ export async function runAuditSynthesis(analyzerOutputs, options = {}) {
       messages: [{ role: 'user', content: userMessage }],
     });
 
+    // Record REAL usage for the Modernization Roadmap call. This is the ONLY
+    // billed API call in the entire Inheritance Audit (the other three analyzers
+    // run locally), and it was never recorded. The usage tracker therefore saw
+    // zero calls, which is why audit/index.js imported showActualCost and could
+    // never meaningfully call it. Best-effort: never break synthesis over usage.
+    try {
+      if (response?.usage) {
+        recordUsage(response.usage.input_tokens ?? 0, response.usage.output_tokens ?? 0);
+      }
+    } catch { /* usage capture is bookkeeping, not the deliverable */ }
+
     // The Anthropic SDK returns content as an array of blocks. We want
     // the concatenated text from any text blocks.
     for (const block of response.content || []) {

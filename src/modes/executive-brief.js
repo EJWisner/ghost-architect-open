@@ -13,7 +13,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
-import { resolveApiKey } from '../config.js';
+import { resolveApiKey, getConfig } from '../config.js';
 
 // ── Health score ─────────────────────────────────────────────────────────────
 // Start at 100, deduct per severity with per-band caps, floor at 5.
@@ -76,7 +76,14 @@ function oneSentenceDetail(finding) {
 }
 
 // ── Structured data object ───────────────────────────────────────────────────
-export function buildBriefData(findings) {
+//
+// seniorRate falls back to 200 only when the caller passes nothing. The rate is
+// a configured value (rateSenior, set in the setup wizard and read by
+// analyst/index.js and core/multipass.js). estimatedManualCost used to multiply
+// by a hardcoded 200, so a consultant who set their senior rate to 250 got an
+// Executive Brief quoting $200/hr while every other Ghost deliverable from the
+// same scan quoted $250/hr. Two different numbers in front of the same buyer.
+export function buildBriefData(findings, seniorRate = 200) {
   const list = Array.isArray(findings) ? findings : [];
   const bySev = { critical: [], high: [], medium: [], low: [] };
   for (const f of list) bySev[normSeverity(f.severity)].push(f);
@@ -97,7 +104,7 @@ export function buildBriefData(findings) {
     })),
     topHigh: bySev.high.slice(0, 3).map(f => String(f.title || 'Untitled high finding')),
     totalEffortHours: Math.round(totalEffortHours * 10) / 10,
-    estimatedManualCost: Math.round(totalEffortHours * 200),
+    estimatedManualCost: Math.round(totalEffortHours * seniorRate),
     estimatedAiCost: Math.round(totalEffortHours * 0.15 * 100) / 100,
     estimatedAiHours: Math.max(1, Math.ceil(totalEffortHours * 0.10)),
     blastProfile,
@@ -349,7 +356,11 @@ function renderPdf(payload) {
 // ── Entry point ──────────────────────────────────────────────────────────────
 export async function runExecutiveBriefMode({ findings, tier, scanFile, codebaseRoot, anthropicClient, branding }) {
   const findingsList = Array.isArray(findings) ? findings : [];
-  const data = buildBriefData(findingsList);
+  // Read the configured senior rate rather than letting buildBriefData fall back
+  // to its 200 default, so the brief quotes the same hourly rate as every other
+  // Ghost deliverable. Same resolution as analyst/index.js's rates().
+  const seniorRate = getConfig().get('rateSenior') || 200;
+  const data = buildBriefData(findingsList, seniorRate);
   const healthScore = computeHealthScore(data);
   const label = healthLabel(healthScore);
 

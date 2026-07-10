@@ -101,7 +101,9 @@ export function parseKey(input) {
   }
   // Normalize: uppercase, strip whitespace.
   const normalized = input.trim().toUpperCase().replace(/\s+/g, '');
-  // Allow keys with or without hyphens for paste tolerance.
+  // Whitespace is stripped for paste tolerance; the canonical form is 6
+  // hyphen-separated segments (GA-YEAR-TIER-XXXX-XXXX-XXXX) and all 6 are
+  // required. A hyphen-less key is not accepted.
   const parts = normalized.split('-');
   if (parts.length !== 6) {
     throw new Error(`License key must have 6 hyphen-separated segments, got ${parts.length}`);

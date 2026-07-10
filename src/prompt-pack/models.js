@@ -33,6 +33,9 @@
 // @ghost-verified: hyphenated model IDs (e.g. claude-opus-4-7) are correct -- Anthropic's API accepts these IDs; the format matches what estimator.js PRICING table and llmAuditClient.js MODEL_RATES use
 const MODELS = [
   // Claude family
+  { id: 'claude-fable-5',        family: 'anthropic', displayName: 'Claude Fable 5',        contextWindow: 200000, tokenizerStrategy: 'heuristic' },
+  { id: 'claude-opus-4-8',       family: 'anthropic', displayName: 'Claude Opus 4.8',       contextWindow: 200000, tokenizerStrategy: 'heuristic' },
+  { id: 'claude-sonnet-5',       family: 'anthropic', displayName: 'Claude Sonnet 5',       contextWindow: 200000, tokenizerStrategy: 'heuristic' },
   { id: 'claude-opus-4-7',       family: 'anthropic', displayName: 'Claude Opus 4.7',       contextWindow: 200000, tokenizerStrategy: 'heuristic' },
   { id: 'claude-opus-4-6',       family: 'anthropic', displayName: 'Claude Opus 4.6',       contextWindow: 200000, tokenizerStrategy: 'heuristic' },
   { id: 'claude-sonnet-4-6',     family: 'anthropic', displayName: 'Claude Sonnet 4.6',     contextWindow: 200000, tokenizerStrategy: 'heuristic' },
@@ -77,6 +80,17 @@ const MODELS = [
   },
 ];
 
+// tier2Supported is derived from family. Tier 2 deep-analysis detectors call
+// the Anthropic Messages API through llmAuditClient.js (client.messages.create),
+// so only Claude-family model IDs can run Tier 2. Selecting any non-Anthropic
+// model means those detectors would fail not-found and fail open with zero
+// findings, so the mode file must skip Tier 2 and tell the user only Tier 1
+// static checks will run. Everything non-anthropic (including the test family)
+// is Tier 1 only.
+for (const m of MODELS) {
+  m.tier2Supported = m.family === 'anthropic';
+}
+
 // Indexed lookup. Built once at module load.
 const MODEL_INDEX = new Map();
 for (const m of MODELS) MODEL_INDEX.set(m.id, m);
@@ -111,10 +125,20 @@ export function listModels() {
  * Like listModels() but excludes test-only entries. Use this in any
  * end-user-facing UX (CLI inquirer choices, web pickers, docs).
  *
+ * Non-Claude entries cannot run Tier 2 deep analysis (see tier2Supported).
+ * To keep the picker honest, their displayName is annotated with
+ * "(Tier 1 only)" so a user choosing GPT-5, Gemini, Llama, etc. knows up
+ * front that only static checks will run against that target. Returns fresh
+ * copies so the registry itself is never mutated.
+ *
  * @returns {Array<object>}
  */
 export function listModelsForPicker() {
-  return MODELS.filter(m => !m.testOnly);
+  return MODELS
+    .filter(m => !m.testOnly)
+    .map(m => (m.tier2Supported
+      ? { ...m }
+      : { ...m, displayName: m.displayName + ' (Tier 1 only)' }));
 }
 
 /**

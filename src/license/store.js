@@ -65,6 +65,31 @@ export function getFingerprintAtActivation() {
   return r && Array.isArray(r.fingerprint_at_activation) ? r.fingerprint_at_activation : null;
 }
 
+// ── Revocation cache ───────────────────────────────────────────────────────
+//
+// Shape: revocation: { license_id, status, checked_at }
+//
+// Lives inside the `license` record so that saveActivation() (which rewrites
+// the whole record) drops it. That is deliberate: re-activating with a fresh
+// key must not inherit the old key's revoked verdict.
+export function getRevocationCache() {
+  const r = read();
+  return r && r.revocation && typeof r.revocation === 'object' ? r.revocation : null;
+}
+
+export function saveRevocationCache({ licenseId, status }) {
+  const r = read();
+  if (!r) return;   // no license installed; nothing to attach the cache to
+  write({
+    ...r,
+    revocation: {
+      license_id: licenseId,
+      status,
+      checked_at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+    },
+  });
+}
+
 // Persist a freshly activated license. Used by `ghost activate`.
 export function saveActivation({ token, fingerprintHashes }) {
   const nowIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');

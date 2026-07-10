@@ -24,7 +24,13 @@ const MARKER = '@ghost-verified';
 // above, the PR-comment template text in watcher-commit.js, etc.) from falsely
 // verifying a file. indexOf/endsWith only — ReDoS-immune. Supports the common
 // single-line and block comment openers across languages.
-const COMMENT_PREFIXES = ['// ', '# ', '-- ', '/* '];
+//
+// These are the bare openers (no trailing space). The matcher tolerates any
+// run of spaces/tabs — or none at all — between the opener and the marker, so
+// "// @ghost-verified", "//@ghost-verified", "//   @ghost-verified" and
+// "//\t@ghost-verified" all anchor identically. (The previous implementation
+// hardcoded a single trailing space and silently missed every other spacing.)
+const COMMENT_OPENERS = ['//', '#', '--', '/*'];
 
 // File-extension allowlist: only source code files are eligible for the
 // @ghost-verified annotation. Documentation files (.md, .json, .yaml, etc.)
@@ -69,19 +75,34 @@ export function scanForVerified(filePath, fileMap) {
   // one line and in a real comment on another. Only a comment-context hit
   // verifies; the first such hit wins (and supplies the reason).
   let searchFrom = 0;
+  let nearMiss = false;
   while (true) {
     const markerIdx = content.indexOf(MARKER, searchFrom);
     if (markerIdx === -1) break;
     searchFrom = markerIdx + MARKER.length;
 
-    // Text from the start of the marker's line up to the marker. If, after
-    // trimming leading whitespace, it ENDS WITH a comment opener, the marker is
-    // in comment context — either on its own comment line or trailing after
-    // code (e.g. `foo();` then a comment). A code string that merely contains
-    // the marker ends with a quote, not a comment opener, so it is skipped.
+    // Text from the start of the marker's line up to the marker. Strip leading
+    // indentation AND any trailing whitespace between the comment opener and
+    // the marker; if what remains ENDS WITH a comment opener, the marker is in
+    // comment context — either on its own comment line or trailing after code
+    // (e.g. `foo();` then a comment). Collapsing the trailing whitespace is the
+    // fix for near-miss spacing: zero, one, or several spaces/tabs all anchor.
     const lineStart = content.lastIndexOf('\n', markerIdx - 1) + 1;
-    const before = content.slice(lineStart, markerIdx).trimStart();
-    if (!COMMENT_PREFIXES.some((prefix) => before.endsWith(prefix))) {
+    const before = content.slice(lineStart, markerIdx).replace(/[ \t]+$/, '').trimStart();
+    if (!COMMENT_OPENERS.some((opener) => before.endsWith(opener))) {
+      // Not comment-anchored, so this occurrence does nothing. Distinguish a
+      // genuine near-miss (a marker a developer meant as an annotation but
+      // placed where it is silently ignored) from a legitimate mention:
+      //   - inside a string literal (prev char is a quote): intentional, e.g.
+      //     the MARKER constant or PR-template text — stay silent.
+      //   - already inside a comment earlier on the line (doc/example text):
+      //     not a live annotation — stay silent.
+      // Anything else (a bare marker with no comment opener and no quote) is a
+      // near-miss worth surfacing so it is not lost without a trace.
+      const prevChar = content[markerIdx - 1];
+      const inStringLiteral = prevChar === '"' || prevChar === "'" || prevChar === '`';
+      const commentEarlierOnLine = COMMENT_OPENERS.some((opener) => before.includes(opener));
+      if (!inStringLiteral && !commentEarlierOnLine) nearMiss = true;
       continue;
     }
 
@@ -99,6 +120,15 @@ export function scanForVerified(filePath, fileMap) {
     }
 
     return { verified: true, reason };
+  }
+
+  // The marker appeared but never anchored to a comment. Surface it once so a
+  // misplaced annotation is visible instead of silently doing nothing.
+  if (nearMiss) {
+    console.warn(
+      `[ghost-verified] "${MARKER}" found in ${filePath} but not anchored to a comment opener ` +
+      `(${COMMENT_OPENERS.join(' ')}); annotation ignored. Put it right after a comment marker, e.g. "// ${MARKER}".`
+    );
   }
 
   return { verified: false, reason: null };

@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import { generatePDF } from './pdf-generator.js';
 import { getBranding } from './profile/index.js';
-import { isTrialActive, getActiveLicense } from './license/session.js';
+import { isTrialActive, getActiveLicense, getActiveTier } from './license/session.js';
 import { isPortalConfigured, publishToPortal, buildFindingsSidecar } from './core/portal-publish.js';
 import { isTeamConfigured } from './config.js';
 import { pushReport } from './core/team-sync.js';
@@ -16,6 +16,7 @@ import { incrementScanCount } from './freemium.js';
 import { formatTransportFooter } from './lib/transport-meta.js';
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
+import { SYM } from './cli/symbols.js';
 const { version: GHOST_VERSION } = _require('../package.json');
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,7 +27,7 @@ const REPORTS_DIR = path.join(os.homedir(), 'Ghost Architect Reports');
 export function ensureReportsDir() {
   if (!fs.existsSync(REPORTS_DIR)) {
     fs.mkdirSync(REPORTS_DIR, { recursive: true });
-    console.log(chalk.gray(`  ✓ Created reports folder: ~/Ghost Architect Reports\n`));
+    console.log(chalk.gray(`  ${SYM.check} Created reports folder: ~/Ghost Architect Reports\n`));
   }
   return REPORTS_DIR;
 }
@@ -187,13 +188,22 @@ export async function saveReport(content, prefix, label, meta = {}) {
         title:       f.title,
         severity:    f.severity,
         files:       Array.isArray(f.files) ? f.files : [],
-        effortHours: typeof f.effortHours === 'number' ? f.effortHours : 0,
+        // null, not 0, when there is no estimate. A finding the narrator never
+        // detailed was never given an effort estimate, and "0 hours" reads as
+        // "free to fix" rather than "not estimated".
+        effortHours: typeof f.effortHours === 'number' ? f.effortHours : null,
         // Confidence is an integer 0-100. findingsFromResults was corrected
         // from 0..1 float to 0-100 integer in v9.4.14 — the float-detection
         // branch is no longer needed.
         confidence:  typeof f.confidence === 'number' ? f.confidence : 85,
         detail:      typeof f.detail === 'string' ? f.detail : '',
         fix_direction: f.fix_direction || null,
+        // true  = written up in the report body.
+        // false = surfaced and verified, but ranked below the narrator's prose
+        //         cap, so it exists only here. Consumers rendering "the report"
+        //         should show these as a supplementary list.
+        // Absent for modes that never cap, where every finding is detailed.
+        ...(typeof f.detailed === 'boolean' ? { detailed: f.detailed } : {}),
       }));
       const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
       for (const f of findings) {
@@ -268,7 +278,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     }
     if (syncFailed) {
       console.log(chalk.yellow(
-        `  ⚠  Team sync did not complete (timed out after ${SYNC_TIMEOUT_S}s or the push failed).\n` +
+        `  ${SYM.warn}  Team sync did not complete (timed out after ${SYNC_TIMEOUT_S}s or the push failed).\n` +
         `     Your report is saved locally, but other seats won't see this scan yet.\n` +
         `     Re-run the scan or check your GitHub token. Details logged to\n` +
         `     ~/Ghost Architect Reports/.debug/integration-failures.log\n`
@@ -341,7 +351,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     }
     if (mobileFailed) {
       console.log(chalk.yellow(
-        `  ⚠  Mobile publish did not complete (timed out after ${PUBLISH_TIMEOUT_S}s or the push failed).\n` +
+        `  ${SYM.warn}  Mobile publish did not complete (timed out after ${PUBLISH_TIMEOUT_S}s or the push failed).\n` +
         `     Your report is saved locally, but this scan won't appear in Ghost Mobile yet.\n` +
         `     Re-run the scan or check your GitHub token. Details logged to\n` +
         `     ~/Ghost Architect Reports/.debug/integration-failures.log\n`
@@ -391,7 +401,7 @@ export async function saveReport(content, prefix, label, meta = {}) {
     }
     if (portalFailed) {
       console.log(chalk.yellow(
-        `  ⚠  Portal publish did not complete (timed out after ${PORTAL_TIMEOUT_S}s or the push failed).\n` +
+        `  ${SYM.warn}  Portal publish did not complete (timed out after ${PORTAL_TIMEOUT_S}s or the push failed).\n` +
         `     Your report is saved locally, but this scan won't appear on the portal yet.\n` +
         `     Re-run the scan or check your GitHub token. Details logged to\n` +
         `     ~/Ghost Architect Reports/.debug/integration-failures.log\n`
@@ -399,16 +409,25 @@ export async function saveReport(content, prefix, label, meta = {}) {
     }
   }
 
-  // ── Freemium scan counter (Open tier) ─────────────────────────────
+  // ── Freemium scan counter (Open tier ONLY) ────────────────────────
   // Stays here in Stage 2 of v7 unification. Stage 3 deletes the freemium
   // module entirely and replaces this call with the requireTier('open')
   // flow that handles counting internally (or eliminates the count
-  // mechanism — decision deferred to Stage 3). Current behavior preserved
-  // for Open users running v7 without an activated license.
-  try {
-    incrementScanCount(prefix);
-  } catch {
-    // Freemium counter is non-essential; never block the save on it.
+  // mechanism — decision deferred to Stage 3).
+  //
+  // The tier check is load-bearing, not a micro-optimization. This counter
+  // used to bump on EVERY save regardless of tier, so trial and paid scans
+  // drained the Open quota that only Open tier ever reads. A 7-day Pro Max
+  // trial burning four scans left the user at the Open wall the instant the
+  // trial lapsed — a paywall at the exact moment we are asking for the sale,
+  // for scans they never spent free quota on. Only count what Open spends.
+  const activeTier = getActiveTier() || 'open';
+  if (activeTier === 'open') {
+    try {
+      incrementScanCount(prefix);
+    } catch {
+      // Freemium counter is non-essential; never block the save on it.
+    }
   }
 
   return {

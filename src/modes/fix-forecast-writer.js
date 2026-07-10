@@ -37,6 +37,7 @@ import {
   renderFixForecastPaywall,
 } from '../freemium.js';
 import { requireTier } from '../license/tier-gates.js';
+import { SYM } from '../cli/symbols.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ function buildFixArtifact(finding, generateResult, generatedAt) {
       '',
     );
     if (notes) {
-      lines.push(`⚠  ${notes}`, '');
+      lines.push(`${SYM.warn}  ${notes}`, '');
     }
     if (diffText) {
       lines.push(diffText);
@@ -211,7 +212,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
 
   if (!baselineKey) {
     console.log(chalk.yellow(
-      `  ⚠  Target file not found in scanned codebase: ${targetFile}\n` +
+      `  ${SYM.warn}  Target file not found in scanned codebase: ${targetFile}\n` +
       `     Fix artifact skipped.`
     ));
     return null;
@@ -242,17 +243,17 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
   try {
     const content = buildFixArtifact(selectedFinding, generateResult, generatedAt);
     fs.writeFileSync(fixPath, content, 'utf8');
-    console.log(chalk.green(`  ✓ Fix suggestion written:`));
+    console.log(chalk.green(`  ${SYM.check} Fix suggestion written:`));
     console.log(chalk.gray(`    📄 ~/Ghost Architect Reports/${fixFilename}`));
   } catch (err) {
-    console.log(chalk.yellow(`  ⚠  Failed to write fix artifact: ${err.message}`));
+    console.log(chalk.yellow(`  ${SYM.warn}  Failed to write fix artifact: ${err.message}`));
     return null;
   }
 
   // ── Step 4: Failed-confidence → skip forecast ──────────────────────────────
   if (generateResult.confidence === 'failed') {
     console.log(chalk.yellow(
-      `  ⚠  Forecast skipped — Ghost could not generate a corrected file\n` +
+      `  ${SYM.warn}  Forecast skipped — Ghost could not generate a corrected file\n` +
       `     with sufficient confidence. See fix artifact for manual guidance.`
     ));
     return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
@@ -285,7 +286,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       ));
     } catch (err) {
       forecastSpinner.stop();
-      console.log(chalk.yellow(`  ⚠  Forecast overlay failed: ${err.message}`));
+      console.log(chalk.yellow(`  ${SYM.warn}  Forecast overlay failed: ${err.message}`));
       console.log(chalk.gray(`     Fix artifact was written: ~/Ghost Architect Reports/${fixFilename}`));
       return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
@@ -294,7 +295,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
     if (!hasChanges) {
       forecastSpinner.stop();
       console.log(chalk.yellow(
-        `  ⚠  Forecast skipped — corrected file matches baseline (no effective change detected).`
+        `  ${SYM.warn}  Forecast skipped — corrected file matches baseline (no effective change detected).`
       ));
       return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
@@ -328,7 +329,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       }
     } catch (err) {
       forecastSpinner.stop();
-      console.log(chalk.yellow(`  ⚠  Conflict scan failed: ${err.message}`));
+      console.log(chalk.yellow(`  ${SYM.warn}  Conflict scan failed: ${err.message}`));
       console.log(chalk.gray(`     Fix artifact was written: ~/Ghost Architect Reports/${fixFilename}`));
       return { fixArtifactPath: fixPath, forecastArtifactPaths: null, conflictBuffer: null, findingTitle: title, findingSeverity: severity };
     }
@@ -359,13 +360,13 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
     try {
       const saved = await saveReport(conflictBuffer, 'ghost-forecast', slug, forecastMeta);
       forecastArtifactPaths = saved;
-      console.log(chalk.green(`  ✓ Forecast written:`));
+      console.log(chalk.green(`  ${SYM.check} Forecast written:`));
       console.log(chalk.gray(`    📄 ~/Ghost Architect Reports/${path.basename(saved.txtFile)}`));
       console.log(chalk.gray(`    📋 ~/Ghost Architect Reports/${path.basename(saved.mdFile)}`));
       if (saved.pdfFile) console.log(chalk.gray(`    📑 ~/Ghost Architect Reports/${path.basename(saved.pdfFile)}`));
       if (saved.findingsFile) console.log(chalk.gray(`    🗂  ~/Ghost Architect Reports/${path.basename(saved.findingsFile)}`));
     } catch (err) {
-      console.log(chalk.yellow(`  ⚠  Failed to save forecast artifacts: ${err.message}`));
+      console.log(chalk.yellow(`  ${SYM.warn}  Failed to save forecast artifacts: ${err.message}`));
     }
 
   } finally {

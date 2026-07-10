@@ -82,9 +82,61 @@ function severityEmoji(s) {
     case 'CRITICAL': return '🔴';
     case 'HIGH':     return '🟠';
     case 'MEDIUM':   return '🟡';
-    case 'LOW':      return '🔵';
+    case 'LOW':      return '🟢';
     default:         return '⚪';
   }
+}
+
+// 2.15: the loader filters files that carry a prompt extension but match its
+// basename allowlist (README, LICENSE, CLAUDE, ...) or config-manifest patterns
+// (package.json, *_PLAN.md, ...). That filtering is silent: a legitimately
+// named prompt can be dropped with no trace. We do not own the loader, so
+// rather than widen its heuristic we independently discover how many files
+// with a prompt extension were present but not analyzed, and let the mode
+// report the count and a bounded sample so a false exclusion is visible and
+// the user can rename the file. This is a reporting-only pass; it never loads
+// or analyzes anything the loader chose to skip.
+const PROMPT_CANDIDATE_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.yaml', '.yml', '.json']);
+const CANDIDATE_IGNORED_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '__pycache__', 'venv', '.venv',
+]);
+
+function findUnanalyzedCandidates(root, analyzedPathSet, sampleCap = 8) {
+  const names = [];
+  let count = 0;
+  let truncated = false;
+  const MAX_WALK = 5000; // bounded so a huge tree can't stall the report pass
+  let seen = 0;
+
+  function walk(dir) {
+    if (seen >= MAX_WALK) { truncated = true; return; }
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (seen >= MAX_WALK) { truncated = true; return; }
+      seen++;
+      if (entry.isDirectory()) {
+        if (CANDIDATE_IGNORED_DIRS.has(entry.name)) continue;
+        if (entry.name.startsWith('.')) continue;
+        walk(path.join(dir, entry.name));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!PROMPT_CANDIDATE_EXTENSIONS.has(ext)) continue;
+      const full = path.join(dir, entry.name);
+      if (analyzedPathSet.has(full)) continue; // this file was loaded and scanned
+      count++;
+      if (names.length < sampleCap) names.push(entry.name);
+    }
+  }
+
+  walk(root);
+  return { count, names, truncated };
 }
 
 /**
@@ -102,6 +154,16 @@ export async function runPromptTriageMode(options = {}) {
   const reportsDir = options.reportsDir || defaultReportsDir();
   const targetModel = options.targetModel || null;
   const targetModelEntry = targetModel ? getModel(targetModel) : null;
+  // Tier 2 deep-analysis detectors send the prompt to the Anthropic Messages
+  // API (see src/prompt-pack/llmAuditClient.js), so they can only run against a
+  // Claude-family target model. If the user picked a known non-Claude model
+  // (GPT-5, Gemini, Llama, etc.), Tier 2 would fail not-found and fail open
+  // with zero findings and no explanation. Detect that here so we can skip
+  // Tier 2/3 entirely and tell the user honestly, instead of silently
+  // returning an incomplete audit. Tier 1 static checks still run: they use
+  // correct per-model tokenizers (exact tiktoken for OpenAI, heuristic
+  // elsewhere) and never call the Anthropic API for prompt judgment.
+  const tier2Disabled = !!(targetModelEntry && targetModelEntry.tier2Supported === false);
   // Feature gating. Project Intelligence is Pro+ only. We default to 'open'
   // (fail-closed) so any caller that forgets to pass tier does not leak the
   // paid feature. The bin/ghost.js for each branch is the source of truth.
@@ -120,6 +182,14 @@ export async function runPromptTriageMode(options = {}) {
     console.log(chalk.yellow('⚠  Unknown target model "' + targetModel + '"; using heuristic token counts.'));
   } else {
     console.log(chalk.gray('Target model: (none specified, using heuristic token counts)'));
+  }
+  if (tier2Disabled) {
+    console.log('');
+    console.log(chalk.yellow('Note: Deep analysis (Tier 2) requires a Claude family target model.'));
+    console.log(chalk.yellow('  ' + targetModelEntry.displayName + ' is not a Claude model, so only Tier 1 '
+      + 'static checks will run against it.'));
+    console.log(chalk.gray('  Re-run with a Claude target model (for example Claude Sonnet 4.6) to get '
+      + 'Tier 2 deep-analysis findings.'));
   }
   console.log('');
 
@@ -146,6 +216,32 @@ export async function runPromptTriageMode(options = {}) {
     + (loaded.stats.skipped > 0
         ? ' (' + loaded.stats.skipped + ' skipped: too large or unreadable)'
         : '')));
+  // 2.15: report files with a prompt extension that were present but NOT
+  // analyzed, so the loader's silent basename/config filtering is visible. The
+  // dominant reason a prompt-shaped file is dropped is the loader's docs/config
+  // allowlist (README, LICENSE, CLAUDE, package.json, *_PLAN.md, ...); size and
+  // read failures are already reported on the line above. We only run this for
+  // localFolder sources, where we can re-scan the tree cheaply.
+  if (source.kind === 'localFolder' && source.path) {
+    try {
+      const analyzedPathSet = new Set(loaded.files.map(f => f.path));
+      const cand = findUnanalyzedCandidates(path.resolve(source.path), analyzedPathSet);
+      if (cand.count > 0) {
+        const shown = cand.names.join(', ');
+        const more = cand.count > cand.names.length ? ', and more' : '';
+        console.log(chalk.gray('  ' + cand.count + ' file'
+          + (cand.count === 1 ? '' : 's')
+          + ' with a prompt extension '
+          + (cand.count === 1 ? 'was' : 'were')
+          + ' present but not analyzed, filtered as likely docs or config'
+          + (shown ? ' (' + shown + more + ')' : '') + '.'));
+        console.log(chalk.gray('  If one of those is really a prompt, rename it so it '
+          + 'is not treated as a README, license, or config file.'));
+      }
+    } catch {
+      // Reporting-only pass; never let it break the scan.
+    }
+  }
   console.log(chalk.gray('  Running ' + detectors.length + ' detector'
     + (detectors.length === 1 ? '' : 's')
     + ': ' + detectors.map(d => d.id).join(', ')));
@@ -170,7 +266,7 @@ export async function runPromptTriageMode(options = {}) {
   // before any LLM calls fire. Without a target model, only Tier 1
   // detectors run — those use the free Anthropic countTokens endpoint or
   // pure regex, no charges.
-  if (targetModel) {
+  if (targetModel && !tier2Disabled) {
     const tier2Count = detectors.filter(d => d.tier === 2).length;
     const numCalls = tier2Count * loaded.files.length;
     if (numCalls > 0) {
@@ -228,6 +324,11 @@ export async function runPromptTriageMode(options = {}) {
   // ── Scan ────────────────────────────────────────────────────────────────
   const allFindings = [];
   const scannedFilePaths = [];
+  // Files that loaded fine but were dropped by the privacy redactor (throw or
+  // partial redaction without GHOST_ALLOW_PARTIAL). They are NOT analyzed, so
+  // they must not count toward the "prompts scanned" total. Tracked so the
+  // count reflects files actually analyzed and so we can report the gap.
+  let redactionSkipped = 0;
 
   for (let i = 0; i < loaded.files.length; i++) {
     const file = loaded.files[i];
@@ -268,10 +369,17 @@ export async function runPromptTriageMode(options = {}) {
       console.log(chalk.red('  ✗ ' + path.basename(file.path)
         + ' skipped: redaction failed (' + (err && err.message ? err.message : String(err))
         + '); raw content was NOT sent to the API.'));
+      redactionSkipped++;
       continue;
     }
 
-    const findings = await runAll(redactedContent, file.path, { targetModel });
+    // When the target model can't run Tier 2 (non-Claude), skip Tier 2 and
+    // Tier 3 so those detectors don't fire doomed Anthropic API calls that
+    // fail open with zero findings. Tier 1 still runs. See tier2Disabled above.
+    const findings = await runAll(redactedContent, file.path, {
+      targetModel,
+      skipTiers: tier2Disabled ? [2, 3] : [],
+    });
     for (const f of findings) allFindings.push(f);
     scannedFilePaths.push(file.path);
 
@@ -296,10 +404,20 @@ export async function runPromptTriageMode(options = {}) {
 
   // ── Report ──────────────────────────────────────────────────────────────
   console.log('');
+  // Count files ACTUALLY analyzed, not files loaded. Redaction-skipped files
+  // never reached a detector, so counting them here (or in the report) would
+  // overstate coverage. scannedFilePaths holds exactly the analyzed set.
+  const analyzedCount = scannedFilePaths.length;
   console.log(chalk.bold('Total: ' + allFindings.length + ' finding'
     + (allFindings.length === 1 ? '' : 's')
-    + ' across ' + loaded.files.length + ' prompt'
-    + (loaded.files.length === 1 ? '' : 's')));
+    + ' across ' + analyzedCount + ' prompt'
+    + (analyzedCount === 1 ? '' : 's')));
+  if (redactionSkipped > 0) {
+    console.log(chalk.yellow('  ' + redactionSkipped + ' file'
+      + (redactionSkipped === 1 ? ' was' : 's were')
+      + ' skipped before analysis (redaction could not be completed) and '
+      + (redactionSkipped === 1 ? 'is' : 'are') + ' not included in the count above.'));
+  }
 
   const markdown = renderReport({
     findings: allFindings,
@@ -323,7 +441,12 @@ export async function runPromptTriageMode(options = {}) {
     // prefix that saveReport would use. Mirrors D1: prompt-triage counts
     // toward the 4-scan quota alongside POI/Blast/Conflict. Non-fatal on
     // failure — the counter is honor-system, the scan completed.
-    try { incrementScanCount('ghost-prompt-triage'); } catch {}
+    // Guarded on tier: only Open ever reads this counter, so trial and paid
+    // scans must not drain it, or a lapsed trial lands straight on the
+    // Open paywall for quota it never actually spent.
+    if (tier === 'open') {
+      try { incrementScanCount('ghost-prompt-triage'); } catch {}
+    }
   } catch (err) {
     console.log(chalk.red('  ✗ Could not save report: ' + err.message));
   }
@@ -455,6 +578,9 @@ export async function runPromptTriageMode(options = {}) {
   return {
     reportPath,
     totalFindings: allFindings.length,
-    scannedCount: loaded.files.length,
+    // Files actually analyzed, excluding any dropped by the redactor. Reusing
+    // loaded.files.length here would overstate scanned coverage.
+    scannedCount: scannedFilePaths.length,
+    redactionSkipped,
   };
 }

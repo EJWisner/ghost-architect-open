@@ -6,6 +6,8 @@ import { saveReport } from '../reports.js';
 import { isBackKeyword } from '../cli/prompt-helpers.js';
 import { requireTier } from '../license/tier-gates.js';
 import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
+import { calcActualCost } from '../estimator.js';
+import { getConfig } from '../config.js';
 
 const RETRY_DELAYS = [15, 30, 60];
 
@@ -88,6 +90,17 @@ export async function runChatMode(codebaseContext, options = {}) {
   // for all tiers); tier is plumbed through to saveChatLog where the only
   // tier-conditional surface lives (the project-label prompt on /save).
   const tier = options.tier || 'open';
+  // Ghost Partner — consultant profile (null when --profile was not passed).
+  // Threaded into saveChatLog -> saveReport meta so the client-ready PDF
+  // carries the same white-label branding poi/blast/conflict/audit produce.
+  const profile = options.profile || null;
+  // Chat is the most expensive mode per turn (full codebase context is
+  // re-prepended and the whole conversation history is resent every turn), yet
+  // it previously showed no cost. Resolve the model for cost math. The caller
+  // (bin/ghost.js) does not currently pass a model into this mode's options, so
+  // fall back to the same default model the rest of the app uses (see
+  // question.js). Do NOT reach into bin/ghost.js to add one.
+  const model = options.model || getConfig().get('defaultModel') || 'claude-sonnet-4-6';
 
   console.log('\n' + boxen(
     chalk.cyan.bold('💬 CHAT MODE') + '\n\n' +
@@ -101,6 +114,10 @@ export async function runChatMode(codebaseContext, options = {}) {
   const conversationHistory = [];
   const chatLog = [];
   let alreadySaved = false;
+  // Running API spend across this chat session. streamChat() returns the real
+  // token counts per turn; we accumulate and surface them so the cost of a
+  // long conversation is never invisible.
+  let sessionCost = 0;
 
   while (true) {
     const { userInput } = await inquirer.prompt([{
@@ -137,7 +154,7 @@ export async function runChatMode(codebaseContext, options = {}) {
       }
       // saveChatLog returns false if user cancels at the label prompt via
       // 'back' keyword. Only set alreadySaved when the save actually completed.
-      const saved = await saveChatLog(chatLog, tier);
+      const saved = await saveChatLog(chatLog, tier, profile);
       if (saved !== false) alreadySaved = true;
       continue;
     }
@@ -156,6 +173,22 @@ export async function runChatMode(codebaseContext, options = {}) {
       }
       conversationHistory.push({ role: 'assistant', content: response });
       chatLog.push({ q: trimmed, a: response });
+
+      // Per-exchange and running-session cost. Graceful degradation: if the
+      // SDK did not surface usage (null token counts) skip the line silently —
+      // the answer already printed and nothing should break over telemetry.
+      if (result.inputTokens != null && result.outputTokens != null) {
+        const { totalCost } = calcActualCost(result.inputTokens, result.outputTokens, model);
+        sessionCost += totalCost;
+        console.log(
+          chalk.gray('  ─ this exchange: ') +
+          chalk.gray(result.inputTokens.toLocaleString() + ' in / ' + result.outputTokens.toLocaleString() + ' out  ') +
+          chalk.green('$' + totalCost.toFixed(4)) +
+          chalk.gray('  │  session total: ') +
+          chalk.green('$' + sessionCost.toFixed(4)) +
+          '\n'
+        );
+      }
     }
   }
 
@@ -167,11 +200,11 @@ export async function runChatMode(codebaseContext, options = {}) {
       message: chalk.cyan(`Save this conversation (${chatLog.length} exchanges) to ~/Ghost Architect Reports/?`),
       default: true
     }]);
-    if (saveOnExit) await saveChatLog(chatLog, tier);
+    if (saveOnExit) await saveChatLog(chatLog, tier, profile);
   }
 }
 
-async function saveChatLog(chatLog, tier) {
+async function saveChatLog(chatLog, tier, profile = null) {
   // D4 gate: project-tracking is Pro+ only. Drives both the label prompt
   // below AND the saveLabel fallback at the saveReport call site (the
   // 'conversation' synthetic fallback would otherwise re-leak the four
@@ -243,7 +276,9 @@ async function saveChatLog(chatLog, tier) {
   // b38c0cb. The 'conversation' fallback is a UX nicety for paid tiers,
   // not a freshness mechanism that should override D4.
   const saveLabel = projectIntelEnabled ? (label || 'conversation') : null;
-  const saved = await saveReport(content, 'ghost-chat', saveLabel);
+  // Ghost Partner profile drives white-label PDF/MD branding; null falls back
+  // to default Ghost branding in the renderers.
+  const saved = await saveReport(content, 'ghost-chat', saveLabel, { profile });
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)`));

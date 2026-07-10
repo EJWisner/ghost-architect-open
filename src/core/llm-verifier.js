@@ -142,7 +142,14 @@ Respond with a single JSON object: { "verdict": "...", "reason": "..." }`;
       }
     } catch { /* best-effort usage capture */ }
   } catch (err) {
-    return { verdict: 'partial', reason: `LLM verifier call failed: ${err.message}` };
+    // A transport failure (429, 5xx, socket drop) is NOT a judgement about the
+    // finding — the model never saw it. Returning 'partial' here did two bad
+    // things: it spliced the raw API error text into the customer-facing
+    // report, and it left the Pass-1 "does not appear verbatim" warning in
+    // place so the DISPUTED sweep in verifier.js silently deleted a finding
+    // the verifier never actually read. 'error' is a distinct verdict that
+    // verifier.js treats as "unavailable", never as "unsupported".
+    return { verdict: 'error', reason: `LLM verifier unavailable: ${err.message}` };
   }
 
   // Parse the JSON response. The prompt asks for a bare JSON object but LLMs
@@ -156,7 +163,9 @@ Respond with a single JSON object: { "verdict": "...", "reason": "..." }`;
     const verdict = String(parsed.verdict || '').toLowerCase();
     const reason  = String(parsed.reason  || '').trim();
     if (!['supports', 'partial', 'not_supported', 'contradicts'].includes(verdict)) {
-      return { verdict: 'partial', reason: `Verifier returned unknown verdict: ${verdict || '(empty)'}` };
+      // Malformed verdict = no judgement was made. Same reasoning as the
+      // transport-failure path above: 'error', not 'partial'.
+      return { verdict: 'error', reason: `Verifier returned unknown verdict: ${verdict || '(empty)'}` };
     }
     return { verdict, reason };
   } catch {
@@ -167,7 +176,7 @@ Respond with a single JSON object: { "verdict": "...", "reason": "..." }`;
         lower.includes('not supported'))        return { verdict: 'not_supported', reason: trimmed.slice(0, 200) };
     if (lower.includes('partial'))              return { verdict: 'partial',       reason: trimmed.slice(0, 200) };
     if (lower.includes('supports'))             return { verdict: 'supports',      reason: trimmed.slice(0, 200) };
-    return { verdict: 'partial', reason: `Could not parse verifier response: ${trimmed.slice(0, 100)}` };
+    return { verdict: 'error', reason: `Could not parse verifier response: ${trimmed.slice(0, 100)}` };
   }
 }
 

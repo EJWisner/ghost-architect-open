@@ -28,8 +28,11 @@ import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 // 52e2782.
 import { runFixForecast } from './fix-forecast-writer.js';
 
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+import { SYM, IS_WINDOWS } from '../cli/symbols.js';
+import { offerUnsavedReport } from '../cli/unsaved-report.js';
+import { createRequire } from 'module';
+const _conflictRequire = createRequire(import.meta.url);
+const { version: GHOST_VERSION } = _conflictRequire('../../package.json');
 
 export async function runConflictMode(codebaseContext, options = {}) {
   // Ghost Partner — consultant profile (null when --profile was not passed).
@@ -355,7 +358,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
         cost: (result.tracker || tracker).totalCost.toFixed(4),
-        version: '4.1.1',
+        version: GHOST_VERSION,   // was a hardcoded '4.1.1'
         mode: 'conflict-detection',
         verified: result.verified || false,
         verificationStats: result.stats || null,
@@ -387,6 +390,12 @@ export async function runConflictMode(codebaseContext, options = {}) {
       // Delegated to runPostScanFixForecast — single source of truth for
       // the checkbox + cost-gate + H3 re-forecast protection + serial loop.
       await runPostScanFixForecast(parsedFindings, codebaseContext, { tier, profile });
+    } else {
+      // There was no else branch here at all: declining the save prompt printed
+      // nothing and dropped the buffer, silently destroying a report the user
+      // had already been billed for. Offer to print it.
+      // See src/cli/unsaved-report.js.
+      await offerUnsavedReport(buffer, { prefix: 'ghost-conflict' });
     }
 
   } catch (err) {
@@ -561,13 +570,13 @@ export async function runPostScanFixForecast(parsedFindings, codebaseContext, op
 
         try {
           const saved = await saveReport(combinedContent, 'ghost-fix-forecast-combined', null, combinedMeta);
-          console.log(chalk.green(`\n  ✓ Combined report saved:`));
+          console.log(chalk.green(`\n  ${SYM.check} Combined report saved:`));
           console.log(chalk.gray(`    📄 ${saved.txtFile}`));
           console.log(chalk.gray(`    📋 ${saved.mdFile}`));
           if (saved.pdfFile) console.log(chalk.gray(`    📑 ${saved.pdfFile}  ← client-ready PDF`));
           console.log('');
         } catch (err) {
-          console.log(chalk.yellow(`  ⚠  Failed to save combined report: ${err.message}`));
+          console.log(chalk.yellow(`  ${SYM.warn}  Failed to save combined report: ${err.message}`));
         }
       } else {
         console.log(chalk.yellow('\n  No combined report generated — no impact forecasts completed successfully.\n'));
@@ -731,7 +740,7 @@ export async function runSavedFixForecast({ tier, profile, codebaseContext: prov
       return;
     }
 
-    console.log(chalk.green(`\n  ✓ Loaded ${codebaseContext.loadedFiles} files from ${codebasePath.trim()}\n`));
+    console.log(chalk.green(`\n  ${SYM.check} Loaded ${codebaseContext.loadedFiles} files from ${codebasePath.trim()}\n`));
   }
 
   // 9. Run Fix Forecast — checkbox, cost-gate, H3 re-forecast protection, serial execution.

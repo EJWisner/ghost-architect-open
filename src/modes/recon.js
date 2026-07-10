@@ -30,8 +30,7 @@ import { promptProjectLabel } from '../projects.js';
 import { requireTier } from '../license/tier-gates.js';
 import { showFriendlyError } from '../utils/errors.js';
 
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓' };
+import { SYM, IS_WINDOWS } from '../cli/symbols.js';
 
 export async function runReconMode(codebaseContext, options = {}) {
   // Tier policy: recon is intentionally tier-blind. TIER_POLICY in

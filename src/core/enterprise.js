@@ -521,13 +521,40 @@ export async function appendAuditEvent(event, workspace) {
     const octokit = getOctokit(entry);
     const { owner, repo } = parseRepo(entry.repo);
     await mutateOrgFile(octokit, owner, repo, 'org/audit.json',
-      (c) => ({
-        events: [...(c?.events || []), {
+      (c) => {
+        const newEvent = {
           ...event,
           seatId: getSeatId(),
           timestamp: new Date().toISOString(),
-        }].slice(-1000),
-      }),
+        };
+        // The `events` array is capped to the last 1000 entries below, which
+        // means an aggregate computed by iterating it silently understates
+        // lifetime usage once the cap is exceeded. Maintain a monotonic
+        // `totals` accumulator alongside the capped window so billing/
+        // compliance numbers survive truncation. Only 'scan' events contribute,
+        // matching getUsageReport's filter. Coerce cost the same way (some
+        // legacy events wrote it as a "$0.0014" string).
+        const prev = c?.totals || { scans: 0, cost: 0, findings: 0 };
+        const totals = {
+          scans:    prev.scans    || 0,
+          cost:     prev.cost     || 0,
+          findings: prev.findings || 0,
+        };
+        if (newEvent.type === 'scan') {
+          const cost = typeof newEvent.cost === 'number'
+            ? newEvent.cost
+            : (parseFloat(String(newEvent.cost || 0).replace(/[^\d.-]/g, '')) || 0);
+          const findings = typeof newEvent.findingCount === 'number' ? newEvent.findingCount : 0;
+          totals.scans    += 1;
+          totals.cost     += cost;
+          totals.findings += findings;
+        }
+        return {
+          ...c,
+          events: [...(c?.events || []), newEvent].slice(-1000),
+          totals,
+        };
+      },
       'enterprise: audit log');
 
     // Audit event landed — reset the consecutive-failure streak and clear the
@@ -638,7 +665,19 @@ export function getLocalAuditFailureStatus() {
  * Returns { bySeat, byProject, totals }
  */
 export async function getUsageReport(workspace) {
-  const events = await getAuditLog(workspace);
+  // Read the full audit file so we can prefer the persisted monotonic `totals`
+  // (which survive the 1000-event cap) over a sum of the truncated window.
+  let auditData = null;
+  {
+    const entry = resolveSyncEntry(workspace);
+    if (entry) {
+      const octokit = getOctokit(entry);
+      const { owner, repo } = parseRepo(entry.repo);
+      auditData = await getFileParsed(octokit, owner, repo, 'org/audit.json');
+    }
+  }
+  const events = auditData?.events || [];
+  const persistedTotals = auditData?.totals || null;
 
   const bySeat = {};
   const byProject = {};
@@ -694,10 +733,24 @@ export async function getUsageReport(workspace) {
     }
   } catch { /* best-effort */ }
 
+  // Prefer the persisted monotonic totals when present (they include events
+  // aged out of the capped window). Fall back to the window sum for legacy
+  // audit files written before totals were tracked. Per-seat/per-project
+  // rollups are still window-scoped: they are inherently unbounded and were
+  // never persisted, so they remain best-effort over the retained window.
+  const totals = persistedTotals
+    ? {
+        scans:    typeof persistedTotals.scans    === 'number' ? persistedTotals.scans    : totalScans,
+        cost:     typeof persistedTotals.cost     === 'number' ? persistedTotals.cost     : totalCost,
+        findings: typeof persistedTotals.findings === 'number' ? persistedTotals.findings : totalFindings,
+      }
+    : { scans: totalScans, cost: totalCost, findings: totalFindings };
+
   return {
     bySeat,
     byProject,
-    totals: { scans: totalScans, cost: totalCost, findings: totalFindings },
+    totals,
+    ...(persistedTotals ? {} : { totalsScope: 'window' }),
     ...(auditFailures ? { auditFailures } : {}),
     generatedAt: new Date().toISOString(),
   };

@@ -53,8 +53,7 @@ import {
 } from '../freemium.js';
 import { renderForecastDiff } from '../utils/diff-renderer.js';
 
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+import { SYM, IS_WINDOWS } from '../cli/symbols.js';
 
 // ── Tier gate check ───────────────────────────────────────────────────────────
 
@@ -275,7 +274,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
       { baseRoot: baseline }
     ));
   } catch (err) {
-    console.error(chalk.red(`  ✗ Failed to build forecast overlay: ${err.message}`));
+    console.error(chalk.red(`  ${SYM.cross} Failed to build forecast overlay: ${err.message}`));
     process.exit(1);
   }
 
@@ -313,7 +312,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
         console.log(chalk.green(`  ${SYM.check} Blast Radius forecast ready\n`));
         showConflictCost(blastTracker);
       } catch (err) {
-        console.error(chalk.red(`  ✗ Blast failed: ${err.message}`));
+        console.error(chalk.red(`  ${SYM.cross} Blast failed: ${err.message}`));
       }
     } else {
       const blastSpinner = ora({ text: chalk.gray('  Running Blast Radius...'), color: 'cyan' }).start();
@@ -400,6 +399,13 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const tier         = options.tier    || 'open';
   const paywallPromo = options.paywallPromo || '';
 
+  // Quota gate, re-checked on every entry. bin/ghost.js gates at dispatch, but
+  // the "Run another?" tail below re-enters this function directly. Without a
+  // gate here, an Open user who answers "yes" keeps running Forecasts forever:
+  // the dispatch gate is behind them and getForecastCount() is never consulted
+  // again. Gate is read-only (no counter bump), so double-checking is free.
+  if (!checkForecastGate(tier, paywallPromo)) return;
+
   // ── Non-interactive flag path ───────────────────────────────────────────
   // ALL THREE of cfBaseline, cfProposed, cfModes must be present to trigger
   // non-interactive mode. Any missing → fall through to interactive flow.
@@ -411,7 +417,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     const invalid = rawModes.filter(m => !VALID_MODES.includes(m));
     if (invalid.length > 0) {
       console.error(chalk.red(
-        `\n  ✗ Unknown --modes value(s): ${invalid.join(', ')}\n` +
+        `\n  ${SYM.cross} Unknown --modes value(s): ${invalid.join(', ')}\n` +
         `  Valid values: ${VALID_MODES.join(', ')}\n`
       ));
       process.exit(1);

@@ -6,7 +6,7 @@ import gradient from 'gradient-string';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
-import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey, reconcileSudoOwnership, isLinuxRootWithoutSudoUser, getConfig, secureConfigFile } from '../src/config.js';
+import { isConfigured, runSetupWizard, reconfigure, usingEnvKey, getDefaultProfileSlug, setDefaultProfileSlug, resolveApiKey, reconcileSudoOwnership, isLinuxRootWithoutSudoUser, getConfig, secureConfigFile, getModelChoices } from '../src/config.js';
 import { getPublishConfig, setPublishConfig, getPublishToken, clearPendingMarker } from '../src/core/mobile-publish.js';
 import { createOctokit } from '../src/utils/octokit-client.js';
 import { loadCodebase, loadFromPath, setScanOptions } from '../src/loader/index.js';
@@ -31,8 +31,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+import { SYM, IS_WINDOWS } from '../src/cli/symbols.js';
 // Override Inquirer Unicode symbols on Windows
 if (process.platform === 'win32') {
   process.env.FORCE_STDIN_TTY = '1';
@@ -107,6 +106,11 @@ const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 // wrongly included non-Max 'team'/'enterprise'); deriving makes that drift
 // impossible — this list IS the set of tiers the policy allows Ghost Brief.
 const MAX_TIERS = allowedTiers('mode:ghost-brief');
+// Ghost Watcher entitlement, derived from the policy table rather than restated.
+// bin/ghost.js used to carry two independent literal copies of this array (the
+// headless --watcher-commit path and the Enable Watch menu), which is the same
+// duplicated-tier-list drift that shipped an entitlement bug before.
+const WATCH_TIERS_ALLOWED = allowedTiers('mode:watch');
 
 // ── CLI argument parsing ────────────────────────────────────────────────────
 // Supports:
@@ -158,7 +162,7 @@ function parseArgs(argv) {
       const v = argv[++i];
       const n = parseInt(v, 10);
       if (!Number.isFinite(n) || n <= 0) {
-        console.error(chalk.red(`✗ --max-context requires a positive integer (got: ${v})`));
+        console.error(chalk.red(`${SYM.cross} --max-context requires a positive integer (got: ${v})`));
         process.exit(2);
       }
       out.maxContext = n;
@@ -168,7 +172,7 @@ function parseArgs(argv) {
       const v = a.slice('--max-context='.length);
       const n = parseInt(v, 10);
       if (!Number.isFinite(n) || n <= 0) {
-        console.error(chalk.red(`✗ --max-context requires a positive integer (got: ${v})`));
+        console.error(chalk.red(`${SYM.cross} --max-context requires a positive integer (got: ${v})`));
         process.exit(2);
       }
       out.maxContext = n;
@@ -328,6 +332,8 @@ Transport (streaming vs batch):
   --stream                 Run scans live (streaming) and skip the transport menu.
   --batch                  Submit scans to the half-price Message Batches API and
                            skip the transport menu. Retrieve results later.
+                           Supported by Blast Radius and Question only. Other
+                           modes run streaming and print a notice.
   ghost batch-status       List batches you submitted and whether each is ready.
   ghost batch-retrieve <id>
                            Pull a finished batch and produce the same report,
@@ -457,7 +463,7 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
 
 async function selectMode(codebaseContext, tier = 'open') {
   const BRIEF_TIERS = MAX_TIERS;
-  const WATCH_TIERS = ['team', 'team-max', 'enterprise', 'enterprise-max'];
+  const WATCH_TIERS = WATCH_TIERS_ALLOWED;
 
   console.log('\n' + boxen(
     chalk.green.bold(SYM.check + ' Project processed') + '\n' +
@@ -482,19 +488,25 @@ async function selectMode(codebaseContext, tier = 'open') {
     { name: (IS_WINDOWS ? '[CNF] Conflict Detection  ' : '⚡  Conflict Detection  ') + chalk.gray('- Find contract mismatches, schema conflicts, config errors'), value: 'conflict' },
     { name: (IS_WINDOWS ? '[FXF] Fix Forecast        ' : '🩹  Fix Forecast        ') + chalk.gray('- Forecast fix impact from a saved conflict scan'), value: 'fix-forecast' },
     { name: (IS_WINDOWS ? '[FCT] Commit Forecast  ' : '🔮  Commit Forecast  ') + chalk.gray('- Forecast blast + conflict impact before you push'), value: 'commit-forecast' },
+    // Both Brief items stay SELECTABLE below their tier, deliberately. inquirer's
+    // `disabled` made the row unpickable, so the dispatch-level requireTier() gate
+    // never ran and the upgrade paywall never rendered. A locked row the user
+    // cannot even click is a dead end at the exact moment they are interested in
+    // the paid feature. Selecting it now falls through to renderPaywall().
+    // The suffix keeps the tier requirement visible before they click.
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[GBR] Ghost Brief™     - Generate AI remediation prompt pack'
-        : '📋  Ghost Brief™     ' + chalk.gray('- Generate AI remediation prompt pack'),
+        : '📋  Ghost Brief™     ' + chalk.gray('- Generate AI remediation prompt pack'))
+        + (!BRIEF_TIERS.includes(tier) ? chalk.gray('  (Max plan)') : ''),
       value: 'ghost-brief',
-      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max, Team Max, or Enterprise Max)') : false,
     },
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[EXB] Executive Brief  - One-page business intelligence report'
-        : '📊  Executive Brief  ' + chalk.gray('- One-page business intelligence report'),
+        : '📊  Executive Brief  ' + chalk.gray('- One-page business intelligence report'))
+        + (!BRIEF_TIERS.includes(tier) ? chalk.gray('  (Max plan)') : ''),
       value: 'executive-brief',
-      disabled: !BRIEF_TIERS.includes(tier) ? chalk.gray('(Pro Max, Team Max, or Enterprise Max)') : false,
     },
     new inquirer.Separator(IS_WINDOWS ? '── Ghost Watcher ──' : '─── Ghost Watcher™ ─────────────────────────────────'),
     {
@@ -1058,10 +1070,30 @@ function licenseValidityLine(payload) {
   return chalk.white('Active through: ') + date(payload.expires);
 }
 
+// Activation runs from two places with opposite failure contracts:
+//
+//   `ghost --activate <key>`  — a one-shot CLI invocation. A bad key should
+//                               print and exit non-zero. Scripts depend on it.
+//
+//   Reconfigure > License     — a menu sub-flow. A bad key (a typo, a stray
+//                               paste) must return the user to the menu so they
+//                               can try again. It used to call process.exit(2)
+//                               and hard-kill the whole app mid-menu.
+//
+// failActivation() reconciles the two: it throws inside the interactive flow and
+// exits everywhere else. The message is always printed by the caller first.
+class ActivationAborted extends Error {}
+let activationInteractive = false;
+
+function failActivation() {
+  if (activationInteractive) throw new ActivationAborted();
+  process.exit(2);
+}
+
 async function runActivateFlow(input) {
   if (!input || !input.trim()) {
     console.error(chalk.red(`\n${SYM.cross} --activate requires a license key or token. Paste the value from your license email.\n`));
-    process.exit(2);
+    failActivation();
   }
   const cleaned = input.trim();
 
@@ -1110,7 +1142,7 @@ async function runActivateViaHumanKey(humanKey, parsed) {
     console.error(chalk.gray('   Check your internet connection and try again. If your network blocks'));
     console.error(chalk.gray('   ' + ACTIVATION_ENDPOINT + ', email support@ghostarchitect.dev'));
     console.error(chalk.gray('   for an offline activation token.\n'));
-    process.exit(2);
+    failActivation();
   }
 
   if (!resp.ok) {
@@ -1123,13 +1155,13 @@ async function runActivateViaHumanKey(humanKey, parsed) {
       code === 'rate_limit_exceeded'               ? 'Too many activation attempts. Wait a minute and try again.' :
                                                      `Activation server returned ${code}.`;
     console.error(chalk.red(`\n${SYM.cross} Activation refused: ${friendly}\n`));
-    process.exit(2);
+    failActivation();
   }
 
   if (!respBody.signedToken || typeof respBody.signedToken !== 'string') {
     console.error(chalk.red(`\n${SYM.cross} Activation server returned an unexpected response (no signedToken).`));
     console.error(chalk.gray('   This is a bug: email support@ghostarchitect.dev with the time of this attempt.\n'));
-    process.exit(2);
+    failActivation();
   }
 
   // Verify the returned token locally before saving. The server should never
@@ -1141,7 +1173,7 @@ async function runActivateViaHumanKey(humanKey, parsed) {
   } catch (e) {
     console.error(chalk.red(`\n${SYM.cross} Activation server returned a token that failed local verification: ${e.message}`));
     console.error(chalk.gray('   This is a bug or a man-in-the-middle. Email support@ghostarchitect.dev.\n'));
-    process.exit(2);
+    failActivation();
   }
   const payload = decoded.payload;
 
@@ -1167,7 +1199,7 @@ async function runActivateViaHumanKey(humanKey, parsed) {
     if (!m.match) {
       console.error(chalk.red(`\n${SYM.cross} Server returned a token bound to a different machine.`));
       console.error(chalk.gray(`   This is a bug. Got ${m.matchCount} of 4 hardware components matching.\n`));
-      process.exit(2);
+      failActivation();
     }
   }
 
@@ -1201,7 +1233,7 @@ async function runActivateViaSignedToken(tokenString) {
     console.error(chalk.red(`\n${SYM.cross} Activation failed: ${e.message}`));
     console.error(chalk.gray('   The input was not a valid license key (GA-YYYY-TIER-XXXX-XXXX-XXXX format)'));
     console.error(chalk.gray('   AND not a valid signed token. Copy the value from your license email exactly\n   and try again. If issues persist, email support@ghostarchitect.dev.\n'));
-    process.exit(2);
+    failActivation();
   }
   const payload = decoded.payload;
   const fpHashes = currentFingerprintHashes();
@@ -1215,7 +1247,7 @@ async function runActivateViaSignedToken(tokenString) {
     if (!m.match) {
       console.error(chalk.red(`\n${SYM.cross} Activation refused: this license is bound to a different machine.`));
       console.error(chalk.gray(`   Got ${m.matchCount} of 4 hardware components matching (need 3). If you have a new\n   machine, email support@ghostarchitect.dev to have your license reissued.\n`));
-      process.exit(2);
+      failActivation();
     }
   }
 
@@ -1259,6 +1291,7 @@ async function runLicenseStatusFlow() {
     result.state === 'expired'    ? chalk.red :
     result.state === 'hard_stop'  ? chalk.red :
     result.state === 'tampered'   ? chalk.red :
+    result.state === 'revoked'    ? chalk.red :
     chalk.red;
 
   const lines = [
@@ -1663,6 +1696,25 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
       console.log('');
       return false;  // continue as Open, do not block
     }
+    // A REVOKED license degrades to Open rather than hard-blocking, on the same
+    // reasoning as the lapsed trial above: the paid entitlements stop (that is
+    // the revenue leak we are closing) but Question and Recon stay free forever,
+    // so there is no reason to dead-end someone whose card simply expired. They
+    // land on the pricing page with a working CLI instead of a brick.
+    if (result.state === 'revoked') {
+      TIER = 'open';
+      setActiveLicense(null);
+      console.log('\n' + boxen(
+        chalk.yellow.bold('This license has been revoked.') + '\n\n' +
+        chalk.white('This usually means the subscription was cancelled.') + '\n' +
+        chalk.white('You still have access to Ghost Open.') + '\n\n' +
+        chalk.white('Resubscribe: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+      console.log('');
+      return false;  // continue as Open, do not block
+    }
     const headline =
       result.state === 'hard_stop' ? 'License expired' :
       result.state === 'invalid'   ? 'License invalid' :
@@ -1832,9 +1884,14 @@ async function runBatchRetrieveCommand(id) {
   }
 
   if (text == null) {
+    // Terminal state: the batch ENDED and carried no successful result, so
+    // retrying can never produce one. Keeping it made it a permanent zombie:
+    // it renders as a green READY row forever and re-hits the API on every
+    // single menu redraw. Drop it.
+    removePendingBatch(id);
     console.log(chalk.red(`\n${SYM.cross} Batch ${id} ended but no successful result was found.`));
-    console.log(chalk.gray('  The request may have errored or expired. The batch is kept in your pending list.'));
-    console.log(chalk.gray(`  Run `) + chalk.cyan(`ghost batch-retrieve ${id}`) + chalk.gray(` to try again.\n`));
+    console.log(chalk.gray('  The request errored or expired. Removed from your pending list.'));
+    console.log(chalk.gray('  Re-run the scan to try again.\n'));
     return;
   }
 
@@ -1885,9 +1942,36 @@ function friendlyBatchModeLabel(mode) {
 //   - otherwise  → a grayed-out, non-selectable "checking..." entry
 // Returns [] when there are no pending batches, so the menu is unchanged and no
 // network call is made (spec: zero pending → zero changes).
+// The Anthropic Batches API retains a batch for 29 days. Past that the id 404s
+// forever, so an entry older than this can never be retrieved and is pure noise.
+const BATCH_RETENTION_DAYS = 29;
+
+// Modes with a real batch transport path. POI, Conflict and Audit are multipass
+// and have no batch branch, so passing --batch to them is a no-op. Keep this in
+// sync with the modes that actually read flags.batch (question.js, blast.js).
+const BATCH_CAPABLE_MODES = ['question', 'blast'];
+
 async function buildPendingBatchChoices() {
-  const pending = getPendingBatches();
+  let pending = getPendingBatches();
   if (pending.length === 0) return [];
+
+  // Prune expired entries BEFORE spending an API call on them. Without this an
+  // aged-out batch renders a perpetual "checking..." row and fires a doomed
+  // retrieve on every single menu redraw.
+  const expiredCutoff = Date.now() - BATCH_RETENTION_DAYS * 86400 * 1000;
+  const expired = pending.filter(b => {
+    const t = Date.parse(b.submittedAt || '');
+    return Number.isFinite(t) && t < expiredCutoff;
+  });
+  for (const b of expired) removePendingBatch(b.id);
+  if (expired.length > 0) {
+    console.log(chalk.gray(
+      `  Removed ${expired.length} expired batch${expired.length === 1 ? '' : 'es'} ` +
+      `(older than ${BATCH_RETENTION_DAYS} days, no longer retrievable).`
+    ));
+    pending = getPendingBatches();
+    if (pending.length === 0) return [];
+  }
 
   const apiKey = resolveApiKey();
   let client = null;
@@ -1905,7 +1989,17 @@ async function buildPendingBatchChoices() {
       try {
         const r = await client.messages.batches.retrieve(b.id);
         status = r.processing_status || 'unknown';
-      } catch { status = 'unknown'; }
+      } catch (err) {
+        // A 404 means the batch is gone server-side and never coming back.
+        // Drop it now rather than rendering a row that re-fetches a doomed id
+        // every time the menu is drawn. Any other error (network, 429, 5xx) is
+        // transient: keep the entry and show it as still-checking.
+        if (err && err.status === 404) {
+          removePendingBatch(b.id);
+          return { entry: b, status: 'gone' };
+        }
+        status = 'unknown';
+      }
     }
     return { entry: b, status };
   }));
@@ -1914,6 +2008,7 @@ async function buildPendingBatchChoices() {
   for (const { entry, status } of checked) {
     const modeLabel = friendlyBatchModeLabel(entry.mode);
     const time = formatClockTime(entry.submittedAt) || entry.submittedAt || 'unknown';
+    if (status === 'gone') continue;   // already pruned above, render nothing
     if (status === 'ended') {
       rows.push({
         name: `📬 ${modeLabel} batch (submitted ${time}) - ` + chalk.green.bold('READY'),
@@ -1931,7 +2026,9 @@ async function buildPendingBatchChoices() {
 
 // ── Selective Reconfigure ──────────────────────────────────────────────────
 // Replaces the old "replay the entire first-run wizard" behavior. Each item is
-// updated independently, every level offers Back, and Ctrl+C in a sub-option
+// updated independently and every level offers Back. (An earlier version of this
+// comment promised Ctrl+C recovery in a sub-option; it never worked. inquirer
+// 9.3.8 re-raises SIGINT, so Ctrl+C terminates Ghost from anywhere.)
 // returns to this menu (never the main menu, never an exit). No em dashes in
 // any user-facing string here (colons/hyphens only).
 
@@ -1982,7 +2079,11 @@ async function reconfigureApiKey() {
       console.log(chalk.gray('  Discarded. No changes saved.'));
     }
   } catch (_) {
-    // Ctrl+C during the sub-option: fall back to the reconfigure menu.
+    // NOT a Ctrl+C handler. inquirer 9.3.8 re-raises SIGINT and no process-level
+    // SIGINT handler exists, so Ctrl+C kills the process and this catch never
+    // runs for it. What this DOES catch is a prompt that throws: a non-TTY
+    // stdin, a validation fault, a closed stream. Returning to the menu is
+    // still the right response to those.
   }
 }
 
@@ -2055,14 +2156,16 @@ async function reconfigureGithubToken(currentStatus) {
       return true;
     }
   } catch (_) {
-    return currentStatus; // Ctrl+C: return to the reconfigure menu
+    // See the note on reconfigureApiKey's catch: this does not fire on Ctrl+C
+    // (inquirer 9.3.8 re-raises SIGINT and the process dies). It fires on a
+    // prompt that throws, and returning the prior status is correct for that.
+    return currentStatus;
   }
 }
 
 // License sub-flow. Runs only the activation path; never touches the API key or
-// GitHub token. Returns to the reconfigure menu after activation completes or is
-// cancelled. (runActivateFlow returns on success; it exits the process only on a
-// server/verification error, which is its pre-existing behavior.)
+// GitHub token. Returns to the reconfigure menu after activation completes,
+// is cancelled, or fails.
 async function reconfigureLicense() {
   try {
     const { key } = await inquirer.prompt([{
@@ -2071,15 +2174,34 @@ async function reconfigureLicense() {
     }]);
     const val = (key || '').trim();
     if (!val || val.toLowerCase() === 'back') return;
-    await runActivateFlow(val);
+
+    // A mistyped key must not kill the app. Every failure path inside
+    // runActivateFlow calls failActivation(), which throws instead of exiting
+    // while this flag is set, so a typo lands the user back on the reconfigure
+    // menu to try again. The specific error was already printed by the path
+    // that failed, so there is nothing to re-report here.
+    activationInteractive = true;
+    try {
+      await runActivateFlow(val);
+    } catch (e) {
+      if (!(e instanceof ActivationAborted)) throw e;
+      console.log(chalk.gray('  Returning to the menu.\n'));
+    } finally {
+      activationInteractive = false;
+    }
   } catch (_) {
-    // Ctrl+C during the sub-option: fall back to the reconfigure menu.
+    // NOT a Ctrl+C handler. inquirer 9.3.8 re-raises SIGINT and no process-level
+    // SIGINT handler exists, so Ctrl+C kills the process and this catch never
+    // runs for it. What this DOES catch is a prompt that throws: a non-TTY
+    // stdin, a validation fault, a closed stream. Returning to the menu is
+    // still the right response to those.
   }
 }
 
 // The selective reconfigure menu. licenseState is a short status string for the
-// license line. Returns to the caller (main menu) only on explicit Back, or on
-// Ctrl+C at this menu level.
+// license line. Returns to the caller (main menu) only on explicit Back, or if
+// the menu prompt itself throws. Ctrl+C does not return here: inquirer 9.3.8
+// re-raises SIGINT and Ghost exits.
 async function runSelectiveReconfigure(licenseState) {
   // Test the GitHub token once when the menu opens; cache for the session.
   let githubOk = await testGithubToken();
@@ -2094,6 +2216,7 @@ async function runSelectiveReconfigure(licenseState) {
       },
       { name: `GitHub reports token ${githubOk ? '(verified)' : '(bad credentials: needs update)'}`, value: 'githubToken' },
       { name: `License key (${TIER}: ${licenseState})`, value: 'license' },
+      { name: `Change scan model (${getConfig().get('defaultModel') || 'claude-sonnet-4-6'})`, value: 'model' },
       { name: 'Run full setup wizard', value: 'full' },
       { name: 'Back', value: 'back' },
     ];
@@ -2105,13 +2228,49 @@ async function runSelectiveReconfigure(licenseState) {
         choices: reconfigureChoices,
       }]));
     } catch (_) {
-      return; // Ctrl+C at the menu level: back to the main Ghost menu.
+      // Not reachable via Ctrl+C (inquirer 9.3.8 re-raises SIGINT; the process
+      // exits). Reachable when the prompt itself throws, e.g. a non-TTY stdin.
+      return;
     }
     if (action === 'back') return;
     if (action === 'full') { await reconfigure(); return; }
     if (action === 'apiKey') { await reconfigureApiKey(); continue; }
     if (action === 'githubToken') { githubOk = await reconfigureGithubToken(githubOk); continue; }
     if (action === 'license') { await reconfigureLicense(); continue; }
+    if (action === 'model') { await reconfigureModel(); continue; }
+  }
+}
+
+// Scan-model sub-flow. Changes the default model used by every mode that does
+// not prompt for one (Audit prompts separately). Choices come from config.js's
+// MODEL_CHOICES, which is derived from MODEL_RATES, so this menu can never offer
+// a model Ghost cannot price. Returns to the reconfigure menu on Back or on a
+// prompt fault. Ctrl+C terminates Ghost (inquirer 9.3.8 re-raises SIGINT).
+async function reconfigureModel() {
+  try {
+    const current = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
+    const choices = [...getModelChoices(), backChoice()];
+    const currentIdx = choices.findIndex(c => c.value === current);
+    const { model } = await inquirer.prompt([{
+      type: 'list', name: 'model', theme: inquirerTheme,
+      message: chalk.cyan('Default scan model:'),
+      choices,
+      default: currentIdx >= 0 ? currentIdx : 0,
+    }]);
+    if (isBack(model)) return;
+    if (model === current) {
+      console.log(chalk.gray(`  Already set to ${current}. No change.\n`));
+      return;
+    }
+    getConfig().set('defaultModel', model);
+    console.log(chalk.green(`  ${SYM.check} Default scan model set to ${model}.`));
+    console.log(chalk.gray('  Pre-scan cost estimates now reflect this model\'s rates.\n'));
+  } catch (_) {
+    // NOT a Ctrl+C handler. inquirer 9.3.8 re-raises SIGINT and no process-level
+    // SIGINT handler exists, so Ctrl+C kills the process and this catch never
+    // runs for it. What this DOES catch is a prompt that throws: a non-TTY
+    // stdin, a validation fault, a closed stream. Returning to the menu is
+    // still the right response to those.
   }
 }
 
@@ -2145,7 +2304,10 @@ async function main() {
   // NOT enforced here — display surfaces must always work; enforcement happens
   // at the main-flow gate.
   try {
-    const earlyLicenseResult = await validateLicense({ skipNetworkClock: true });
+    // skipRevocationCheck: this runs ahead of --help/--version/profile flags,
+    // which must stay fast and offline-safe. Enforcement happens at the main
+    // flow gate below, which does check revocation.
+    const earlyLicenseResult = await validateLicense({ skipNetworkClock: true, skipRevocationCheck: true });
     setActiveLicense(earlyLicenseResult);
     TIER = getActiveTier() || 'open';
   } catch (err) {
@@ -2448,7 +2610,7 @@ async function main() {
         console.log(chalk.yellow('ℹ Running as Ghost Open. Activate a license with: ghost --activate <key>'));
       } else {
         const tierLabel = TIER.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
-        console.log(chalk.green('✓ License active: Ghost Architect™ ' + tierLabel + '. Ready to scan.'));
+        console.log(chalk.green(`${SYM.check} License active: Ghost Architect™ ${tierLabel}. Ready to scan.`));
       }
       console.log('');
     }
@@ -2476,10 +2638,28 @@ async function main() {
     if (licenseResult.state === 'missing') {
       promos = await fetchPromoText();
     }
+    const tierBeforeGate = TIER;
     const blocked = renderLicenseStateAndMaybeBlock(licenseResult, promos.promo);
     if (blocked) {
       console.log(chalk.gray(`${COPYRIGHT}\n`));
       process.exit(1);
+    }
+
+    // renderLicenseStateAndMaybeBlock can DEGRADE the tier without blocking: a
+    // hard-stopped trial and a revoked license both fall back to Open so the
+    // free modes keep working. That happens AFTER the setScanOptions() call
+    // above, which had already seeded the loader with the pre-degrade tier. A
+    // lapsed Pro Max trial therefore kept the trial's 100K context cap while
+    // running as Open (50K), handing an expired trial a paid entitlement on
+    // every subsequent scan. Re-seed whenever the gate moved the tier.
+    if (TIER !== tierBeforeGate) {
+      setScanOptions({
+        tier: TIER,
+        maxContextOverride: cliOpts.maxContext,
+        excludePresets: cliOpts.presets,
+        excludePatterns: cliOpts.excludes,
+        skipRedaction: cliOpts.skipRedaction,
+      });
     }
   } catch (err) {
     // Defense in depth: if validation itself crashes on the gated scan path, we
@@ -2500,11 +2680,11 @@ async function main() {
     // a. Validate paths exist and are readable directories.
     for (const [flag, p] of [['--baseline', cfBaseline], ['--proposed', cfProposed]]) {
       if (!fs.existsSync(p)) {
-        console.error(chalk.red(`\n  ✗ ${flag} path does not exist: ${p}\n`));
+        console.error(chalk.red(`\n  ${SYM.cross} ${flag} path does not exist: ${p}\n`));
         process.exit(1);
       }
       if (!fs.statSync(p).isDirectory()) {
-        console.error(chalk.red(`\n  ✗ ${flag} path is not a directory: ${p}\n`));
+        console.error(chalk.red(`\n  ${SYM.cross} ${flag} path is not a directory: ${p}\n`));
         process.exit(1);
       }
     }
@@ -2525,11 +2705,11 @@ async function main() {
     try {
       codebaseContext = await loadFromPath(cfBaseline);
     } catch (err) {
-      console.error(chalk.red(`\n  ✗ Failed to load baseline: ${err.message}\n`));
+      console.error(chalk.red(`\n  ${SYM.cross} Failed to load baseline: ${err.message}\n`));
       process.exit(1);
     }
     if (!codebaseContext) {
-      console.error(chalk.red(`\n  ✗ Baseline loaded no files from: ${cfBaseline}\n`));
+      console.error(chalk.red(`\n  ${SYM.cross} Baseline loaded no files from: ${cfBaseline}\n`));
       process.exit(1);
     }
 
@@ -2742,11 +2922,6 @@ async function main() {
       continue;
     }
 
-    // Mode-usage telemetry. Fire-and-forget so a slow Pulse Worker never
-    // delays a scan. Lands as `mode-<name>` in the Pulse dashboard so the
-    // Scan Modes histogram shows real cross-tier usage (not just Open).
-    pingModeUsage(VERSION, TIER, mode).catch(() => {});
-
     // Tier-gate check at dispatch — wall BEFORE API spend or codebase work.
     // Per design decision 2026-05-23 (Q4): dispatch-level gating, not
     // post-proceed-confirm gating. Quota-gated modes consult getScanCount()
@@ -2773,9 +2948,36 @@ async function main() {
       }
     }
 
+    // --batch is only implemented by the two single-call modes. The multipass
+    // modes (POI, Conflict, Audit) have no batch transport path, so the flag was
+    // silently doing nothing and the user paid streaming prices believing they
+    // had opted into the half-price Batches API. Say so out loud.
+    if (cliOpts.batch && !BATCH_CAPABLE_MODES.includes(mode)) {
+      console.log(chalk.yellow(
+        `\n  Note: --batch is not supported for ${friendlyBatchModeLabel(mode)}. ` +
+        `Running streaming at standard rates.`
+      ));
+      console.log(chalk.gray('  Batch transport is available for Blast Radius and Question.\n'));
+    }
+
+    // Mode-usage telemetry. Fire-and-forget so a slow Pulse Worker never
+    // delays a scan. Lands as `mode-<name>` in the Pulse dashboard so the
+    // Scan Modes histogram shows real cross-tier usage (not just Open).
+    //
+    // Fires AFTER both gates, never before. Pinged ahead of the wall, every
+    // paywalled selection counted as a scan that never ran, so Pulse's
+    // cross-mode comparisons were inflated exactly where Open users bounce off
+    // the quota (audit most of all). The prompt-triage path above already had
+    // this ordering right; this one did not.
+    pingModeUsage(VERSION, TIER, mode).catch(() => {});
+
     switch (mode) {
-      case 'question':        await runQuestionMode(codebaseContext, { tier: TIER, flags: { stream: cliOpts.stream, batch: cliOpts.batch } });         break;
-      case 'chat':            await runChatMode(codebaseContext, { tier: TIER });             break;
+      // profile is threaded here for the same reason POI/Blast/Conflict get it:
+      // saveReport() reads meta.profile to apply white-label branding. Without
+      // it, the Question and Chat PDFs rendered unbranded while the CLI still
+      // advertised the Question output as a "client-ready PDF".
+      case 'question':        await runQuestionMode(codebaseContext, { profile, tier: TIER, flags: { stream: cliOpts.stream, batch: cliOpts.batch } });         break;
+      case 'chat':            await runChatMode(codebaseContext, { profile, tier: TIER });             break;
       case 'poi':             await runPOIMode(codebaseContext, { profile, tier: TIER });  break;
       case 'blast':           await runBlastMode(codebaseContext, { profile, tier: TIER, flags: { stream: cliOpts.stream, batch: cliOpts.batch } });  break;
       case 'conflict':        await runConflictMode(codebaseContext, { profile, tier: TIER });  break;
@@ -2903,7 +3105,7 @@ async function main() {
           if (isPortalConfigured() && fs.existsSync(jsonPath)) {
             try {
               const result = await publishBriefToPortal(jsonPath);
-              if (result?.ok) console.log(chalk.gray('  ✓ Ghost Brief pushed to portal.\n'));
+              if (result?.ok) console.log(chalk.gray(`  ${SYM.check} Ghost Brief™ pushed to portal.\n`));
             } catch { /* non-fatal */ }
           }
         } catch (e) {
@@ -3131,7 +3333,7 @@ async function main() {
               emailRecipients,
             },
           });
-          console.log(chalk.green('\n  ✓ Ghost Watcher configuration pushed'));
+          console.log(chalk.green(`\n  ${SYM.check} Ghost Watcher™ configuration pushed`));
           console.log('');
 
           if (!watchResult.workflowPushed) {
@@ -3147,7 +3349,7 @@ async function main() {
             console.log(chalk.gray('  ─────────────────────────────────────────'));
             console.log('');
           } else {
-            console.log(chalk.green('  ✓ GitHub Actions workflow pushed'));
+            console.log(chalk.green(`  ${SYM.check} GitHub Actions workflow pushed`));
             console.log('');
           }
 
@@ -3170,7 +3372,12 @@ async function main() {
           message: chalk.cyan('GitHub repo URL (or \'back\' to cancel):'),
           validate: v => isBackKeyword(v) || v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
         }]);
-        if (isBack(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
+        // isBackKeyword, not isBack. isBack() tests for the '__ghost_back__'
+        // sentinel that a LIST choice returns; a text input returns exactly what
+        // the user typed. The prompt above offers 'back' and validate() accepts
+        // it, so isBack() was always false here and the user who tried to cancel
+        // got marched into the PAT prompt instead.
+        if (isBackKeyword(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
         const { token } = await inquirer.prompt([{
           type: 'password', name: 'token',
           message: chalk.cyan('GitHub Personal Access Token:'),
@@ -3201,7 +3408,7 @@ async function main() {
       }
 
       case 'watch-configure': {
-        console.log(chalk.cyan('\n  Configure Watch: coming in Ghost Watcher v9.0.1\n'));
+        console.log(chalk.cyan('\n  Configure Watch: coming soon.\n'));
         console.log(chalk.gray('  For now, edit ghost-watcher.yaml directly in your repo.\n'));
         break;
       }
@@ -3213,7 +3420,12 @@ async function main() {
           message: chalk.cyan('GitHub repo URL (or \'back\' to cancel):'),
           validate: v => isBackKeyword(v) || v.includes('github.com') ? true : 'Please enter a valid GitHub URL',
         }]);
-        if (isBack(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
+        // isBackKeyword, not isBack. isBack() tests for the '__ghost_back__'
+        // sentinel that a LIST choice returns; a text input returns exactly what
+        // the user typed. The prompt above offers 'back' and validate() accepts
+        // it, so isBack() was always false here and the user who tried to cancel
+        // got marched into the PAT prompt instead.
+        if (isBackKeyword(repoUrl)) { console.log(chalk.gray('\nCancelled.\n')); break; }
         const { token } = await inquirer.prompt([{
           type: 'password', name: 'token',
           message: chalk.cyan('GitHub Personal Access Token:'),
@@ -3236,7 +3448,7 @@ async function main() {
       }
 
       case 'watch-team': {
-        console.log(chalk.cyan('\n  Manage Team: coming in Ghost Watcher v9.0.1\n'));
+        console.log(chalk.cyan('\n  Manage Team: coming soon.\n'));
         console.log(chalk.gray('  Team management will be available in the next release.\n'));
         break;
       }
@@ -3276,18 +3488,31 @@ if (process.argv.includes('--watcher-commit')) {
 
   let watchTier;
   try {
+    // Revocation IS checked here (no skipRevocationCheck). An unattended CI run
+    // on a cancelled subscription is precisely the leak. The check fails open on
+    // any network fault, so a runner with no egress still scans.
     const watchLicenseResult = await validateLicense({ skipNetworkClock: true });
     setActiveLicense(watchLicenseResult);
+
+    // getActiveTier() reads payload.tier and answers "what did they buy", not
+    // "may they use it". Without this gate a revoked, expired, or hard-stopped
+    // license still resolved to 'team' and ran the watcher on every commit
+    // forever. Exit 0 either way: Ghost Watcher is advisory and never blocks a
+    // commit, but advisory does not mean free.
+    if (isBlocking(watchLicenseResult.state)) {
+      console.error('👻 Ghost Watcher™: ' + (watchLicenseResult.message || 'license is not valid.'));
+      process.exit(0);
+    }
     watchTier = getActiveTier() || 'open';
   } catch (err) {
     reportLicenseValidationError(err, { debug: process.argv.includes('--license-debug'), degraded: false });
     process.exit(0); // advisory — never block a commit
   }
 
-  const WATCH_TIERS = ['team', 'team-max', 'enterprise', 'enterprise-max'];
+  const WATCH_TIERS = WATCH_TIERS_ALLOWED;
   if (!WATCH_TIERS.includes(watchTier)) {
     console.error('👻 Ghost Watcher requires Ghost Team or higher.');
-    console.error('   Upgrade at: https://ghostarchitect.dev/upgrade');
+    console.error('   Upgrade at: https://ghostarchitect.dev/pricing');
     process.exit(0); // advisory — never block a commit
   }
 
@@ -3309,6 +3534,12 @@ if (process.argv.includes('--brief')) {
   try {
     const briefLicenseResult = await validateLicense({ skipNetworkClock: true });
     setActiveLicense(briefLicenseResult);
+    // Same reasoning as the watcher path: a tier from the payload is not a
+    // right to use it. Ghost Brief is a gated Max-plan feature, so fail closed.
+    if (isBlocking(briefLicenseResult.state)) {
+      console.error('Ghost Brief™: ' + (briefLicenseResult.message || 'license is not valid.'));
+      process.exit(1);
+    }
     briefTier = getActiveTier() || 'open';
   } catch (err) {
     reportLicenseValidationError(err, { debug: process.argv.includes('--license-debug'), degraded: false });
@@ -3318,7 +3549,7 @@ if (process.argv.includes('--brief')) {
   const BRIEF_TIERS = MAX_TIERS;
   if (!BRIEF_TIERS.includes(briefTier)) {
     console.error('Ghost Brief requires a Max plan (Pro Max, Team Max, or Enterprise Max).');
-    console.error('Upgrade at: https://ghostarchitect.dev/upgrade');
+    console.error('Upgrade at: https://ghostarchitect.dev/pricing');
     process.exit(1);
   }
 

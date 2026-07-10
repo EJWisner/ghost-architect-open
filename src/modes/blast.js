@@ -1,6 +1,6 @@
 import { showFriendlyError } from '../utils/errors.js';
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+import { SYM, IS_WINDOWS } from '../cli/symbols.js';
+import { offerUnsavedReport } from '../cli/unsaved-report.js';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -426,11 +426,11 @@ export async function runBlastMode(codebaseContext, options = {}) {
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
     } else {
-      // Even if the user declines to save, give them one last clear
-      // signal that the analysis ran — it's been buffered but not
-      // streamed, so they may not realize it happened at all. A raw
-      // character count is internal noise a buyer does not need.
-      console.log(chalk.gray('\n  (Report not saved.)\n'));
+      // Declining to save must not silently destroy the report. The scan already
+      // ran and the cost line has already printed; this buffer is the only copy
+      // of work the user paid for. Offer to print it before discarding.
+      // See src/cli/unsaved-report.js.
+      await offerUnsavedReport(buffer, { prefix: 'ghost-blast' });
     }
 
     const { another } = await inquirer.prompt([{
@@ -525,7 +525,7 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
   } catch (err) {
     // The batch is already submitted on Anthropic's side; a configstore write
     // failure shouldn't lose the id. Surface it so the user can still retrieve.
-    console.log(chalk.yellow(`\n  ⚠  Could not record the pending batch locally (${err.message}).`));
+    console.log(chalk.yellow(`\n  ${SYM.warn}  Could not record the pending batch locally (${err.message}).`));
     console.log(chalk.yellow(`     Save this batch id to retrieve it later: ${batchId}\n`));
   }
 

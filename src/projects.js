@@ -10,6 +10,7 @@ import {
   saveProjectIntelligence, getProjectDashboardData,
   extractFindingsFromReport, ensureProjectsDir
 } from './core/projects.js';
+import { SYM } from './cli/symbols.js';
 
 export { listProjects, extractFindingsFromReport, ensureProjectsDir } from './core/projects.js';
 
@@ -59,7 +60,7 @@ export async function promptProjectLabel() {
     // Exact match first — if the label already exists, use it silently.
     const exactMatch = projects.find(p => slugify(p.label) === slugify(input));
     if (exactMatch) {
-      console.log(chalk.green(`  ✓ Continuing project "${exactMatch.label}" — scan will compare against baseline\n`));
+      console.log(chalk.green(`  ${SYM.check} Continuing project "${exactMatch.label}", scan will compare against baseline\n`));
       return exactMatch.label;
     }
 
@@ -73,15 +74,15 @@ export async function promptProjectLabel() {
         default: true,
       }]);
       if (confirm) {
-        console.log(chalk.green(`  ✓ Using project "${match.label}"\n`));
+        console.log(chalk.green(`  ${SYM.check} Using project "${match.label}"\n`));
         return match.label;
       }
-      console.log(chalk.green(`  ✓ Creating new project "${input}"\n`));
+      console.log(chalk.green(`  ${SYM.check} Creating new project "${input}"\n`));
       return input;
     }
   }
 
-  console.log(chalk.green(`  ✓ New project "${input}" — tracking started\n`));
+  console.log(chalk.green(`  ${SYM.check} New project "${input}", tracking started\n`));
   return input;
 }
 
@@ -104,15 +105,15 @@ export async function handleProjectIntelligence(label, reportText, meta) {
   console.log(chalk.gray(`  Baseline: ${result.baselineDate.slice(0,10)} (${result.baselineCount} findings)`));
   console.log(chalk.gray(`  This scan: ${result.scanDate.slice(0,10)} (${result.findingCount} findings)\n`));
   console.log(
-    chalk.green(`  ✓ ${result.resolved} resolved`) + '  ' +
-    chalk.red(`✗ ${result.remaining} remaining`) + '  ' +
-    chalk.yellow(`⚠ ${result.newIssues} new`)
+    chalk.green(`  ${SYM.check} ${result.resolved} resolved`) + '  ' +
+    chalk.red(`${SYM.cross} ${result.remaining} remaining`) + '  ' +
+    chalk.yellow(`${SYM.warn} ${result.newIssues} new`)
   );
   console.log(chalk.cyan(`  Remediation progress: ${result.progress}% of baseline issues resolved\n`));
 
   if (result.newIssues > 0) {
     console.log(chalk.yellow('  New issues since baseline:'));
-    result.newIssuesList.forEach(f => console.log(chalk.yellow(`    ⚠ [${f.severity}] ${f.title}`)));
+    result.newIssuesList.forEach(f => console.log(chalk.yellow(`    ${SYM.warn} [${f.severity}] ${f.title}`)));
     if (result.newIssuesMore > 0) console.log(chalk.gray(`    ...and ${result.newIssuesMore} more`));
     console.log('');
   }
@@ -151,7 +152,7 @@ export async function showProjectDashboard() {
     console.log(chalk.white.bold(`  ${p.label}`));
     console.log(chalk.gray(`  Baseline: ${p.baselineDate} | Last scan: ${p.lastScan} | ${p.scanCount} scans`));
     console.log(`  ${bar} ${safeProgress}% remediated`);
-    if (p.newIssues > 0) console.log(chalk.yellow(`  ⚠ ${p.newIssues} new issues in last scan`));
+    if (p.newIssues > 0) console.log(chalk.yellow(`  ${SYM.warn} ${p.newIssues} new issues in last scan`));
     console.log('');
   }
 

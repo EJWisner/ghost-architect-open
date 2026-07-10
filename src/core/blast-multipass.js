@@ -176,14 +176,20 @@ ${combinedResults}`;
       break;
     }
   }
-  if (!batchResult) throw new Error('Blast synthesis batch timed out after 20 minutes');
-
   // Extract the synthesis output from the batch result. The Batch API can settle
   // a request as succeeded, errored, canceled, or expired. We must handle every
   // non-succeeded state explicitly: falling through would return '' and silently
   // discard the paid per-pass reports we already have in combinedResults.
   let synthesisOutput = '';
   try {
+    // The 20-minute poll timeout is raised from INSIDE this try, deliberately.
+    // It used to throw from above the block, which routed it straight past the
+    // salvage catch below. Every other non-success synthesis state preserved the
+    // paid per-pass reports; the timeout, the single most likely failure mode on
+    // a large repo, was the one path that threw them away.
+    if (!batchResult) {
+      throw new Error('Blast synthesis batch timed out after 20 minutes.');
+    }
     for await (const item of await anthropic.messages.batches.results(batch.id)) {
       if (item.custom_id !== 'blast-synthesis') continue;
       const resultType = item.result?.type;
@@ -208,11 +214,16 @@ ${combinedResults}`;
         // canceled, expired, or any unexpected/absent type. Surface a clear
         // error; the catch below preserves the per-pass reports rather than
         // returning an empty synthesis.
-        throw new Error(`Batch returned unexpected status: ${resultType || 'unknown'}. Per-pass reports preserved in session file.`);
+        throw new Error(`Batch returned unexpected status: ${resultType || 'unknown'}.`);
       }
     }
     if (!synthesisOutput.trim()) {
-      throw new Error('Batch returned unexpected status: no synthesis output. Per-pass reports preserved in session file.');
+      // Do NOT claim the reports are "preserved in session file" here. Blast
+      // multipass writes no session/checkpoint file; the only thing preserving
+      // the per-pass reports is the salvage return below, which inlines them
+      // into the returned markdown. Saying otherwise sends the user looking for
+      // a file that was never written.
+      throw new Error('Batch returned unexpected status: no synthesis output.');
     }
   } catch (err) {
     // Synthesis failed for some reason (errored/canceled/expired/empty). Do not

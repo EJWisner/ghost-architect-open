@@ -490,29 +490,68 @@ function costMidpoint(finding) {
  * user-facing output. Pass 1 logs; Pass 2 and the patcher are silent
  * (they call with silent=true so we don't emit three identical lines).
  */
-function capFindingsForPass2(sortedFindings, cap, silent) {
-  if (sortedFindings.length <= cap) return sortedFindings;
-  const ranked = [...sortedFindings].sort((a, b) => {
+// The ranking the cap slices. Extracted so callers can reconstruct the SAME
+// ordering and therefore know precisely which findings fell below the cap.
+// sortByseverity() alone is not enough: within a severity band the cap breaks
+// ties by cost midpoint, so slicing a sortByseverity() array at the cap gives a
+// different set than the narrator actually detailed.
+function rankFindings(sortedFindings) {
+  return [...sortedFindings].sort((a, b) => {
     const sevA = SEVERITY_ORDER[a.severity] ?? 99;
     const sevB = SEVERITY_ORDER[b.severity] ?? 99;
     if (sevA !== sevB) return sevA - sevB;
     return costMidpoint(b) - costMidpoint(a);
   });
-  const kept = ranked.slice(0, cap);
+}
+
+function capFindingsForPass2(sortedFindings, cap, silent) {
+  if (sortedFindings.length <= cap) return sortedFindings;
+  const kept = rankFindings(sortedFindings).slice(0, cap);
   if (!silent) {
     try {
       // Visible, user-facing note (stdout, not a buried spinner/stderr line) so
       // the consultant knows during the run that the PDF is capped and where
       // the full set lives.
+      //
+      // This used to say the full set was in "the JSON, TXT, and MD files". The
+      // TXT and MD files are renderings of the same capped report, so only the
+      // JSON sidecar carries the findings that were not detailed.
       console.log(
         'Note: ' + sortedFindings.length + ' findings were ' +
-        'identified. The PDF report shows the top ' + cap + ' ' +
-        'by severity. All findings are in the JSON, ' +
-        'TXT, and MD files.'
+        'identified. The report details the top ' + cap + ' ' +
+        'by severity. Every finding that passed verification is listed in the ' +
+        'accompanying .findings.json file.'
       );
     } catch { /* ignore logging failures */ }
   }
   return kept;
+}
+
+/**
+ * Split a raw finding set into the part the report will detail and the part it
+ * will not, using exactly the narrator's own ranking and cap.
+ *
+ * Exported so the scan pipeline can verify the undetailed remainder and write
+ * it to the findings sidecar. Before this existed, findings below the cap were
+ * never verified and never persisted anywhere: the report told the buyer about
+ * N findings and only ~30 of them existed in any artifact.
+ *
+ * @param {object[]} findings  — raw findings from agent memory
+ * @returns {{ sortedAll: object[], detailed: object[], undetailed: object[], cap: number }}
+ */
+export function splitFindingsAtCap(findings) {
+  const cap = MAX_FINDINGS_FOR_PASS_2;
+  const sortedAll = sortByseverity(Array.isArray(findings) ? findings : []);
+  if (sortedAll.length <= cap) {
+    return { sortedAll, detailed: sortedAll, undetailed: [], cap };
+  }
+  const ranked = rankFindings(sortedAll);
+  return {
+    sortedAll,
+    detailed:   ranked.slice(0, cap),
+    undetailed: ranked.slice(cap),
+    cap,
+  };
 }
 
 /**
@@ -526,11 +565,51 @@ function capFindingsForPass2(sortedFindings, cap, silent) {
  * disclosure goes into the prompt and (defensively) into the patcher
  * so it always lands in the saved markdown when relevant.
  */
-function getCapDisclosure(originalCount, cap) {
-  if (!Number.isFinite(originalCount) || !Number.isFinite(cap)) return null;
-  if (originalCount <= cap) return null;
-  return '_This report shows the top ' + cap + ' findings by severity. '
-    + originalCount + ' total findings are available in the accompanying JSON file._';
+// The disclosure promises that every finding is in the sidecar. That promise is
+// now kept: the scan pipeline verifies the undetailed remainder (see
+// splitFindingsAtCap above) and writes every survivor to the .findings.json
+// sidecar alongside the detailed ones.
+//
+// `total` is the count that actually lands in the sidecar. At render time the
+// narrator does not yet know it, because verification has not run, so it emits
+// the pre-verification count and the pipeline calls rewriteCapDisclosure() once
+// the true number is known. Do not "simplify" this by dropping the rewrite: a
+// disclosure whose count disagrees with the file it points at is the exact
+// defect this replaced.
+function getCapDisclosure(total, cap) {
+  if (!Number.isFinite(total) || !Number.isFinite(cap)) return null;
+  if (total <= cap) return null;
+  return '_This report details the top ' + cap + ' findings by severity. '
+    + 'All ' + total + ' findings, including the ' + (total - cap)
+    + ' not detailed here, are listed in the accompanying .findings.json file._';
+}
+
+// Matches any disclosure getCapDisclosure has ever emitted, so a report rendered
+// by one version and rewritten by another still reconciles.
+const CAP_DISCLOSURE_LINE = /^_This report (?:details|shows) the top \d+ findings by severity[^\n]*_$/m;
+
+/**
+ * Replace the rendered cap disclosure with one stating the true sidecar count.
+ *
+ * Called after verification, which is the first moment the real number is known:
+ * the verifier drops disputed and false-positive findings, so the count the
+ * narrator rendered is an upper bound, not the answer.
+ *
+ * If verification dropped enough findings that the total no longer exceeds the
+ * cap, the report is no longer capped and the disclosure is removed entirely.
+ *
+ * @param {string} reportText
+ * @param {number} total  — findings actually written to the sidecar
+ * @param {number} cap
+ */
+export function rewriteCapDisclosure(reportText, total, cap = MAX_FINDINGS_FOR_PASS_2) {
+  if (!reportText || !CAP_DISCLOSURE_LINE.test(reportText)) return reportText;
+  const replacement = getCapDisclosure(total, cap);
+  if (!replacement) {
+    // No longer capped. Drop the line and the blank line it left behind.
+    return reportText.replace(CAP_DISCLOSURE_LINE, '').replace(/\n{3,}/g, '\n\n');
+  }
+  return reportText.replace(CAP_DISCLOSURE_LINE, replacement);
 }
 
 /**
@@ -1387,11 +1466,22 @@ async function validateAndPatchProse(report, plan, memoryResult, context) {
   let workingReport = report;
   const capDisclosure = getCapDisclosure(sortedAll.length, MAX_FINDINGS_FOR_PASS_2);
   if (capDisclosure) {
-    // Detect the disclosure by its lead-in phrase ("N findings surfaced")
-    // rather than exact-matching the whole sentence — the model occasionally
-    // adds bold or rewords slightly. Match the cap-fired count, not the cap.
+    // Detect the disclosure by a distinctive phrase from the sentence that
+    // getCapDisclosure() actually emits, rather than exact-matching the whole
+    // thing: the model occasionally adds bold or rewords slightly.
+    //
+    // This used to search for "N findings surfaced", a phrase that appears
+    // NOWHERE in getCapDisclosure()'s output. It therefore never matched, the
+    // splice below always fired, and every capped report shipped the disclosure
+    // line twice: once from the model, once from us.
+    //
+    // Match a distinctive phrase from the text getCapDisclosure() actually
+    // emits: "All N findings". KEEP THIS IN SYNC WITH getCapDisclosure().
+    // If the two drift apart again, the symptom is a silently duplicated line
+    // in every capped report, which no test catches unless one asserts it.
+    // tests/cap-disclosure.smoke.mjs pins the two together.
     const expectedCount = sortedAll.length;
-    const presenceRegex = new RegExp(expectedCount + '\\s+findings\\s+surfaced', 'i');
+    const presenceRegex = new RegExp('All\\s+' + expectedCount + '\\s+findings', 'i');
     if (!presenceRegex.test(workingReport)) {
       // Find the first H1 line and splice the disclosure immediately after it.
       const h1Match = workingReport.match(/^#\s+.+$/m);

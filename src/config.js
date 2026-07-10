@@ -8,6 +8,7 @@ import fs from 'fs';
 import { execFileSync } from 'child_process';
 import { getTierCap } from './loader/tierCaps.js';
 import { getActiveTier } from './license/session.js';
+import { MODEL_RATES } from './core/estimator.js';
 
 // ── Configstore path resolution (Linux sudo/root hardening) ──────────────────
 // configstore@6 resolves to ${XDG_CONFIG_HOME || ~/.config}/configstore/<name>.json
@@ -18,6 +19,46 @@ import { getActiveTier } from './license/session.js';
 // so the license lands where the normal relaunch looks. macOS, Windows, and
 // non-sudo runs are unchanged (resolveConfigstorePath returns undefined).
 const CONFIGSTORE_NAME = 'ghost-architect';
+
+// ── Selectable scan models ─────────────────────────────────────────────────
+//
+// The wizard picker used to be a hardcoded two-entry list (sonnet-4-6,
+// opus-4-7) while MODEL_RATES priced nine models. Everything newer than
+// opus-4-7 (Sonnet 5, Opus 4.8, Fable 5) was priced, supported, and completely
+// unreachable from the UI. Listing the ids here and validating them against
+// MODEL_RATES means a model can never again be priced-but-unpickable, and a
+// typo'd id fails loudly at startup instead of silently falling back to Sonnet
+// pricing in every cost estimate.
+//
+// Order is the menu order. Index 0 is the default.
+const SELECTABLE_MODELS = [
+  ['claude-sonnet-4-6', 'recommended, best balance of speed and depth'],
+  ['claude-sonnet-5',   'newer Sonnet, introductory pricing through Aug 31 2026'],
+  ['claude-opus-4-8',   'more capable, slower, costlier'],
+  ['claude-fable-5',    'deepest synthesis, highest cost'],
+];
+
+const MODEL_CHOICES = SELECTABLE_MODELS.map(([value, blurb]) => {
+  const rate = MODEL_RATES[value];
+  if (!rate) {
+    throw new Error(
+      `config.js: model "${value}" is offered in the picker but has no entry in ` +
+      `MODEL_RATES (src/core/estimator.js). Cost estimates would silently fall ` +
+      `back to Sonnet pricing. Add the rate or remove the choice.`
+    );
+  }
+  // Show the real per-million rates so the buyer sees the cost delta at the
+  // moment they choose, not after the scan. Batch mode halves both figures.
+  const price = `$${rate.inputPerM.toFixed(0)}/$${rate.outputPerM.toFixed(0)} per Mtok`;
+  return { name: `${value} (${blurb}) ${price}`, value };
+});
+
+// Shared with bin/ghost.js's "Change scan model" reconfigure item so the wizard
+// and the reconfigure menu can never offer different models. Returns a fresh
+// copy: inquirer mutates choice objects.
+export function getModelChoices() {
+  return MODEL_CHOICES.map(c => ({ ...c }));
+}
 
 function isLinuxSudoRoot() {
   return process.platform === 'linux'
@@ -333,10 +374,7 @@ export async function runSetupWizard() {
       type: 'list',
       name: 'defaultModel',
       message: chalk.cyan('Default Claude model:'),
-      choices: [
-        { name: 'claude-sonnet-4-6 (recommended)', value: 'claude-sonnet-4-6' },
-        { name: 'claude-opus-4-7 (slower, costlier, more capable)', value: 'claude-opus-4-7' },
-      ],
+      choices: MODEL_CHOICES,
       default: 0
     },
     {

@@ -1,6 +1,5 @@
 import fs from 'fs';
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+import { SYM, IS_WINDOWS } from '../cli/symbols.js';
 import path from 'path';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -88,7 +87,7 @@ export async function runCompareMode() {
   if (newIssues.length === 0) {
     console.log(chalk.gray('  None\n'));
   } else {
-    newIssues.forEach(f => console.log(chalk.yellow(`  ⚠ ${f.title}`) + chalk.gray(` [${f.severity}]`)));
+    newIssues.forEach(f => console.log(chalk.yellow(`  ${SYM.warn} ${f.title}`) + chalk.gray(` [${f.severity}]`)));
     console.log('');
   }
 
@@ -103,7 +102,7 @@ export async function runCompareMode() {
     chalk.gray('After:  ') + chalk.white(`${afterFindings.length} findings`) + '\n\n' +
     chalk.green(`${SYM.check} ${resolved.length} resolved`) + '  ' +
     chalk.red(`${SYM.cross} ${remaining.length} remaining`) + '  ' +
-    chalk.yellow(`⚠ ${newIssues.length} new`) + '\n\n' +
+    chalk.yellow(`${SYM.warn} ${newIssues.length} new`) + '\n\n' +
     chalk.cyan.bold(`Progress: ${progress}% of original issues resolved`),
     { padding: 1, borderColor: progress >= 75 ? 'green' : progress >= 40 ? 'yellow' : 'red', borderStyle: 'round' }
   ));
@@ -178,11 +177,11 @@ function buildCompareReport(beforeName, afterName, resolved, remaining, newIssue
   out += '\n';
 
   out += `🔴 REMAINING (${remaining.length})\n`;
-  remaining.forEach(f => { out += `  ✗ [${f.severity}] ${f.title}\n`; });
+  remaining.forEach(f => { out += `  ${SYM.cross} [${f.severity}] ${f.title}\n`; });
   out += '\n';
 
   out += `🆕 NEW ISSUES (${newIssues.length})\n`;
-  newIssues.forEach(f => { out += `  ⚠ [${f.severity}] ${f.title}\n`; });
+  newIssues.forEach(f => { out += `  ${SYM.warn} [${f.severity}] ${f.title}\n`; });
   out += '\n';
 
   out += `${'─'.repeat(60)}\n`;

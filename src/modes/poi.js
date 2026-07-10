@@ -1,6 +1,6 @@
 import { showFriendlyError } from '../utils/errors.js';
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', cross: IS_WINDOWS ? '[X]' : '✗' };
+import { SYM, IS_WINDOWS } from '../cli/symbols.js';
+import { offerUnsavedReport } from '../cli/unsaved-report.js';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -9,7 +9,10 @@ import { runPOIScan } from '../analyst/index.js';
 import { buildPasses } from '../analyst/multipass.js';
 import { runMultiPassPOI } from '../core/multipass.js';
 import { beginUsageCapture, endUsageCapture } from '../core/usage-tracker.js';
-import { showCostEstimate, showActualCost } from '../estimator.js';
+import { showCostEstimate, showActualCost, calcActualCost } from '../estimator.js';
+import { createRequire } from 'module';
+const _poiRequire = createRequire(import.meta.url);
+const { version: GHOST_VERSION } = _poiRequire('../../package.json');
 import { getConfig } from '../config.js';
 import { saveReport } from '../reports.js';
 import { handleProjectIntelligence, promptProjectLabel } from '../projects.js';
@@ -157,6 +160,11 @@ export async function runPOIMode(codebaseContext, options = {}) {
   let buffer  = '';
   let started = false;
   let spinner = null;
+  // The full verified finding set from a multipass run, including the findings
+  // ranked below the narrator's prose cap. Stays null on the single-pass path,
+  // where the report already contains every finding and reports.js can parse
+  // them straight out of it.
+  let sidecarFindings = null;
 
   try {
     // Capture REAL API token usage across the whole scan. Every scan pass,
@@ -190,16 +198,21 @@ export async function runPOIMode(codebaseContext, options = {}) {
             // (it arrives between narrating and report ready)
             if (data.card) {
               if (data.card.error) {
-                console.log(chalk.gray(`\n  ⚠  Verifier: ${data.card.note || data.card.error}\n`));
+                console.log(chalk.gray(`\n  ${SYM.warn}  Verifier: ${data.card.note || data.card.error}\n`));
               } else {
-                const { verified, unverified, falsePositives, totalFindings, note } = data.card;
+                const { verified, unverified, falsePositives, disputed, verifierUnavailable, totalFindings, note } = data.card;
                 if (note) {
                   console.log(chalk.gray(`\n  Verifier: ${note}\n`));
                 } else {
+                  // Disputed findings are dropped from the report exactly like
+                  // false positives are, so they must be counted here too, or
+                  // the line the user reads does not sum to totalFindings.
+                  const excluded = (falsePositives || 0) + (disputed || 0);
                   const parts = [];
                   parts.push(chalk.green(`${verified}/${totalFindings} grounded`));
-                  if (unverified > 0)     parts.push(chalk.yellow(`${unverified} unverified`));
-                  if (falsePositives > 0) parts.push(chalk.gray(`${falsePositives} low-confidence signals excluded`));
+                  if (unverified > 0) parts.push(chalk.yellow(`${unverified} unverified`));
+                  if (excluded   > 0) parts.push(chalk.gray(`${excluded} low-confidence signals excluded`));
+                  if (verifierUnavailable > 0) parts.push(chalk.yellow(`${verifierUnavailable} could not be verified`));
                   console.log(chalk.gray(`\n  Verification: `) + parts.join(chalk.gray(', ')) + '\n');
                 }
               }
@@ -300,9 +313,31 @@ export async function runPOIMode(codebaseContext, options = {}) {
         // Stop the narrator spinner cleanly now that the full report is in hand.
         if (spinner) { spinner.succeed(chalk.green('  Report ready')); spinner = null; }
         buffer = multiResult.finalReport;
-        // Use multipass total — reflects all files analyzed across all passes
+        // Every finding that survived verification, including the ones the
+        // narrator did not have room to detail. Threaded into saveReport's meta
+        // below so the .findings.json sidecar matches what the report's cap
+        // disclosure promises is in it.
+        if (Array.isArray(multiResult.findings) && multiResult.findings.length > 0) {
+          sidecarFindings = multiResult.findings;
+        }
+        // Coverage-aware file counts for the SAVED artifact.
+        //
+        // This used to set loadedFiles = totalFiles = multiResult.totalFiles, so
+        // meta.filesAnalyzed rendered "396 of 396" even on a capped run that
+        // only analyzed 40% of them. The honest `coverage` figure was printed to
+        // the terminal on the very next line and then thrown away, so the PDF a
+        // consultant hands a buyer claimed full coverage of a partial scan.
+        // A capped run is a legitimate, deliberate outcome (see
+        // userGotWhatTheyAskedFor in core/multipass.js). It just has to say so.
         if (multiResult.totalFiles) {
-          codebaseContext = { ...codebaseContext, loadedFiles: multiResult.totalFiles, totalFiles: multiResult.totalFiles };
+          const coverage = Number.isFinite(multiResult.coverage) ? multiResult.coverage : 100;
+          const analyzed = Math.round(multiResult.totalFiles * coverage / 100);
+          codebaseContext = {
+            ...codebaseContext,
+            loadedFiles: analyzed,
+            totalFiles:  multiResult.totalFiles,
+            coverage,
+          };
         }
         console.log('\n');
         console.log(chalk.cyan(
@@ -351,7 +386,17 @@ export async function runPOIMode(codebaseContext, options = {}) {
       console.log('\n');
     }
 
-    if (!buffer) return;
+    // Early return with an open capture window used to strand the tracker: the
+    // next scan's beginUsageCapture() silently discarded it. Close it, and if
+    // the run spent anything before producing no buffer, say so.
+    if (!buffer) {
+      const orphaned = endUsageCapture();
+      if (orphaned && orphaned.calls > 0) {
+        console.log(chalk.yellow('\n  Scan produced no report. You were billed for the work that ran:'));
+        showActualCost(orphaned.inputTokens, orphaned.outputTokens, model);
+      }
+      return;
+    }
 
     // Cost — prefer REAL captured token usage (every API call in the pipeline
     // records into the usage tracker). Fall back to the char/4 estimate only if
@@ -439,36 +484,20 @@ export async function runPOIMode(codebaseContext, options = {}) {
       }
     }
 
-    // Last-resort fallback: if we still have nothing, scan for the LAST dollar
-    // amount that looks like a grand total. Better than showing $0.
-    if (totalCost == null) {
-      const allRanges = [...buffer.matchAll(/\$([\d,]+)[\u2013\-]\$([\d,]+)/g)];
-      if (allRanges.length > 0) {
-        const last = allRanges[allRanges.length - 1];
-        const lo = parseInt(last[1].replace(/,/g, ''));
-        const hi = parseInt(last[2].replace(/,/g, ''));
-        totalCost = Math.round((lo + hi) / 2);
-      } else {
-        const allSingles = [...buffer.matchAll(/\$([\d,]{4,})/g)]; // 4+ digits = meaningful totals, not $50
-        if (allSingles.length > 0) {
-          const last = allSingles[allSingles.length - 1];
-          totalCost = parseInt(last[1].replace(/,/g, ''));
-        }
-      }
-    }
-    if (totalHours == null) {
-      const allHoursRanges = [...buffer.matchAll(/(\d+)[\u2013\-](\d+)\s*hours/g)];
-      if (allHoursRanges.length > 0) {
-        const last = allHoursRanges[allHoursRanges.length - 1];
-        totalHours = Math.round((parseInt(last[1]) + parseInt(last[2])) / 2);
-      } else {
-        const allHoursSingles = [...buffer.matchAll(/(\d+)\s*hours/g)];
-        if (allHoursSingles.length > 0) {
-          const last = allHoursSingles[allHoursSingles.length - 1];
-          totalHours = parseInt(last[1]);
-        }
-      }
-    }
+    // REMOVED (v10.0.17): a "last-resort" fallback that grabbed the LAST dollar
+    // range (or last 4+ digit dollar figure) anywhere in the report, and the same
+    // for hours, and presented it as the project grand total.
+    //
+    // The last large dollar figure in a Ghost report is not the grand total. It
+    // is whatever finding happened to be rendered last. So a scan whose labeled
+    // "Grand Total" line the parser failed to match would confidently stamp one
+    // finding's remediation cost onto meta.totalCost, and that number reached the
+    // PDF, the portal, and Ghost Mobile as the cost of the whole engagement.
+    //
+    // The fallback justified itself as "better than showing $0". It is not. A
+    // buyer reading $0 knows the field is empty. A buyer reading $1,800 when the
+    // real total is $47,000 makes a decision on it. Leaving these null honors the
+    // contract stated at the top of this block: no number beats a wrong number.
 
     // Resolved count: use project intelligence fuzzy match result if available,
     // otherwise fall back to baseline - current (simple delta)
@@ -480,8 +509,14 @@ export async function runPOIMode(codebaseContext, options = {}) {
     const meta = {
       filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
       totalFiles: codebaseContext.totalFiles,
-      cost: `${(inputTokens * 0.000003 + outputTokens * 0.000015).toFixed(4)}`,
-      version: '4.5.0',
+      // Was hardcoded to Sonnet's $3/$15 per-million rate regardless of the
+      // model actually used, so an Opus or Fable 5 scan under-reported its own
+      // cost in the saved artifact by 1.7x to 3.3x. calcActualCost() reads the
+      // canonical MODEL_RATES table (and honors the Sonnet 5 intro-pricing
+      // cutover), so the number now tracks whatever model ran.
+      cost: `${calcActualCost(inputTokens, outputTokens, model).totalCost.toFixed(4)}`,
+      // Was a hardcoded '4.5.0' left behind years of releases. Derive it.
+      version: GHOST_VERSION,
       findingCount,
       critical: criticalCount,
       high: highCount,
@@ -498,6 +533,11 @@ export async function runPOIMode(codebaseContext, options = {}) {
       // Ghost Partner — profile drives full white-label rendering in PDF + MD.
       // When `profile` is null, all renderers fall back to default Ghost branding.
       profile,
+      // Strategy 2 sidecar: when the multipass path supplied the full verified
+      // finding set, reports.js writes it verbatim instead of re-parsing the
+      // capped report text. This is what makes the cap disclosure's promise
+      // ("all N findings are in the accompanying .findings.json") true.
+      ...(sidecarFindings ? { findings: sidecarFindings } : {}),
     };
 
     if (doSave) {
@@ -508,28 +548,47 @@ export async function runPOIMode(codebaseContext, options = {}) {
       console.log(chalk.gray(`  📋 ${saved.mdFile}`));
       if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← client-ready PDF`));
       console.log('');
-    } else if (label) {
-      // @ghost-verified: intentionally minimal payload — no local save means no report text, resolved count, or file refs; buildPublishPayload fallbacks handle absent fields correctly
-      // No local save — but still publish to Ghost Mobile if configured
-      try {
-        const { isPublishConfigured, publishProject } = await import('../core/mobile-publish.js');
-        if (isPublishConfigured()) {
-          const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
-          await publishProject(
-            { label, slug: projectSlug, baselineDate: null, baselineCount: 0, scans: [] },
-            {
-              date: new Date().toISOString(),
-              version: '4.7.0',
-              findingCount: 0,
-              cost: meta.cost,
-            }
-          );
-          console.log(chalk.gray(`\n  📱 Published to Ghost Mobile (local save skipped)\n`));
-        }
-      } catch { /* non-fatal */ }
+    } else {
+      if (label) {
+        // @ghost-verified: intentionally minimal payload — no local save means no report text, resolved count, or file refs; buildPublishPayload fallbacks handle absent fields correctly
+        // No local save — but still publish to Ghost Mobile if configured
+        try {
+          const { isPublishConfigured, publishProject } = await import('../core/mobile-publish.js');
+          if (isPublishConfigured()) {
+            const projectSlug = label.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+            await publishProject(
+              { label, slug: projectSlug, baselineDate: null, baselineCount: 0, scans: [] },
+              {
+                date: new Date().toISOString(),
+                version: GHOST_VERSION,   // was a hardcoded '4.7.0'
+                findingCount: 0,
+                cost: meta.cost,
+              }
+            );
+            console.log(chalk.gray(`\n  📱 Published to Ghost Mobile (local save skipped)\n`));
+          }
+        } catch { /* non-fatal */ }
+      }
+      // Declining the save used to be a silent no-op whenever there was no
+      // project label: no message, no output, and the buffered report, which the
+      // user had already been billed for, was simply dropped. Offer to print it.
+      // See src/cli/unsaved-report.js.
+      await offerUnsavedReport(buffer, { prefix: 'ghost-poi' });
     }
 
   } catch (err) {
+    // A pass that throws (rate-limit exhaustion, network drop on pass 3 of 5)
+    // jumps straight here. Without this, endUsageCapture() never ran and the
+    // tokens the user was ALREADY BILLED for on the completed passes vanished
+    // silently: no cost line, no acknowledgement, nothing. Surface what the
+    // interrupted scan actually cost before showing the error.
+    try {
+      const partial = endUsageCapture();
+      if (partial && partial.calls > 0) {
+        console.log(chalk.yellow('\n  Scan interrupted. You were billed for the passes that completed:'));
+        showActualCost(partial.inputTokens, partial.outputTokens, model);
+      }
+    } catch { /* never let cost reporting mask the real error */ }
     showFriendlyError(err);
   }
 }

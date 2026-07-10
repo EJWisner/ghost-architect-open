@@ -2,6 +2,9 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
+### v10.0.17
+- Patch: license revocation checking added, so a cancelled subscription now stops Ghost Watcher™ and the gated modes instead of running until the token expires. Commit Forecast quota bypass closed. Trial and paid scans no longer drain the Open free-scan quota. The verifier no longer silently deletes real findings when a rate limit interrupts verification. Ghost Watcher™ no longer publishes a clean portal state, or marks findings resolved, when a scan did not run. Claude Fable 5 added to the model picker. Around forty further correctness, cost-accuracy, and copy fixes.
+
 ### v10.0.16
 - Patch: PRICING export name collision fixed, forecast-overlay context cap intent documented, blast cost tracker stage argument corrected, blast radius observations separated from action-required findings in PR comments and portal.
 
@@ -214,10 +217,10 @@ Maps every file that breaks if you change something. Know the impact before you 
 **Leg 2 -- Conflict Detection™**
 Finds where two sides of the codebase expect different things. Catches contract mismatches before they hit production.
 
-**Leg 3 -- Ghost Brief™**
+**Leg 3 -- Ghost Brief™** (requires a Max plan: Pro Max, Team Max, or Enterprise Max)
 Generates a developer-ready remediation prompt for every finding. Paste directly into Claude Code, Cursor, Copilot, or any AI coding tool.
 
-Ghost Watcher™ runs the Ghost Triple Crown™ automatically on every commit. No configuration. No manual scans. Every push, every time.
+Ghost Watcher™ (Team plan and above) runs Blast Radius™ and Conflict Detection™ automatically on every commit. Leg 3, Ghost Brief™, is added automatically on Max plans (Pro Max, Team Max, Enterprise Max); plain Team and Enterprise get legs 1 and 2. No configuration. No manual scans. Every push, every time.
 
 ## What's New in v9.3.1
 
@@ -612,11 +615,11 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Feature | Open (free) | Pro | Pro Max | Team | Team Max | Enterprise | Ent. Max |
 |---|---|---|---|---|---|---|---|
 | Question | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Points of Interest scan | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Blast Radius + Rollback | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Conflict Detection | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Points of Interest scan | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Blast Radius + Rollback | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Conflict Detection | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Commit Forecast | 1 free / install | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Prompt Triage | 4 free scans | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Prompt Triage | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Recon sizing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Project labels + history tracking | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -633,6 +636,8 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Custom enterprise gating | — | — | — | — | — | ✅ | ✅ |
 | Context cap | 50K tokens | 100K | 100K | 150K | 150K | 200K | 200K |
 | Pricing | Free, BYOK | $25/mo | $99/mo | $399/mo | $799/mo | $1,200/mo+ | $2,500/mo+ |
+
+The "4 free scans (shared)" rows draw from one shared pool of 4 on the Open tier, not 4 per mode. Points of Interest, Blast Radius, Conflict Detection, and Prompt Triage together consume the same 4-scan counter in any combination. Commit Forecast has its own separate 1-per-install allowance.
 
 **Ghost Brief™ tiers at a glance:**
 
@@ -1133,8 +1138,6 @@ ghost_watcher:
     detailed_prompts: true   # Generate LLM-authored remediation prompts per finding (default: true)
   notifications:
     pr_comment: true
-  iterations:
-    max: 10
 ```
 
 ### Ghost Watcher™ never blocks a commit

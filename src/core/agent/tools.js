@@ -211,10 +211,23 @@ export function buildTools(fileMap, memory) {
         title:       'string — short descriptive title for the finding',
         detail:      'string — full explanation: what the issue is, why it matters, what to do',
         files:       'array of strings — file paths involved in this finding',
-        confidence:  'number (optional) — 0-100, how confident you are. Default 90.',
+        confidence:  'number (optional) — 0-100, how confident you are. If you omit this, the finding is treated as needing human review rather than as confirmed.',
       },
-      execute: async ({ severity, title, detail, files = [], confidence = 90 }) => {
-        const finding = { severity, title, detail, files, confidence };
+      // confidence is deliberately NOT defaulted to 90 here.
+      //
+      // It used to be, and src/core/agent/verifier.js maps `confidence >= 80` to
+      // the CONFIRMED verdict. So a model that flagged a finding and simply never
+      // mentioned confidence was silently awarded 90 and promoted to CONFIRMED.
+      // Absence of a claim was read as a maximal claim, on the one field that
+      // decides whether a finding reaches a buyer labelled "definite".
+      //
+      // Leave it null. The verifier's fallback (75) then lands such a finding in
+      // POSSIBLE, which is what "the model did not say" actually means.
+      execute: async ({ severity, title, detail, files = [], confidence }) => {
+        const finding = {
+          severity, title, detail, files,
+          confidence: Number.isFinite(confidence) ? confidence : null,
+        };
         memory.addFinding(finding);
         return {
           recorded:    true,

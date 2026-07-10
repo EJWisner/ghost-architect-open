@@ -1594,8 +1594,13 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // persist a sub-tier value (e.g. 50K) into the configstore; clearing only the
   // override is not enough, because buildContext otherwise reads that saved value
   // (or the hardcoded default) directly. ignoreSavedContext routes resolution to
-  // the full tier cap on the ephemeral runner. Set in the same call as tier so
-  // the flag is not clobbered by a subsequent setScanOptions.
+  // the full tier cap on the ephemeral runner. setScanOptions does a full
+  // replace, not a merge: only `tier` falls back to the prior value, so every
+  // other field (including ignoreSavedContext) resets to its default when
+  // omitted. That is why tier + ignoreSavedContext are passed together in this
+  // one call; splitting them across two top-level calls would reset the flag.
+  // (loadFromPath's own internal setScanOptions spreads ...getScanOptions(), so
+  // it preserves the flag rather than clobbering it.)
   if (process.env.CI) {
     setScanOptions({ tier, maxContextOverride: null, ignoreSavedContext: true });
     console.log('Ghost Watcher: CI detected — ignoring saved context override, using full tier cap.');
@@ -1873,6 +1878,11 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   if (blastExpected    && !scanRan.blast)    incompleteScans.push('Blast Radius');
   if (conflictExpected && !scanRan.conflict) incompleteScans.push('Conflict Detection');
   const anyScanRan = scanRan.blast || scanRan.conflict;
+  // A run only produces trustworthy portal state when at least one scan ran AND
+  // no expected scan failed. Anything short of that means `allFindings` may be
+  // empty for reasons other than a clean codebase, so we must NOT write a
+  // completed/clean state or run the resolved-tracking delta off it.
+  const runComplete = anyScanRan && incompleteScans.length === 0;
 
   // ── Step 8: Ghost Brief (Max-tier gated) ─────────────────────────────────
   // Ghost Brief is a Max-tier artifact (pro-max / team-max / enterprise-max).
@@ -1925,7 +1935,14 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // The blast submit pushed a 'pending' commit-state entry; replace it with the
   // completed findings so the portal shows results instead of "analyzing". This
   // is the portal DATA layer only and is independent of Step 9's report push.
-  if (octokitPortal && portalOwner && portalRepoName) {
+  //
+  // GATED ON runComplete. If a scan submission threw (caught non-fatal above,
+  // batch IDs left null), `allFindings` is [] for a failure reason, not because
+  // the codebase is clean. Writing 'complete'/findings:[] here would render a
+  // false green on the portal AND the resolved-tracking delta below would mark
+  // every prior open finding as resolvedInCommit:<thisSha>. Never do either off
+  // an empty result set — the else-branch writes an explicit 'incomplete' state.
+  if (runComplete && octokitPortal && portalOwner && portalRepoName) {
     const sevAll = buildSeverityCounts(allFindings);
 
     // Finding lifecycle delta -- compare current findings against the most
@@ -1977,9 +1994,31 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       verifiedFindings, verifiedFindingCount: verifiedFindings.length,
       resolvedFindings, newFindingIds, priorCommitHash,
     });
+  } else if (octokitPortal && portalOwner && portalRepoName) {
+    // A scan that was expected to run did not complete (submission threw, API
+    // outage, etc.). Write a NON-clean 'incomplete' state so the portal shows
+    // the truth instead of a false green. Critically: findingCount 0 with EMPTY
+    // resolvedFindings/newFindingIds — we never mark real open findings resolved
+    // off a result set that is empty only because the scan failed.
+    const failed = incompleteScans.length > 0
+      ? `${incompleteScans.join(', ')} did not complete`
+      : 'no scan completed';
+    await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, repoPath, commitHashFull, {
+      commitHash: commitHashFull, branch, developer: developer.name,
+      timestamp: new Date().toISOString(), status: 'incomplete', batchId: null,
+      message: `Ghost Watcher™ run incomplete: ${failed}. Prior findings left unchanged.`,
+      findings: [], findingCount: 0,
+      severity: { critical: 0, high: 0, medium: 0, low: 0 }, prompts: 0,
+      tokenUsage: buildTokenUsage(totalInputTokens, totalOutputTokens),
+      resolvedFindings: [], newFindingIds: [], priorCommitHash: null,
+    });
   }
-  // A completed run resets the consecutive-incomplete-run counter.
-  await resetIncompleteRuns(octokitPortal, portalRepoPath);
+  // Only a genuinely complete run resets the consecutive-incomplete-run counter.
+  // An incomplete run must leave it intact so the 3-strikes setup warning
+  // (handleIncompleteRun) still fires after repeated silent failures.
+  if (runComplete) {
+    await resetIncompleteRuns(octokitPortal, portalRepoPath);
+  }
 
   // ── Step 8c: Findings, degraded-run, or clean-scan email ──────────────────
   // Fire-and-forget; never blocks the portal push that follows.
@@ -2162,6 +2201,11 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         blastFileCount,
         briefPromptCount,
         narratorFailed,
+        // Match the PR-comment truth (Step 10 passes scanFailed:!anyScanRan):
+        // the sidecar must carry the same scan-failure signal so any consumer
+        // reading watch-<sha>.json sees an incomplete run, not a clean one.
+        scanFailed:  !anyScanRan,
+        incompleteScans,
         findings:    portalActionFindings,
         blastRadiusObservations: portalBlastObservations,
         verifiedFindings,

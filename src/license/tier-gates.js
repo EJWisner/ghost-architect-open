@@ -61,6 +61,16 @@ const TIER_POLICY = {
   'mode:conflict':         { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   'mode:prompt-triage':    { open: 'quota',            trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   'mode:audit':            { open: false,              trial: true,  pro: true,  'pro-max': true,  team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
+  // Ghost Watcher: Team plan and above. Declared here rather than as a literal
+  // tier array in bin/ghost.js, which carried TWO independent copies of the same
+  // list (the headless --watcher-commit path and the Enable Watch menu path).
+  // Two hand-maintained copies of an entitlement list is precisely the drift
+  // class that shipped an entitlement bug before. Both now derive from
+  // allowedTiers('mode:watch').
+  //
+  // trial is deliberately false: a 7-day trial should not wire a persistent CI
+  // hook into a customer repo that outlives the trial.
+  'mode:watch':            { open: false,              trial: false, pro: false, 'pro-max': false, team: true,  'team-max': true,  enterprise: true,  'enterprise-max': true  },
   // Ghost Brief artifact: Max tiers only (pro-max, team-max, enterprise-max).
   // Non-Max paid tiers (pro, team, enterprise) are blocked.
   'mode:ghost-brief':      { open: false,              trial: true,  pro: false, 'pro-max': true,  team: false, 'team-max': true,  enterprise: false, 'enterprise-max': true  },

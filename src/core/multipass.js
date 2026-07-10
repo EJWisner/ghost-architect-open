@@ -14,10 +14,10 @@ import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
-import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
+import { narrateReport, scrubEmptyHeaders, splitFindingsAtCap, rewriteCapDisclosure } from './agent/narrator.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { isContextOverflow } from '../utils/errors.js';
-import { verifyReport, formatVerifierReport } from './verifier.js';
+import { verifyReport, verifyFindings, survivedVerification, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
 import { recordUsage } from './usage-tracker.js';
 import { mergeRates } from '../profile/index.js';
@@ -106,10 +106,18 @@ function readSessionFile(finalPath) {
   }
 }
 
-// Rough per-pass API cost estimate (USD) for a POI multi-pass scan, used only
-// to tell a user how much of a recovered session's spend they are NOT repeating.
-// Conservative mid-point of the observed $0.30 to $0.50 per-pass range; this is
-// an informational estimate, not a billing figure.
+// Rough per-pass API cost estimate (USD) for a POI multi-pass scan. Mid-point of
+// the observed $0.30 to $0.50 per-pass range; an informational estimate, not a
+// billing figure.
+//
+// THE ONLY per-pass cost figure in this file. It used to be one of two: this
+// constant (0.40) drove the session-recovery "already spent" line, while the
+// pre-scan estimate, the capped estimate, and the abort-cost message each
+// hardcoded a bare 0.25. So Ghost quoted a scan at `remaining x $0.25`, then on
+// resume told the same user their completed passes had cost `done x $0.40`.
+// Same passes, 60% apart, and 0.25 sat below the observed floor so the pre-scan
+// quote was the one that was wrong. Use this constant everywhere. Do not
+// reintroduce a literal.
 const EST_COST_PER_PASS = 0.40;
 
 // When set (via the --recover-session <label> CLI flag), loadSession skips the
@@ -430,7 +438,7 @@ export function getPassInfo(fileMap) {
   const topFiles   = getTopFiles(fileMap, 5);
   const totalFiles = Object.keys(fileMap).length;
   const remaining  = passes.length;
-  const estCost    = (remaining * 0.25).toFixed(2);
+  const estCost    = (remaining * EST_COST_PER_PASS).toFixed(2);
   const estMinutes = Math.max(3, Math.round(remaining * 3.5));
   return { passes, topFiles, totalFiles, remaining, estCost, estMinutes, defaultCap: Math.min(DEFAULT_PASS_CAP, remaining) };
 }
@@ -725,6 +733,31 @@ function writeSynthesisStageDump(runId, stage, report, projectLabel) {
   } catch { /* never let logging break the scan */ }
 }
 
+// Titles are the only stable identity a finding carries across the raw-memory
+// form and the narrated-then-reparsed form. Normalize the way the verifier's own
+// fuzzy table matcher does: casefold, collapse whitespace, drop punctuation.
+function normalizeTitleForDedupe(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// First occurrence wins, so a detailed finding (which carries the narrator's
+// effort and cost estimates) beats the raw-memory copy of the same finding.
+function dedupeFindingsByTitle(findings) {
+  const seen = new Set();
+  const out = [];
+  for (const f of findings) {
+    const key = normalizeTitleForDedupe(f.title);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
 async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalPasses, coverage, onChunk, options = {}) {
   // Diagnostic run id — timestamps all four stage dumps in this scan so they
   // cluster together in directory listings. Filename-safe (no colons/dots).
@@ -859,6 +892,58 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
       finalOutput  = verifyResult.annotatedReport;
       verifierCard = verifyResult.report;
       if (options.onVerifierReport) options.onVerifierReport(verifierCard);
+
+      // ── Findings sidecar: the FULL verified set, not just what was narrated ──
+      //
+      // The narrator details at most MAX_FINDINGS_FOR_PASS_2 findings, and
+      // verifyReport() parses its findings back out of that rendered markdown.
+      // So everything ranked below the cap was, until now, never verified and
+      // never written anywhere: the report told the buyer about N findings while
+      // only ~30 existed in any artifact. The cap disclosure pointed at a JSON
+      // file that did not contain them.
+      //
+      // Fix: verify the undetailed remainder too, then write every survivor.
+      // Cost note: this is one extra verifier call per undetailed finding, and it
+      // only fires on scans that exceed the cap. A 71-finding scan pays for 41
+      // extra verifier calls (small prompts, max_tokens 300, truncated source).
+      const { undetailed, cap } = splitFindingsAtCap(memoryResult.findings);
+
+      const detailedSurvivors = (verifyResult.results || [])
+        .filter(survivedVerification)
+        .map(r => ({ ...r.finding, detailed: true }));
+
+      let undetailedSurvivors = [];
+      if (undetailed.length > 0) {
+        const { results: remainderResults } = await verifyFindings(
+          undetailed,
+          options.fileMap,
+          { llmVerifier: createLLMVerifier(), debugLabel: 'undetailed-remainder' }
+        );
+        undetailedSurvivors = remainderResults
+          .filter(survivedVerification)
+          .map(r => ({
+            ...r.finding,
+            // These were never narrated, so the planner never estimated effort
+            // for them. Report that honestly rather than defaulting to 0 hours,
+            // which reads as "free to fix".
+            effortHours: null,
+            detailed: false,
+          }));
+      }
+
+      // Dedupe by normalized title. The legacy narrator fallback path does not
+      // apply the cap, so on that path the "undetailed" remainder can already be
+      // present in the rendered report. Without this, those findings would appear
+      // twice in the sidecar.
+      const sidecarFindings = dedupeFindingsByTitle([...detailedSurvivors, ...undetailedSurvivors]);
+
+      // The narrator rendered the disclosure before verification ran, so its
+      // count was an upper bound. Restate it with the number that actually
+      // reached the sidecar, or remove it if verification dropped enough
+      // findings that the report is no longer capped.
+      finalOutput = rewriteCapDisclosure(finalOutput, sidecarFindings.length, cap);
+
+      if (options.onSidecarFindings) options.onSidecarFindings(sidecarFindings);
     } catch (err) {
       // Verifier failure must never block the report — surface a note and continue.
       if (options.onVerifierReport) {
@@ -889,10 +974,17 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // surviving, post-verifier body whenever the verifier changed anything.
   //
   // Cost: ~$0.02 per scan (small prompt, ~300 token output). Fires whenever the
-  // verifier reports any false positives OR any unverified findings; a scan
-  // where the verifier flagged nothing still pays nothing.
+  // verifier changed anything; a scan where the verifier flagged nothing still
+  // pays nothing.
+  //
+  // `disputed` belongs in this gate. A disputed finding is REMOVED from the
+  // report body exactly like a false positive is (see applyAnnotations' isDropped
+  // in verifier.js). Omitting it meant a scan whose only verifier action was
+  // dropping disputed findings kept a stale executive summary still describing
+  // findings that are no longer anywhere in the body.
   if (verifierCard && (
     (verifierCard.falsePositives ?? 0) > 0 ||
+    (verifierCard.disputed ?? 0) > 0 ||
     (verifierCard.unverified ?? 0) > 0
   )) {
     try {
@@ -1229,13 +1321,13 @@ function preflightSessionsWritable() {
 // Build the Error thrown when checkpoint persistence has failed badly enough
 // that the scan is no longer resumable. The message names the pass range that
 // can no longer be recovered and the approximate API cost already spent on it,
-// so the user understands exactly what aborting throws away. Cost uses the same
-// ~$0.25/pass figure the rest of this file estimates with (see getPassInfo).
+// so the user understands exactly what aborting throws away. Cost uses
+// EST_COST_PER_PASS, the single per-pass figure this file estimates with.
 function makeUnresumableAbortError(cause, lastPersistedPass, currentPassNum) {
   const firstLost  = lastPersistedPass + 1;
   const lostCount  = Math.max(1, currentPassNum - lastPersistedPass);
   const range      = lostCount === 1 ? `pass ${currentPassNum}` : `passes ${firstLost}–${currentPassNum}`;
-  const approxCost = (lostCount * 0.25).toFixed(2);
+  const approxCost = (lostCount * EST_COST_PER_PASS).toFixed(2);
 
   const err = new Error(
     `Checkpoint persistence failed and the scan cannot be resumed. ` +
@@ -1326,16 +1418,18 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
       startFromPass = 0;
     } else if (action === 'report') {
       onProgress({ type: 'synthesizing', groups: 1 });
+      let sidecarFindings = [];
       const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, {
         projectLabel,
         fileMap,
         profile,
         onVerifierStart:  () => onProgress({ type: 'verifying' }),
         onVerifierReport: (card) => onProgress({ type: 'verifierReport', card }),
+        onSidecarFindings: (f) => { sidecarFindings = f; },
       });
       deleteSession(projectLabel);
       const coverage = Math.round((session.completedPassCount / allPasses.length) * 100);
-      return { finalReport, passCount: session.completedPassCount, totalFiles, coverage };
+      return { finalReport, passCount: session.completedPassCount, totalFiles, coverage, findings: sidecarFindings };
     } else {
       startFromPass = session.completedPassCount;
     }
@@ -1355,12 +1449,12 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
   const defaultCap = Math.min(DEFAULT_PASS_CAP, remaining);
 
   // Emit passInfo BEFORE cap prompt so UI can show full context
-  onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining, estCost: (remaining * 0.25).toFixed(2), estMinutes: Math.max(3, Math.round(remaining * 3.5)) });
+  onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining, estCost: (remaining * EST_COST_PER_PASS).toFixed(2), estMinutes: Math.max(3, Math.round(remaining * 3.5)) });
 
   const cap     = await onPassCapPrompt({ remaining, defaultCap });
 
   // After cap is known, emit corrected cost/time for the selected passes
-  const capCost    = (cap * 0.25).toFixed(2);
+  const capCost    = (cap * EST_COST_PER_PASS).toFixed(2);
   const capMinutes = Math.max(3, Math.round(cap * 3.5));
   onProgress({ type: 'passInfo', totalPasses: allPasses.length, remaining: cap, estCost: capCost, estMinutes: capMinutes, isSelected: true });
 
@@ -1502,6 +1596,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
 
   // Final synthesis + narrator
   onProgress({ type: 'synthesizing', groups: session.mergedGroups.length });
+  let sidecarFindings = [];
   const finalReport = await synthesizeFinal(
     session.mergedGroups, totalFiles,
     session.completedPassCount, allPasses.length, coverage, onChunk,
@@ -1512,9 +1607,12 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
       onNarratorStart:    () => onProgress({ type: 'narrating' }),
       onVerifierStart:    () => onProgress({ type: 'verifying' }),
       onVerifierReport:   (card) => onProgress({ type: 'verifierReport', card }),
+      // The full verified finding set, including findings ranked below the
+      // narrator's prose cap. Written to the .findings.json sidecar by poi.js.
+      onSidecarFindings:  (f) => { sidecarFindings = f; },
     }
   );
 
   deleteSession(projectLabel);
-  return { finalReport, passCount: session.completedPassCount, totalFiles, coverage };
+  return { finalReport, passCount: session.completedPassCount, totalFiles, coverage, findings: sidecarFindings };
 }

@@ -40,7 +40,7 @@ function severityEmoji(s) {
     case 'CRITICAL': return '🔴';
     case 'HIGH':     return '🟠';
     case 'MEDIUM':   return '🟡';
-    case 'LOW':      return '🔵';
+    case 'LOW':      return '🟢';
     default:         return '⚪';
   }
 }

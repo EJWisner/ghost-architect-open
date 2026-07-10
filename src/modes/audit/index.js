@@ -40,11 +40,11 @@ import { saveReport } from '../../reports.js';
 // @ghost-verified: these imports resolve to src/projects.js and src/estimator.js (CLI layer wrappers) not src/core/ -- intentional, audit mode uses CLI display functions
 import { promptProjectLabel } from '../../projects.js';
 import { showAuditCostEstimate, showActualCost } from '../../estimator.js';
+import { beginUsageCapture, endUsageCapture } from '../../core/usage-tracker.js';
 import { getConfig } from '../../config.js';
 import { PRICING } from '../../constants/pricing.js';
 
-const IS_WINDOWS = process.platform === 'win32';
-const SYM = { check: IS_WINDOWS ? '[OK]' : '✓', warn: IS_WINDOWS ? '[!]' : '⚠' };
+import { SYM, IS_WINDOWS } from '../../cli/symbols.js';
 
 /**
  * Open-tier paywall panel. Audit Mode is Pro+ entirely — no partial run on
@@ -188,8 +188,10 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // run POI on Sonnet day-to-day. Same two choices the config picker offers.
   const configuredModel = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   const modelChoices = [
-    { name: 'claude-sonnet-4-6 (recommended — best balance)', value: 'claude-sonnet-4-6' },
-    { name: 'claude-opus-4-7 (most powerful — slower/costlier)', value: 'claude-opus-4-7' },
+    { name: 'claude-sonnet-4-6 (recommended, best balance)',        value: 'claude-sonnet-4-6' },
+    { name: 'claude-sonnet-5 (newer Sonnet, intro pricing)',        value: 'claude-sonnet-5' },
+    { name: 'claude-opus-4-8 (most powerful, slower and costlier)', value: 'claude-opus-4-8' },
+    { name: 'claude-fable-5 (deepest synthesis, highest cost)',     value: 'claude-fable-5' },
   ];
   const defaultChoiceIdx = modelChoices.findIndex(c => c.value === configuredModel);
   const { model } = await inquirer.prompt([{
@@ -258,6 +260,11 @@ export async function runAuditMode(codebaseContext, options = {}) {
   }
 
   // Analyzer 4: Modernization Roadmap Stub
+  // This is the audit's only billed API call. Bracket it so we can report the
+  // real cost afterwards: showAuditCostEstimate() above quotes a PRE-run guess,
+  // and showActualCost was imported but never called, so the user was shown an
+  // estimate and never told what they actually paid.
+  beginUsageCapture();
   spinner = ora({ text: chalk.cyan('Synthesizing Modernization Roadmap...'), color: 'cyan' }).start();
   try {
     results.roadmap = await runRoadmapStub({
@@ -271,6 +278,14 @@ export async function runAuditMode(codebaseContext, options = {}) {
     spinner.fail(chalk.red(`  Modernization Roadmap failed: ${err.message}`));
     results.roadmap = { _error: err.message };
   }
+  // Runs on BOTH paths. A roadmap that failed partway still burned tokens, and
+  // a stubbed roadmap made no call at all (calls === 0, nothing is printed).
+  try {
+    const auditUsage = endUsageCapture();
+    if (auditUsage && auditUsage.calls > 0) {
+      showActualCost(auditUsage.inputTokens, auditUsage.outputTokens, model);
+    }
+  } catch { /* cost reporting must never sink the audit */ }
 
   // ── Render real findings to stdout ───────────────────────────────────
   console.log('');

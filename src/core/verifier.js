@@ -24,6 +24,12 @@
 
 import { extractFindings } from '../utils/finding-parser.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
+import { buildLineCitationRegex } from '../constants/code-extensions.js';
+
+// Built once. Note the `g` flag makes RegExp objects stateful via lastIndex, but
+// String.prototype.replace resets lastIndex on every call, so a module-level
+// instance is safe here. Do not use this constant with .test() or .exec().
+const LINE_CITATION_REGEX = buildLineCitationRegex();
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -353,20 +359,30 @@ function verifyFinding(finding, fileMap) {
 // ── Main entry ───────────────────────────────────────────────────────────────
 
 /**
- * Verify all findings in a report against the source code.
+ * Verify a set of finding objects against the source code.
  *
- * @param {string} reportText  — the full markdown report
+ * Split out of verifyReport so the same two-pass pipeline can run over findings
+ * that never reached the report. The narrator caps prose rendering at
+ * MAX_FINDINGS_FOR_PASS_2, so verifyReport (which parses findings back out of
+ * the rendered markdown) only ever sees the findings that were detailed. The
+ * findings ranked below the cap were previously never verified at all, which is
+ * why they could not be written to the findings sidecar: an unverified finding
+ * is not one we are willing to hand a buyer.
+ *
+ * @param {object[]} findings  — finding objects: { title, severity, detail, files, ... }
  * @param {object} fileMap     — { 'path/to/file.php': '<source code>' }
- * @param {object} options     — { llmVerifier?: async (finding, source) => {verdict, reason} }
- * @returns {Promise<{ annotatedReport: string, report: VerifierReport }>}
+ * @param {object} options     — { llmVerifier?, debugLabel? }
+ * @returns {Promise<{ results: object[], report: VerifierReport }>}
+ *          results[i] = { finding, status, reasons, warnings }
+ *          status is one of: verified | unverified | disputed | false_positive
  */
-export async function verifyReport(reportText, fileMap, options = {}) {
-  if (!reportText) return { annotatedReport: reportText, report: emptyReport() };
-  if (!fileMap || Object.keys(fileMap).length === 0) {
-    return { annotatedReport: reportText, report: emptyReport('No fileMap provided — verification skipped') };
+export async function verifyFindings(findings, fileMap, options = {}) {
+  if (!Array.isArray(findings) || findings.length === 0) {
+    return { results: [], report: emptyReport() };
   }
-
-  const findings = extractFindings(reportText);
+  if (!fileMap || Object.keys(fileMap).length === 0) {
+    return { results: [], report: emptyReport('No fileMap provided — verification skipped') };
+  }
 
   // First pass: regex verifier (cheap, always runs)
   let results = findings.map(f => ({ finding: f, ...verifyFinding(f, fileMap) }));
@@ -383,6 +399,13 @@ export async function verifyReport(reportText, fileMap, options = {}) {
   // Track LLM verdicts in parallel so the debug log can show both what the LLM said
   // and what the final verifier decision was (they can differ when the regex pass already failed).
   const llmVerdicts = [];   // array of { title, verdict, reason, errored?, skipped? }
+
+  // Findings the LLM verifier never actually judged (transport failure, malformed
+  // response, or a thrown error). These are EXEMPT from the DISPUTED sweep below:
+  // the sweep drops findings the verifier contradicted, and a verifier that never
+  // ran contradicted nothing. Without this exemption a single transient 429
+  // silently deletes a real, source-confirmable finding from a paid report.
+  const verifierUnavailable = new Set();   // finding indices
 
   // Second pass: LLM verifier (expensive, only on findings that passed the regex pass).
   // The LLM verifier catches semantic fabrications the regex pass can't — e.g.
@@ -427,6 +450,19 @@ export async function verifyReport(reportText, fileMap, options = {}) {
             sourceChars:   source.length,
           };
           if (!verdict) return r;
+          if (verdict.verdict === 'error') {
+            // The verifier never reached a judgement (rate limit, 5xx, malformed
+            // response). Leave the finding exactly as the regex pass left it, mark
+            // it exempt from the DISPUTED sweep, and keep the raw failure text OUT
+            // of `warnings` — warnings are rendered into the customer's report and
+            // "LLM verifier call failed: 429 {...}" is not a consultant deliverable.
+            // The reason still lands in `reasons`, which is internal/debug only.
+            verifierUnavailable.add(idx);
+            return {
+              ...r,
+              reasons: [...(r.reasons || []), `LLM verifier unavailable: ${verdict.reason || 'unknown error'}`],
+            };
+          }
           if (verdict.verdict === 'contradicts') {
             // LLM read the source and saw it contradict the finding.
             // High-confidence drop — the finding is wrong.
@@ -485,6 +521,9 @@ export async function verifyReport(reportText, fileMap, options = {}) {
             title:   r.finding.title,
             errored: err.message,
           };
+          // Same contract as the 'error' verdict above: a verifier that threw
+          // never judged the finding, so it cannot be treated as disputing it.
+          verifierUnavailable.add(idx);
           return { ...r, reasons: [...r.reasons, `LLM verifier errored: ${err.message}`] };
         }
     });
@@ -506,8 +545,11 @@ export async function verifyReport(reportText, fileMap, options = {}) {
     'cannot be verified from the source file',
     'cited in this finding do not appear',
   ];
-  results = results.map(r => {
+  results = results.map((r, idx) => {
     if (r.status !== 'unverified') return r;
+    // A finding the LLM verifier never judged cannot have been disputed by it.
+    // Dropping it here would delete a real finding on a transient API failure.
+    if (verifierUnavailable.has(idx)) return r;
     const haystack = [...(r.reasons || []), ...(r.warnings || [])]
       .join(' ')
       .toLowerCase();
@@ -524,20 +566,29 @@ export async function verifyReport(reportText, fileMap, options = {}) {
     return r;
   });
 
+  // If the LLM verifier was unavailable for any finding, say so once, on stderr,
+  // to the operator. Silence here is how a degraded verification pass gets
+  // mistaken for a clean one: the findings still print, just unconfirmed.
+  if (verifierUnavailable.size > 0) {
+    console.info(
+      `[Ghost] LLM verification unavailable for ${verifierUnavailable.size} of ${findings.length} finding(s). ` +
+      `Those findings were kept and marked unverified rather than dropped. Re-run to verify them.`
+    );
+  }
+
   const report = {
     totalFindings:  findings.length,
     verified:       results.filter(r => r.status === 'verified').length,
     unverified:     results.filter(r => r.status === 'unverified').length,
     disputed:       results.filter(r => r.status === 'disputed').length,
     falsePositives: results.filter(r => r.status === 'false_positive').length,
+    verifierUnavailable: verifierUnavailable.size,
     details:        results.map(r => ({
       title:    r.finding.title,
       status:   r.status,
       reasons:  r.reasons,
     })),
   };
-
-  const annotatedReport = applyAnnotations(reportText, results);
 
   // ── Debug telemetry (instrumentation only, no effect on output) ──────────
   // Writes a JSON file with per-finding regex + LLM verdicts so we can diagnose
@@ -546,6 +597,7 @@ export async function verifyReport(reportText, fileMap, options = {}) {
   try {
     const debugPayload = {
       timestamp:      new Date().toISOString(),
+      scope:          options.debugLabel || 'report',
       totalFindings:  findings.length,
       finalCounts: {
         verified:       report.verified,
@@ -567,7 +619,41 @@ export async function verifyReport(reportText, fileMap, options = {}) {
     writeDebugLog('scan', debugPayload);
   } catch { /* never let debug logging break the scan */ }
 
-  return { annotatedReport, report };
+  return { results, report };
+}
+
+// A finding survives verification when the verifier did not actively reject it.
+// `disputed` and `false_positive` are the two rejecting verdicts, and both are
+// removed from the report body by applyAnnotations' isDropped. `verified` and
+// `unverified` both survive: unverified means "could not confirm", which is an
+// absence of evidence, not evidence of absence.
+export function survivedVerification(result) {
+  return result.status !== 'disputed' && result.status !== 'false_positive';
+}
+
+/**
+ * Verify all findings in a report against the source code, and annotate it.
+ *
+ * @param {string} reportText  — the full markdown report
+ * @param {object} fileMap     — { 'path/to/file.php': '<source code>' }
+ * @param {object} options     — { llmVerifier?: async (finding, source) => {verdict, reason} }
+ * @returns {Promise<{ annotatedReport: string, report: VerifierReport, results: object[] }>}
+ */
+export async function verifyReport(reportText, fileMap, options = {}) {
+  if (!reportText) return { annotatedReport: reportText, report: emptyReport(), results: [] };
+  if (!fileMap || Object.keys(fileMap).length === 0) {
+    return {
+      annotatedReport: reportText,
+      report: emptyReport('No fileMap provided — verification skipped'),
+      results: [],
+    };
+  }
+
+  const findings = extractFindings(reportText);
+  const { results, report } = await verifyFindings(findings, fileMap, options);
+  const annotatedReport = applyAnnotations(reportText, results);
+
+  return { annotatedReport, report, results };
 }
 
 /**
@@ -611,10 +697,14 @@ function applyAnnotations(reportText, results) {
 
   // Strip bare line-number citations like "(line 42)", "lines 42-55", "file.php:42"
   // These are pervasive fabrications and the narrator cannot be trusted on them.
+  //
+  // The per-extension pass used to be three hardcoded replaces (.php/.js/.ts).
+  // The loader accepts twenty-plus extensions, so a fabricated "Service.py:120"
+  // or "Main.kt:88" survived untouched into the customer's report. Derive the
+  // pattern from the shared extension list instead, so adding a language to the
+  // loader cannot silently reopen this hole.
   out = out.replace(/\s*\(lines?\s+\d+[\u2013\-]?\d*\)/gi, '');
-  out = out.replace(/\.php:\d+(?:[\u2013\-]\d+)?/g, '.php');
-  out = out.replace(/\.js:\d+(?:[\u2013\-]\d+)?/g, '.js');
-  out = out.replace(/\.ts:\d+(?:[\u2013\-]\d+)?/g, '.ts');
+  out = out.replace(LINE_CITATION_REGEX, '$1');
 
   return out;
 }
@@ -884,11 +974,13 @@ function annotateFindingSection(report, title, warnings) {
 
 function emptyReport(note = '') {
   return {
-    totalFindings:  0,
-    verified:       0,
-    unverified:     0,
-    falsePositives: 0,
-    details:        [],
+    totalFindings:       0,
+    verified:            0,
+    unverified:          0,
+    disputed:            0,
+    falsePositives:      0,
+    verifierUnavailable: 0,
+    details:             [],
     note,
   };
 }
@@ -898,11 +990,19 @@ function emptyReport(note = '') {
  */
 export function formatVerifierReport(report) {
   if (!report) return '';
+  // BOTH false_positive and disputed findings are removed from the report body
+  // (see applyAnnotations' isDropped). Reporting only falsePositives meant the
+  // numbers never added up: 10 findings shown as "6 grounded, 1 unverified,
+  // 1 dropped" left 2 disputed findings silently unaccounted for. Sum the two
+  // drop reasons into one honest count so verified + unverified + dropped
+  // always equals totalFindings.
+  const dropped = (report.falsePositives || 0) + (report.disputed || 0);
   const lines = [
     `  Verification: ${report.verified}/${report.totalFindings} grounded` +
-      (report.unverified     > 0 ? `, ${report.unverified} unverified`         : '') +
-      (report.falsePositives > 0 ? `, ${report.falsePositives} false positives dropped` : '') +
-      (report.note ? ` — ${report.note}` : ''),
+      (report.unverified > 0 ? `, ${report.unverified} unverified` : '') +
+      (dropped           > 0 ? `, ${dropped} low-confidence dropped` : '') +
+      (report.verifierUnavailable > 0 ? `, ${report.verifierUnavailable} could not be verified` : '') +
+      (report.note ? `. ${report.note}` : ''),
   ];
   return lines.join('\n');
 }

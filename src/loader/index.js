@@ -13,6 +13,7 @@ import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
 import { redactContent, showRedactionSummary } from '../redactor.js';
 import { isBackKeyword } from '../cli/prompt-helpers.js';
 import { expandTilde } from '../utils/paths.js';
+import { CODE_EXTENSIONS } from '../constants/code-extensions.js';
 
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
@@ -99,9 +100,8 @@ export function getScanOptions() {
 }
 
 // Default exclusions applied automatically to every scan.
-// Users do not need to pass --exclude flags for these. To disable,
-// pass --no-default-excludes (rarely needed; for cases like auditing
-// a vendor folder directly).
+// Users do not need to pass --exclude flags for these; they are always
+// skipped (dependency dirs, build output, lock files, and similar).
 const IGNORED_DIRS = [
   // JS/TS ecosystem
   'node_modules', 'dist', 'build', '.next', '.nuxt', '.svelte-kit', '.parcel-cache', '.turbo',
@@ -123,8 +123,7 @@ const IGNORED_DIRS = [
   '.cache',
   // Static / binary asset bundles (images, fonts, compiled front-end output).
   // Commonly vendored or compiled and rarely carry reviewable source signal.
-  // Any real code kept under assets/ is skipped too; pass --no-default-excludes
-  // to include it.
+  // Any real code kept under assets/ is skipped too as a result.
   'assets',
 ];
 const IGNORED_FILES = [
@@ -137,11 +136,11 @@ const IGNORED_FILES = [
   '.DS_Store', 'Thumbs.db',
 ];
 const MAX_FILE_TOKENS = 50000; // ~200KB — skip files larger than this
-const CODE_EXTENSIONS = [
-  '.php', '.js', '.ts', '.jsx', '.tsx', '.py', '.rb', '.java', '.go',
-  '.cs', '.cpp', '.c', '.h', '.vue', '.svelte', '.sql', '.xml', '.json',
-  '.yaml', '.yml', '.env.example', '.sh', '.bash', '.md'
-];
+
+// CODE_EXTENSIONS is shared with src/core/verifier.js, which scrubs fabricated
+// "File.ext:42" line citations for exactly these extensions. Keeping one list
+// means adding a language here cannot silently let hallucinated line numbers
+// through there. See src/constants/code-extensions.js.
 
 // Git hook scripts live in .git/hooks/ and are extensionless (pre-commit,
 // post-checkout, etc.), so the CODE_EXTENSIONS filter skips them — a scan
@@ -173,9 +172,15 @@ const IGNORED_EXTENSIONS = new Set([
 // tree paths on every platform.
 export function isScannablePath(filePath) {
   const ext = path.extname(filePath).toLowerCase();
+  const base = path.basename(filePath);
   if (IGNORED_EXTENSIONS.has(ext)) return false;
   if (CODE_EXTENSIONS.includes(ext)) return true;
-  return GIT_HOOKS.has(path.basename(filePath));
+  // .env.example carries reviewable config-shape signal, but path.extname()
+  // returns '.example' for it (not '.env.example'), so a CODE_EXTENSIONS entry
+  // could never match. Match by basename suffix instead so these files load on
+  // every path (directory, ZIP, GitHub).
+  if (base === '.env.example' || base.endsWith('.env.example')) return true;
+  return GIT_HOOKS.has(base);
 }
 
 export async function loadCodebase(method, options) {
@@ -222,8 +227,17 @@ async function _loadFromDirPath(dirPath, options = {}) {
   const spinner = ora('Scanning files...').start();
 
   // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
+  //
+  // glob() does not enumerate dot-prefixed entries unless `dot: true`, so the
+  // directory walker never even offered `.env.example` to isScannablePath(): the
+  // allowlist entry was reachable on the ZIP and GitHub paths (which enumerate
+  // archive/tree entries directly) and dead here. Rather than flip `dot: true`
+  // globally, which would sweep .github/, .husky/, .circleci/ and friends into
+  // every scan and quietly raise everyone's token bill, glob the dot-named
+  // allowlist entries explicitly and merge.
   const allFiles = await glob(`${dirPath}/**/*`, { nodir: true });
-  const allCodeFiles = allFiles.filter(f => isScannablePath(f));
+  const dotAllowlisted = await glob(`${dirPath}/**/.env.example`, { nodir: true, dot: true });
+  const allCodeFiles = [...new Set([...allFiles, ...dotAllowlisted])].filter(f => isScannablePath(f));
 
   // Step 2: apply default IGNORED_DIRS + IGNORED_FILES exclusions.
   const beforeDefaults = allCodeFiles.length;
@@ -302,6 +316,9 @@ async function loadFromFiles() {
   return await _loadFromDirPath(dirPath);
 }
 
+// Interactive entry: prompt for the path, then delegate. The split mirrors
+// loadFromPath / _loadFromDirPath, and exists for the same reason: the loading
+// logic is worth testing and an inquirer prompt is not callable from a test.
 async function loadFromZip() {
   const { zipPath } = await inquirer.prompt([{
     type: 'input',
@@ -327,6 +344,13 @@ async function loadFromZip() {
     return null;
   }
 
+  return await loadFromZipPath(zipPath);
+}
+
+// ── loadFromZipPath — non-interactive, takes a known .zip path ────────────────
+// Same contract as loadFromPath: returns the codebase context, throws nothing
+// the interactive path would not throw.
+export async function loadFromZipPath(zipPath) {
   const spinner = ora('Extracting ZIP...').start();
   const zip = new AdmZip(zipPath);
   const entries = zip.getEntries();
@@ -336,6 +360,7 @@ async function loadFromZip() {
 
   const zipExcludePatterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
   let zipExcludedCount = 0;
+  let zipDefaultExcluded = 0;
 
   for (const entry of entries) {
     if (entry.isDirectory) continue;
@@ -355,9 +380,9 @@ async function loadFromZip() {
       }
       if (ignored) break;
     }
-    if (ignored) continue;
+    if (ignored) { zipDefaultExcluded++; continue; }
     const filename = path.basename(entry.entryName);
-    if (IGNORED_FILES.includes(filename)) continue;
+    if (IGNORED_FILES.includes(filename)) { zipDefaultExcluded++; continue; }
 
     if (zipExcludePatterns.length > 0 && isExcluded(entry.entryName, zipExcludePatterns)) {
       zipExcludedCount++;
@@ -376,6 +401,9 @@ async function loadFromZip() {
     } catch {}
   }
 
+  if (zipDefaultExcluded > 0) {
+    console.log(chalk.gray(`  ℹ  Default excludes: skipped ${zipDefaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+  }
   if (zipExcludedCount > 0) {
     console.log(chalk.gray(`  ℹ  Exclusions: skipped ${zipExcludedCount} file(s) inside ZIP`));
   }
@@ -533,6 +561,7 @@ async function loadFromGitHub() {
 
     const ghExcludePatterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
     let ghExcludedCount = 0;
+    let ghDefaultExcluded = 0;
 
     const codeFiles = treeEntries.filter(item => {
       if (!item || typeof item !== 'object' || typeof item.path !== 'string') return false;
@@ -544,14 +573,15 @@ async function loadFromGitHub() {
         if (d.includes('/')) {
           const parts = d.split('/');
           for (let i = 0; i + parts.length <= segments.length; i++) {
-            if (parts.every((p, k) => segments[i + k] === p)) return false;
+            if (parts.every((p, k) => segments[i + k] === p)) { ghDefaultExcluded++; return false; }
           }
         } else if (segments.includes(d)) {
+          ghDefaultExcluded++;
           return false;
         }
       }
       // Apply default IGNORED_FILES.
-      if (IGNORED_FILES.includes(path.basename(item.path))) return false;
+      if (IGNORED_FILES.includes(path.basename(item.path))) { ghDefaultExcluded++; return false; }
       // Apply user --exclude / --exclude-presets.
       if (ghExcludePatterns.length > 0 && isExcluded(item.path, ghExcludePatterns)) {
         ghExcludedCount++;
@@ -560,6 +590,9 @@ async function loadFromGitHub() {
       return true;
     });
 
+    if (ghDefaultExcluded > 0) {
+      console.log(chalk.gray(`  ℹ  Default excludes: skipped ${ghDefaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+    }
     if (ghExcludedCount > 0) {
       console.log(chalk.gray(`  ℹ  Exclusions: skipped ${ghExcludedCount} file(s) from remote tree`));
     }

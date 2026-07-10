@@ -58,8 +58,10 @@ export function getPublicKeyHex() {
 // Honest threat model: anyone who reverse-engineers the Pro binary can
 // extract this secret and mint trial tokens of arbitrary length. We accept
 // this because trial-tier tokens:
-//   - Block `audit` mode (the deal-grade output)
-//   - Watermark every PDF page ("TRIAL — Powered by Ghost Architect")
+//   - Watermark every PDF page (see pdf-generator.js: a diagonal "TRIAL"
+//     stamp plus "TRIAL OUTPUT -- NOT FOR DISTRIBUTION" and license id). This
+//     PDF watermark is the sole trial differentiator per tier-gates.js;
+//     `audit` mode is granted to trials (tier-gates: mode:audit trial=true).
 //   - Are tracked per fingerprint (one trial per machine via configstore marker)
 // The bypass value is low enough that defending against it isn't worth the
 // added friction of an activation-server roundtrip for new evaluators.

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import yaml from 'yaml';
 import { createOctokit } from '../utils/octokit-client.js';
 import { parseRepo } from '../core/team-sync.js';
+import { BATCH_DISCOUNT } from '../lib/cost-estimator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_TEMPLATE_PATH = path.join(__dirname, 'github-actions-template.yml');
@@ -47,10 +48,16 @@ async function upsertRepoFile(octokit, owner, repo, filePath, content, message) 
  * @returns {{ low: number, high: number, perRun: { low: number, high: number } }}
  */
 export function estimateWatcherCost({ teamSize = 1, commitsPerDay = 5, blastRadius = true, conflictDetection = true }) {
-  // Per-run cost ranges based on observed production costs
-  // Blast Radius only: $0.15 - $0.30
-  // Conflict Detection (no verification): $0.80 - $1.50
-  // Both: $1.50 - $3.00
+  // The figures below are STREAMING (full-price) per-run observations. Ghost
+  // Watcher runs every scan through the Anthropic Message Batches API, which
+  // bills at BATCH_DISCOUNT (50%) of streaming rates, so we halve them before
+  // display. The onboarding estimate must match the batch rate the customer is
+  // actually billed, not the streaming rate they never pay.
+  //   Streaming reference (pre-discount):
+  //     Blast Radius only:                  $0.15 - $0.30
+  //     Conflict Detection (no verify):     $0.80 - $1.50
+  //     Both:                               $0.95 - $1.80
+  //   Batch rate shown = half of the above.
   let perRunLow  = 0;
   let perRunHigh = 0;
 
@@ -62,6 +69,11 @@ export function estimateWatcherCost({ teamSize = 1, commitsPerDay = 5, blastRadi
     perRunLow  += 0.80;
     perRunHigh += 1.50;
   }
+
+  // Apply the batch discount so the displayed per-run (and derived daily/monthly)
+  // figures reflect real billed cost, not the streaming rate.
+  perRunLow  *= BATCH_DISCOUNT;
+  perRunHigh *= BATCH_DISCOUNT;
 
   const runsPerMonth = commitsPerDay * 30;
   const monthlyLow   = parseFloat((perRunLow  * runsPerMonth).toFixed(2));

@@ -99,6 +99,12 @@ export async function runQuestionMode(codebaseContext, options = {}) {
   // through purely for the D3 callout decision (Pro users don't need the
   // upsell); no other tier-conditional surface exists in this mode.
   const tier = options.tier || 'open';
+  // Ghost Partner — consultant profile (null when --profile was not passed).
+  // Threaded into saveReport's meta so the client-ready PDF carries the same
+  // white-label branding that poi/blast/conflict/audit produce. Without this,
+  // the PDF advertised below as "client-ready" rendered with default Ghost
+  // branding only.
+  const profile = options.profile || null;
 
   console.log('\n' + boxen(
     chalk.cyan.bold('❓ ASK A QUESTION') + '\n\n' +
@@ -153,7 +159,7 @@ export async function runQuestionMode(codebaseContext, options = {}) {
   });
 
   if (transport === 'batch') {
-    await submitQuestionBatch({ codebaseContext, question: trimmed, tier });
+    await submitQuestionBatch({ codebaseContext, question: trimmed, tier, profile });
     return;
   }
 
@@ -258,7 +264,7 @@ export async function runQuestionMode(codebaseContext, options = {}) {
   const saveLabel = projectIntelGate.allowed ? (label || 'question') : null;
   // Transport metadata — this answer was produced live (streaming). Stamped into
   // findings.json and the report footer. See src/lib/transport-meta.js.
-  const saved = await saveReport(content, 'ghost-question', saveLabel, { transport: buildStreamingTransport() });
+  const saved = await saveReport(content, 'ghost-question', saveLabel, { transport: buildStreamingTransport(), profile });
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)`));
@@ -279,7 +285,7 @@ export async function runQuestionMode(codebaseContext, options = {}) {
 // the streaming path would use when the user skips the label prompt: 'question'
 // on Pro+ (project-tracking), null on Open. A future enhancement could prompt
 // for the label up front in the batch path.
-async function submitQuestionBatch({ codebaseContext, question, tier }) {
+async function submitQuestionBatch({ codebaseContext, question, tier, profile = null }) {
   const apiKey = resolveApiKey();
   if (!apiKey) {
     console.log(chalk.red('\n  ✗ No Anthropic API key configured — cannot submit a batch.'));
@@ -327,7 +333,9 @@ async function submitQuestionBatch({ codebaseContext, question, tier }) {
       submittedAt,
       status:      'pending',
       customId,
-      context: { question, saveLabel },
+      // Persist the active profile so the deferred batch-retrieve save can
+      // reproduce the same white-label PDF branding the streaming path applies.
+      context: { question, saveLabel, profile },
     });
   } catch (err) {
     console.log(chalk.yellow(`\n  ⚠  Could not record the pending batch locally (${err.message}).`));
@@ -354,6 +362,9 @@ export async function retrieveQuestionBatchResult(answerText, entry) {
   const ctx = (entry && entry.context) || {};
   const question = ctx.question || '(question unavailable)';
   const saveLabel = ctx.saveLabel || null;
+  // White-label profile persisted at submit time (null for non-profile runs
+  // and for legacy pending-batch records written before profile was stored).
+  const profile = ctx.profile || null;
 
   // Same transcript shape the streaming save block builds.
   const timestamp = new Date().toLocaleString();
@@ -365,7 +376,7 @@ export async function retrieveQuestionBatchResult(answerText, entry) {
   content += `Answer: ${answerText}\n\n`;
   content += `${sep}\n`;
 
-  const meta = { transport: buildBatchTransport({ submittedAt: entry && entry.submittedAt }) };
+  const meta = { transport: buildBatchTransport({ submittedAt: entry && entry.submittedAt }), profile };
   const saved = await saveReport(content, 'ghost-question', saveLabel, meta);
   return { saved };
 }

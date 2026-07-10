@@ -215,6 +215,46 @@ function yamlString(val) {
 }
 
 /**
+ * Parse the `name:` scalar out of a raw profile YAML string. Handles the
+ * three forms we may encounter:
+ *   - single-quoted with doubled-quote escaping (what yamlString writes):
+ *       name: 'O''Brien & Sons'  ->  O'Brien & Sons
+ *   - double-quoted with backslash escaping:
+ *       name: "O\"Brien"         ->  O"Brien
+ *   - bare scalar:
+ *       name: OBrien             ->  OBrien
+ * Returns the parsed string, or null if there is no `name:` line.
+ */
+function parseNameField(raw) {
+  const line = raw.match(/^name:[ \t]*(.*?)[ \t]*$/m);
+  if (!line) return null;
+  const v = line[1];
+  if (v.startsWith("'")) {
+    // Single-quoted: read to the closing quote, treating '' as a literal '.
+    let out = '';
+    for (let i = 1; i < v.length; i++) {
+      if (v[i] === "'") {
+        if (v[i + 1] === "'") { out += "'"; i++; continue; }
+        break; // closing quote
+      }
+      out += v[i];
+    }
+    return out;
+  }
+  if (v.startsWith('"')) {
+    // Double-quoted: unescape \" and \\.
+    let out = '';
+    for (let i = 1; i < v.length; i++) {
+      if (v[i] === '\\' && i + 1 < v.length) { out += v[i + 1]; i++; continue; }
+      if (v[i] === '"') break; // closing quote
+      out += v[i];
+    }
+    return out;
+  }
+  return v.trim();
+}
+
+/**
  * List all profiles currently saved under ~/.ghost/profiles/.
  * Returns an array of { slug, path, name } where `name` is parsed from
  * the file's `name:` field when readable, falling back to the slug.
@@ -230,8 +270,8 @@ export function listProfiles() {
     let name = slug;
     try {
       const raw = fs.readFileSync(full, 'utf8');
-      const m = raw.match(/^name:\s*['"]?([^'"\n]+)['"]?\s*$/m);
-      if (m) name = m[1].trim();
+      const parsed = parseNameField(raw);
+      if (parsed != null) name = parsed;
     } catch { /* keep slug as fallback */ }
     out.push({ slug, path: full, name });
   }

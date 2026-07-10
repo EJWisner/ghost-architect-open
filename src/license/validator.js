@@ -16,6 +16,7 @@
 //   - invalid     BLOCK gated modes — signature/fingerprint/format broken
 //   - missing     no license — caller decides whether to offer trial or activate
 //   - tampered    BLOCK gated modes — clock rollback or skew detected
+//   - revoked     BLOCK gated modes — subscription cancelled, per the worker
 //
 // The validator does NOT print anything itself. Caller in bin/ghost.js
 // formats and displays.
@@ -23,6 +24,7 @@
 import { decodeAndVerifyToken } from './token.js';
 import { currentFingerprintHashes, matchesFingerprint } from './fingerprint.js';
 import { validateClock } from './clock.js';
+import { checkRevocation } from './revocation.js';
 import {
   getToken,
   getLastSeenUtc,
@@ -65,7 +67,13 @@ function computeBaseResult(payload, nowMs, clockResult) {
 //   skipNetworkClock: if true, don't hit worldtimeapi (used by `--version`,
 //                     `--help`, and any non-gated command path so we don't
 //                     do a 5-second network roundtrip just to print help)
-export async function validateLicense({ skipNetworkClock = false } = {}) {
+//   skipRevocationCheck: if true, don't ask the license worker whether this
+//                     license was cancelled. Set on `--version` / `--help`,
+//                     which must stay fast and are not gated surfaces.
+//                     NOT set for the headless watcher: an unattended CI run
+//                     on a cancelled subscription is the exact leak this
+//                     check exists to close.
+export async function validateLicense({ skipNetworkClock = false, skipRevocationCheck = false } = {}) {
   // (1) Token presence
   if (!hasLicense()) {
     return { state: 'missing', message: 'No license installed.' };
@@ -106,6 +114,9 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   // (4) Clock validation — rollback + network skew
   const lastSeen = getLastSeenUtc();
   let clockResult;
+  // Non-fatal clock complaint, surfaced only if the license is otherwise healthy.
+  // Never allowed to mask an expiry state. See the fall-through note below.
+  let clockWarning = null;
   if (skipNetworkClock) {
     // Local-only check: rollback only
     const nowMs = Date.now();
@@ -125,8 +136,7 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
       // real tamper signal, so it stays a hard block. Network skew and
       // sustained-offline are legitimate machine states (dead CMOS battery, a
       // drifted VM, NTP not running, a long stretch with no connectivity), so
-      // we degrade those to a non-blocking valid_warn: the user sees a warning
-      // with a concrete fix and keeps working instead of being locked out.
+      // we degrade those to a non-blocking warning.
       if (clockResult.reason === 'clock_rollback') {
         return {
           state: 'tampered',
@@ -134,26 +144,29 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
           message: 'Local clock appears to be behind the last validated time. Please correct your clock and try again.',
         };
       }
+      // NOTE: these two states used to `return` a valid_warn straight from here,
+      // which jumped clean over the expiry state machine below. An expired (or
+      // hard-stopped) license on a machine with a skewed clock therefore never
+      // blocked — a dead CMOS battery was a free license. Record the warning and
+      // fall through: expiry is evaluated first, and the clock warning is only
+      // surfaced when the license is otherwise healthy.
       if (clockResult.reason === 'clock_offline_grace_exceeded') {
-        return {
-          ...computeBaseResult(payload, clockResult.nowMs || Date.now(), clockResult),
-          state: 'valid_warn',
-          message: 'Ghost could not verify network time for several consecutive runs. Running in offline mode. Connect to the internet to re-sync.',
-        };
-      }
-      // clock_skew: local clock differs significantly from network time.
-      return {
-        ...computeBaseResult(payload, clockResult.nowMs || Date.now(), clockResult),
-        state: 'valid_warn',
-        message:
+        clockWarning = 'Ghost could not verify network time for several consecutive runs. Running in offline mode. Connect to the internet to re-sync.';
+      } else {
+        // clock_skew: local clock differs significantly from network time.
+        clockWarning =
           'Your system clock appears to be out of sync with network time. Ghost will continue but accuracy may be affected.\n' +
           'To fix: Mac: System Settings > General > Date & Time > enable Set automatically. ' +
           'Windows: Settings > Time & Language > enable Set time automatically. ' +
-          'Linux: sudo ntpdate pool.ntp.org',
-      };
+          'Linux: sudo ntpdate pool.ntp.org';
+      }
     }
   }
-  const nowMs = clockResult.nowMs;
+  // When the clock check failed we have no trusted network time. Local time is
+  // the only clock we have; use it. A user who wound their clock BACK is already
+  // caught by the rollback branch above, and a user who wound it FORWARD only
+  // expires themselves sooner.
+  const nowMs = clockResult.ok ? clockResult.nowMs : (clockResult.nowMs || Date.now());
 
   // (5) Persist updated last_seen_utc — monotonic ratchet.
   //
@@ -165,7 +178,9 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
   // by contrast, would propagate up and lock the user out of every gated mode
   // with a confusing error after a single transient disk hiccup. Log to stderr
   // and continue with the valid state already computed above.
-  if (clockResult.newLastSeenMs) {
+  // Only ratchet from a clock we actually trust. Persisting a skewed or
+  // unverified local time would poison the rollback check on the next run.
+  if (clockResult.ok && clockResult.newLastSeenMs) {
     try {
       const persisted = updateLastSeenUtc(isoNoMicro(clockResult.newLastSeenMs));
       if (!persisted) {
@@ -212,15 +227,43 @@ export async function validateLicense({ skipNetworkClock = false } = {}) {
       : `License expired on ${payload.expires.slice(0, 10)}. Grace period through ${payload.grace_until.slice(0, 10)}. Renew now.`;
     return { ...baseResult, state: 'grace', message };
   }
+  // (7) Revocation check — is the subscription behind this token still alive?
+  //
+  // Runs AFTER the expiry machine (an already-expired license needs no network
+  // call) and only for real, worker-issued licenses: trial tokens are minted
+  // locally and carry no `lid`, so there is nothing to ask about.
+  //
+  // Fail open by contract. checkRevocation() returns 'unknown' for every
+  // network fault and every non-200, and only ever returns 'revoked' on an
+  // explicit worker verdict or a previously cached one. See revocation.js.
+  if (!skipRevocationCheck && payload.lid && payload.tier !== 'trial') {
+    const verdict = await checkRevocation(payload.lid);
+    if (verdict === 'revoked') {
+      return {
+        ...baseResult,
+        state: 'revoked',
+        message:
+          'This license has been revoked, usually because the subscription was cancelled.\n' +
+          'Continue free with Ghost Open, or resubscribe at ghostarchitect.dev/pricing.\n' +
+          'If you believe this is an error, email support@ghostarchitect.dev.',
+      };
+    }
+  }
+
   if (baseResult.daysUntilExpires <= WARN_WINDOW_DAYS) {
     return { ...baseResult, state: 'valid_warn',
       message: `License expires in ${baseResult.daysUntilExpires} day${baseResult.daysUntilExpires === 1 ? '' : 's'} (${payload.expires.slice(0, 10)}). Renew now to avoid interruption.` };
+  }
+  // Healthy license, but the clock check had something to say. Surface it now
+  // that we know it is not hiding an expiry.
+  if (clockWarning) {
+    return { ...baseResult, state: 'valid_warn', message: clockWarning };
   }
   return { ...baseResult, state: 'valid' };
 }
 
 // Which states block gated modes?
-const BLOCKING_STATES = new Set(['hard_stop', 'invalid', 'missing', 'tampered']);
+const BLOCKING_STATES = new Set(['hard_stop', 'invalid', 'missing', 'tampered', 'revoked']);
 export function isBlocking(state) {
   return BLOCKING_STATES.has(state);
 }

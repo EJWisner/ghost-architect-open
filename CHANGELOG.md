@@ -5,6 +5,100 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v10.0.17 -- July 10, 2026
+
+### Patch: Entitlement Enforcement, Verifier Integrity, Cost Accuracy, Claude Fable 5
+
+**Licensing and entitlements**
+- License revocation checking added. A new POST /verify endpoint on the license worker reports a license's status, and the CLI consults it before running gated modes. Previously the client had no revocation check of any kind: a signed token verifies offline forever, so a cancelled subscription kept working until the token's natural expiry, up to a year. The check fails open on every network fault (timeout, 5xx, 404, proxy, offline CI runner) and blocks only on an explicit revoked verdict, which is then cached locally so going offline after a cancellation does not restore access.
+- Ghost Watcher™ and Ghost Brief™ now honor the license blocking state. Both read the tier straight from the token payload and never asked whether the license was usable, so an expired or hard-stopped license still ran Ghost Watcher™ on every commit indefinitely.
+- A revoked license degrades to Ghost Open rather than blocking the CLI outright, matching the existing lapsed-trial behavior. Question and Recon stay free.
+- Clock skew no longer masks license expiry. The clock_skew and clock_offline_grace_exceeded branches returned a non-blocking warning before the expiry state machine ran, so an expired license on a machine with a drifted clock never reached hard stop.
+- The license last-seen ratchet is now written only from a clock that passed validation.
+- A lapsed trial or revoked license now re-seeds the loader's context cap. The tier degrade happened after the loader was seeded, so a lapsed Ghost Pro Max trial kept the trial's 100K context cap while running as Open at 50K.
+- Commit Forecast quota bypass closed. The "Run another Commit Forecast?" prompt re-entered the mode function directly, behind the dispatch-level gate, giving Ghost Open unlimited free Forecasts. The gate now runs on every entry.
+- Trial and paid scans no longer drain the Ghost Open free-scan quota. The counter in saveReport and Prompt Triage incremented on every tier though only Open reads it, so a lapsed 7-day trial landed on the Open paywall for quota it never spent.
+- Ghost Watcher™ tier entitlement now derives from the policy table via a new mode:watch gate. bin/ghost.js carried two independent literal copies of the allowed-tier array.
+- shouldBlockMode removed from freemium.js. It had no callers, and its comment described a fail-closed entitlement contract that nothing enforced.
+- Both upgrade CTAs corrected from /upgrade, which is a 404, to /pricing.
+
+**Verifier**
+- The verifier no longer silently deletes real findings when the LLM verifier is unavailable. A transport failure, a malformed response, and an unknown verdict all returned a "partial" verdict, which left the Pass-1 snippet-mismatch warning in place, which the DISPUTED sweep then matched, which dropped the finding entirely. A single transient 429 could remove a source-confirmable finding from a paid report with no trace. Those three paths now return a distinct error verdict that is exempt from the sweep.
+- Raw API error text no longer reaches customer-facing reports. "LLM verifier call failed: 429" was spliced into the report as a finding warning.
+- Findings the verifier could not reach are now reported to the operator rather than passing as a clean verification.
+- Verification summary arithmetic now reconciles. Disputed findings are dropped from the report exactly like false positives but were absent from every summary, so verified plus unverified plus dropped never summed to the total.
+- The executive-summary regeneration gate now fires on disputed findings, which are removed from the report body and could otherwise leave a stale summary describing findings no longer present.
+- Unstated confidence no longer promotes a finding to CONFIRMED. The flagFinding tool defaulted an omitted confidence to 90 and the verifier maps 90 and above to CONFIRMED, so a model that never asserted confidence was awarded the maximum. Unstated confidence now falls to POSSIBLE. An explicit confidence of 0 is also no longer rewritten to 75.
+- Fabricated line-number citations are now stripped for every supported language. The scrub covered only .php, .js, and .ts, so a hallucinated Service.py:120 or Main.kt:88 shipped to the customer. The extension list is now shared with the loader.
+- The finding-cap disclosure is no longer duplicated in every capped report. The presence check searched for a phrase the disclosure never contained, so the line was always spliced in on top of the one the model already wrote.
+- The findings JSON sidecar now contains the full uncapped, verified finding set. The narrator details at most 30 findings, and the verifier reparsed its input out of that rendered report, so every finding ranked below the cap was never verified and never written anywhere. A 71-finding scan produced a report that told the buyer about 71 findings while only 30 existed in any artifact, and a cap disclosure pointing at a JSON file that did not contain the rest. The pipeline now verifies the undetailed remainder and writes every survivor. Each sidecar entry carries a `detailed` flag; undetailed findings report `effortHours: null` rather than 0, because they were never estimated.
+- The cap disclosure now states the count that is actually in the sidecar. The narrator renders it before verification runs, so the count was an upper bound; the pipeline restates it once the surviving total is known, and removes it entirely if verification drops enough findings that the report is no longer capped.
+
+**Ghost Watcher™**
+- Ghost Watcher™ no longer publishes a false clean portal state. On a silent scan failure the portal write ran anyway, marking the commit complete with zero findings and stamping every previously open finding as resolved by that commit. Both the clean-state write and the resolved-finding delta are now gated on a genuinely complete run, and the incomplete-run counter is no longer reset on a failed run.
+- The watch sidecar now carries scanFailed and incompleteScans so it matches what the pull-request comment reports.
+- The onboarding cost estimate now applies the 50% Message Batches discount that the billing math already applied. The stated "both scans" streaming reference was also wrong and is corrected from $1.50-$3.00 to $0.95-$1.80.
+- The Watch Status and Watch Disable prompts offer "back" to cancel and accept it in validate, then tested it with the list-choice sentinel predicate, trapping the user in a token prompt. Both now use the keyword predicate.
+
+**Cost accuracy**
+- Persisted scan cost now reflects the model that ran. POI hardcoded Sonnet's $3/$15 per-million rate into the saved artifact regardless of model, understating an Opus scan by 1.7x and a Claude Fable 5 scan by 3.3x.
+- Stale hardcoded version stamps (4.5.0, 4.7.0, 4.1.1) in POI and Conflict artifact metadata now derive from package.json.
+- The Inheritance Audit now records and reports the cost of its one billed API call. The Modernization Roadmap synthesis never recorded token usage, which is why audit imported showActualCost and could never meaningfully call it.
+- The per-pass cost estimate is now a single constant. The pre-scan quote used a bare $0.25 while session recovery used $0.40 for the same passes, and a comment claimed both used $0.25.
+- Chat mode now shows per-exchange and running session cost. It is the most expensive mode per turn and had no cost surface at all.
+- A mid-scan POI failure now reports the cost of the passes that completed instead of discarding the usage capture silently.
+- The Executive Brief now uses the configured senior rate instead of a hardcoded $200/hr, so it agrees with every other Ghost deliverable from the same scan.
+- The POI grand-total last-resort fallback was removed. It took the last dollar figure anywhere in the report, which is a single finding's cost rather than the grand total, and stamped it onto the report, the portal, and Ghost Mobile as the cost of the whole engagement.
+- Telemetry now fires after the paywall gate, not before, so Pulse no longer counts paywalled selections as scans that ran.
+- The Enterprise usage report no longer understates after 1000 events. Totals were computed by summing a 1000-event window, so lifetime scans, cost, and findings silently stopped growing. A monotonic aggregate is persisted alongside the window, with a fallback for legacy files.
+
+**Scans and reports**
+- Partial POI scans no longer claim 100% coverage. The saved artifact reported "N of N" files analyzed on a capped run while the honest coverage figure was printed to the terminal and discarded.
+- Blast multipass now salvages per-pass reports on a synthesis timeout. The 20-minute timeout was thrown from outside the salvage block, so the most likely failure on a large repo was the one path that discarded the paid work. Two error messages claiming the reports were preserved in a session file were removed; Blast multipass writes no session file.
+- Declining the save prompt no longer silently destroys a paid report. POI, Blast, and Conflict buffer the report, print the cost, then ask whether to save. Answering no dropped the only copy. Ghost now writes the report to a clearly named file in the reports directory, prints the path, and offers to open it in the system viewer. The report is never dumped to the terminal: a large scan is thousands of lines of markdown and would bury the cost line and verification summary in scrollback.
+- Swift and Kotlin are now scannable (.swift, .kt, .kts). The README claimed support and the loader produced zero files.
+- The .env.example entry in the loader allowlist was unreachable on two counts. path.extname returns .example for it, so the extension check could never match; and the directory walker's glob does not enumerate dot-prefixed entries, so the file was never offered to the allowlist in the first place. Both are fixed, the second without sweeping .github, .husky, and .circleci into every scan.
+- ZIP and GitHub loads now report how many files the default excludes skipped, matching the directory path.
+- Failed and expired Message Batches no longer become permanent menu entries that fire an API call on every render. A batch that ended with no successful result is removed, a 404 batch is pruned, and entries past the 29-day retention window are dropped without an API call.
+- The --batch flag now says so when it is ignored. It is implemented for Blast Radius and Question only; on POI, Conflict, and Audit it silently ran a full-price streaming scan. The help text is corrected and the CLI prints a notice.
+
+**Prompt Triage**
+- Selecting a non-Claude target model no longer silently produces an incomplete audit. Tier 2 and Tier 3 detectors call the Anthropic API, so all 12 non-Claude targets failed not-found and failed open with zero findings. Ghost now tells the user, skips those tiers, and still runs Tier 1 with the correct per-model tokenizer. The picker labels non-Claude models Tier 1 only.
+- Redaction-skipped files are no longer counted as scanned.
+- Files carrying a prompt extension that the loader's basename heuristic filtered out are now reported rather than silently skipped.
+- LOW severity now renders green, matching every other mode. It was blue.
+
+**Claude Fable 5**
+- claude-fable-5 added to the setup wizard model picker, to a new Change scan model item in the Reconfigure menu, to the Inheritance Audit synthesis picker, and to the Prompt Triage target-model registry. claude-sonnet-5 and claude-opus-4-8, both already priced, were also missing from the pickers and are now selectable.
+- The model picker derives from MODEL_RATES and shows each model's real per-million rates, so a priced model can never again be unreachable, and a picker entry with no rate fails loudly instead of silently quoting Sonnet prices.
+- Claude Fable 5 bills at $10/$50 per million tokens standard. Batch mode applies the existing 50% discount, giving $5/$25. Pre-scan estimates reflect the selected model.
+
+**Copy, docs, and platform**
+- The README no longer implies 16 free scans. The four scan-mode rows each read "4 free scans" against a single shared pool of 4.
+- The README Ghost Triple Crown™ section now states that leg 3, Ghost Brief™, requires a Max plan. Plain Team and Enterprise Ghost Watcher™ customers get legs 1 and 2.
+- A phantom watcher iterations YAML example was removed from the README, and two source comments promising a --no-default-excludes flag that was never implemented were corrected.
+- Ghost Brief™ and Executive Brief menu items are now selectable below their tier so the upgrade paywall renders. As disabled rows they could not be chosen, so the gate never fired and the paywall never showed.
+- A mistyped license key in the Reconfigure menu no longer kills the app. Every activation failure path called process.exit; the interactive path now returns to the menu.
+- Windows consoles no longer receive raw check, cross, and warning glyphs. Nine files each declared a private two-key SYM object, so any other glyph was hardcoded inline. SYM is now one shared module and 45 console call sites route through it.
+- The Manage Team and Configure Watch placeholders no longer advertise "coming in Ghost Watcher v9.0.1", a version that shipped long ago.
+- Question and Chat PDFs now carry white-label branding. The active profile was never threaded into their saveReport metadata, so a PDF advertised as client-ready rendered unbranded.
+- Profile names containing an apostrophe no longer truncate in --list-profiles.
+- The PDF severity badge no longer discards Effort, Complexity, and Cost when the metadata line is not bold.
+- @ghost-verified annotations now tolerate whitespace variation, and a marker that is present but not comment-anchored warns rather than failing silently.
+- The billing-error branch now matches the singular "usage limit" as well as the plural, so a singular message no longer falls through to a generic error.
+- Stale comments corrected: parseKey's claim of hyphen-less tolerance, the keys.js claim that trials block Audit mode, the setScanOptions two-call protocol note, the watcher batch-cost note, and four Ctrl+C recovery blocks that cannot fire against inquirer 9.3.8, which re-raises SIGINT.
+
+**Tests**
+- New: tests/license-revocation.smoke.mjs pins the fail-open and sticky-revoked contract, including the case that actually matters, a stale cache plus an unreachable worker.
+- New: tests/cap-disclosure.smoke.mjs pins getCapDisclosure against the presence regex that must detect it, pins the narrator's cap partition, and asserts the sidecar count equals the full uncapped finding count on a capped run.
+- New: tests/watch-onboarding.smoke.mjs covers the Ghost Watcher™ cost estimate and config builder, which had no coverage.
+- New: tests/loader-excludes.smoke.mjs covers default excludes on every input method, custom patterns and presets stacking on top of the defaults rather than replacing them, and the ZIP path reporting its skipped-file count instead of dropping files silently.
+- New: tests/context-cap-clamping.smoke.mjs covers per-tier cap enforcement measured by files actually loaded, --max-context honored and clamped at the tier ceiling, the Ghost Watcher™ CI guard ignoring a developer's saved sub-tier override, and a lapsed trial re-seeding the loader at the Open cap rather than the trial's.
+- loadFromZipPath is now exported so the ZIP loading path is reachable from a test. The interactive loadFromZip prompts and delegates, mirroring loadFromPath and _loadFromDirPath.
+
+**Known limitations**
+- The --batch flag is still not implemented for POI, Conflict, and Audit. Those modes are multipass and need a per-mode batch transport. Ghost now discloses this instead of ignoring the flag.
+
 ## v10.0.16 -- July 9, 2026
 
 ### Patch: Ghost Watcher Trust and Display

@@ -16,9 +16,11 @@
 // and then dispatches to the appropriate renderer here based on the
 // verdict's paywall.kind ('audit' | 'quota').
 //
-// `shouldBlockMode()` is kept for backward compatibility with any caller
-// outside bin/ghost.js, but bin/ghost.js no longer calls it. New callers
-// should use requireTier() instead.
+// `shouldBlockMode()` was removed in v10.0.17. It was kept "for backward
+// compatibility with any caller outside bin/ghost.js", but this is an internal
+// module with no external callers, so it was simply dead code carrying a
+// confident description of an entitlement contract that nothing enforced.
+// requireTier() in src/license/tier-gates.js is the sole enforcement point.
 //
 // Non-counting modes — Question and Recon — remain free forever for Open.
 // Question is single-shot Q&A with an optional save; Recon is sizing without
@@ -28,7 +30,11 @@
 //
 // State is stored in configstore under key 'ghostOpenScanCount'. The counter
 // is bumped in src/reports.js's saveReport() AFTER a successful save, so a
-// crashed scan doesn't burn a credit. The counter is intentionally local-
+// crashed scan doesn't burn a credit, and ONLY when the active tier is 'open'.
+// The tier guard matters: this counter used to bump on every save regardless of
+// tier, so trial and paid scans drained the free-tier quota that only Open ever
+// reads. A lapsed 7-day trial then landed straight on the Open paywall for
+// scans the user never spent free quota on. The counter is intentionally local-
 // only (no server sync) — Open is an honor-system free tier; we don't want
 // to track usage server-side for privacy reasons.
 //
@@ -80,15 +86,6 @@ const COUNTED_PREFIXES = new Set([
   // not in saveReport, because Forecast output is not a "saved report" in the
   // traditional sense — it's an ephemeral analysis artifact.
 ]);
-
-// Mode-id-to-prefix mapping for the gate check (called from bin/ghost.js
-// before mode dispatch, before the prefix is known by the mode itself).
-const MODE_TO_PREFIX = {
-  'poi':           'ghost-poi',
-  'blast':         'ghost-blast',
-  'conflict':      'ghost-conflict',
-  'prompt-triage': 'ghost-prompt-triage',
-};
 
 // Per D1 (locked 2026-05-23): the free saved-report quota is 4. The value
 // lives in src/license/tier-gates.js as SCAN_QUOTA (the policy source of
@@ -302,27 +299,20 @@ export function renderFixForecastPaywall(paywallPromo = '') {
   }));
   console.log('');
 }
-// Called from bin/ghost.js right before dispatching to a mode. Returns:
-//   { block: false }            — proceed with the scan
-//   { block: true, reason: 'audit' }  — Audit-specific paywall
-//   { block: true, reason: 'quota' }  — quota-exhausted paywall
-export function shouldBlockMode(modeId) {
-  // Audit is always paywalled in Open. v6.0.0 ships subscription-only.
-  // Single-run Audit is a v6.1.0 follow-up.
-  if (modeId === 'audit') {
-    return { block: true, reason: 'audit' };
-  }
-  // Non-counted modes (question, recon) are unlimited on Open. Chat moved
-  // to Pro+ in Cycle 14 — dispatch gates it before reaching this function.
-  const prefix = MODE_TO_PREFIX[modeId];
-  if (!prefix) return { block: false };
-  // Counted modes hit the quota gate.
-  const count = getScanCount();
-  if (count >= SCAN_QUOTA) {
-    return { block: true, reason: 'quota' };
-  }
-  return { block: false };
-}
+// REMOVED (v10.0.17): shouldBlockMode(modeId).
+//
+// Its doc comment read "Called from bin/ghost.js right before dispatching to a
+// mode" and described a fail-closed entitlement contract: Audit always paywalled
+// on Open, counted modes blocked at SCAN_QUOTA. It had zero callers anywhere in
+// the tree. bin/ghost.js gates on requireTier() from src/license/tier-gates.js.
+//
+// Dead code that describes an entitlement contract is worse than no code: the
+// next reader greps for the contract, finds this function, reads a confident
+// comment, and concludes the check is enforced. It was not. The policy table in
+// tier-gates.js is the sole enforcement point. Do not resurrect this.
+//
+// MODE_TO_PREFIX went with it (this was its only consumer). COUNTED_PREFIXES,
+// which incrementScanCount() actually reads, is a different map and still live.
 
 // Render the Audit-specific paywall. Shown when user picks Audit from the
 // mode menu in Open. Caller (bin/ghost.js) should `continue` the menu loop

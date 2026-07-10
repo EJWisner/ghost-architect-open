@@ -389,14 +389,26 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
           y += 28; i++; continue;
         }
 
-        // Severity badge
+        // Severity badge. The severity value frequently shares its line with
+        // pipe-separated Effort / Complexity / Cost metadata, e.g.
+        //   "Severity: HIGH | Effort: 3-5 hours | Complexity: Medium | Cost: $360-480"
+        // or the bold variant "**Severity:** HIGH | ...". Match the severity
+        // label whether or not it is bold-wrapped, render the badge, then
+        // preserve the remaining pipe-separated fields so Effort/Complexity/
+        // Cost never get dropped for unbolded lines.
         const sevM = line.match(/\b(CRITICAL|HIGH|MEDIUM|LOW)\b/i);
-        if (sevM && (line.toLowerCase().startsWith('severity') || /^\*\*(critical|high|medium|low)\*\*/i.test(line))) {
+        if (sevM && (/^\**\s*severity\b/i.test(line) || /^\*\*(critical|high|medium|low)\*\*/i.test(line))) {
           need(22);
           box(doc, ML, y, 72, 18, sevColor(sevM[1]));
           doc.font('Helvetica-Bold').fontSize(8).fillColor(C.WHITE)
              .text(sevM[1].toUpperCase(), ML, y + 5, { width: 72, align: 'center', lineBreak: false });
-          y += 22; i++; continue;
+          y += 22;
+          // Everything after the leading severity segment (Effort / Complexity
+          // / Cost, pipe-separated) is rendered as a metadata line so it is
+          // never discarded. clean() strips any bold markers.
+          const rest = line.split('|').slice(1).map(s => clean(s)).filter(Boolean).join('   |   ');
+          if (rest) writeLine(rest, { font: 'Helvetica', size: 8, color: C.MED_GRAY });
+          i++; continue;
         }
 
         // HR
