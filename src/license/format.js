@@ -157,6 +157,24 @@ export function parseKey(input) {
   };
 }
 
+// Distinguish a GA- human license key (what customers paste into --activate)
+// from the signed 3-part token the validator actually consumes. CI surfaces
+// use this to catch the classic misconfiguration: GHOST_LICENSE_KEY set to the
+// humanKey, which decodeAndVerifyToken can never validate ("Token must have 3
+// parts"), silently no-oping the watcher on every commit.
+//
+// Rule: a signed token is exactly three non-empty dot-separated segments.
+// Anything else (a GA- key has zero dots, and arbitrary junk deserves the
+// same guidance) counts as "looks like a human key". Empty/absent values
+// return false: nothing is set, so there is nothing to warn about.
+export function looksLikeHumanKey(value) {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (!v) return false;
+  const parts = v.split('.');
+  const isTokenShaped = parts.length === 3 && parts.every(p => p.length > 0);
+  return !isTokenShaped;
+}
+
 // Convenience: validate a key string without throwing. Returns
 // { ok: true, parsed } or { ok: false, error }.
 export function tryParseKey(input) {

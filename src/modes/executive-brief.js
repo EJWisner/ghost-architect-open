@@ -105,11 +105,23 @@ export function buildBriefData(findings, seniorRate = 200) {
     topHigh: bySev.high.slice(0, 3).map(f => String(f.title || 'Untitled high finding')),
     totalEffortHours: Math.round(totalEffortHours * 10) / 10,
     estimatedManualCost: Math.round(totalEffortHours * seniorRate),
-    estimatedAiCost: Math.round(totalEffortHours * 0.15 * 100) / 100,
-    estimatedAiHours: Math.max(1, Math.ceil(totalEffortHours * 0.10)),
+    estimatedAiCost: Math.round(totalEffortHours * AI_COST_PER_MANUAL_HOUR * 100) / 100,
+    estimatedAiHours: Math.max(1, Math.ceil(totalEffortHours * AI_HOURS_PER_MANUAL_HOUR)),
     blastProfile,
   };
 }
+
+// AI-assisted remediation economics rendered in the buyer-facing PDF.
+// These are DELIBERATE modeling assumptions, not measurements: an AI-assisted
+// fix cycle is modeled at ~10% of the manual engineering hours, with API spend
+// of ~$0.15 per manual hour displaced (roughly one Sonnet-class fix loop per
+// small finding at mid-2026 token prices). They exist as named constants so
+// the assumption is visible, reviewable, and changeable in one place instead
+// of living as magic numbers inside a client deliverable (Audit 7, Q27). If a
+// Ghost Partner profile ever carries its own AI-economics assumptions, wire
+// them through buildBriefData the way seniorRate already is.
+const AI_COST_PER_MANUAL_HOUR  = 0.15;
+const AI_HOURS_PER_MANUAL_HOUR = 0.10;
 
 // ── Executive narrative (one Anthropic call) ─────────────────────────────────
 const NARRATIVE_SYSTEM =
@@ -143,8 +155,11 @@ async function generateNarrative(client, { data, healthScore, label, project }) 
     `in plain language and their business impact. Paragraph three: the ` +
     `recommended path forward and what it will take.`;
 
+  // Honor the user's configured default model instead of pinning Sonnet 4.6;
+  // the Brief was the last mode ignoring defaultModel (Audit 7, Q16).
+  const briefModel = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   const resp = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: briefModel,
     max_tokens: 1000,
     temperature: 0,
     system: NARRATIVE_SYSTEM,

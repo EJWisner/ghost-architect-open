@@ -55,7 +55,7 @@ import { showFriendlyError } from '../src/utils/errors.js';
 // branches sync forward from main.
 import { validateLicense, isBlocking } from '../src/license/validator.js';
 import { decodeAndVerifyToken } from '../src/license/token.js';
-import { tryParseKey } from '../src/license/format.js';
+import { tryParseKey, looksLikeHumanKey } from '../src/license/format.js';
 import { currentFingerprintHashes } from '../src/license/fingerprint.js';
 import {
   saveActivation,
@@ -66,6 +66,7 @@ import {
   saveAdminToken,
 } from '../src/license/store.js';
 import { setActiveLicense, getActiveLicense, getActiveTier, trialDaysRemaining } from '../src/license/session.js';
+import { refreshLicenseSession } from '../src/license/session-refresh.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
 import { getScanCount, renderAuditPaywall, renderQuotaPaywall, renderUpgradePaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
 import { PRICING } from '../src/constants/pricing.js';
@@ -98,6 +99,42 @@ const VERSION   = _require('../package.json').version;
 // 'open' so any code path that reads TIER before main()'s license gate
 // (e.g. printUsage's tier-cap table) shows the most conservative tier.
 let TIER = 'open';
+
+// CLI-derived scan-option overrides (--max-context, --exclude, presets,
+// redaction skip), stashed by main() right after parseArgs so refresh points
+// outside main()'s scope can re-seed the loader without dropping them.
+// Empty until main() runs; the pre-main value only matters to code paths that
+// never re-seed (none today).
+let CLI_SCAN_OVERRIDES = {};
+
+// Why the session was degraded to Open, when it was ('revoked' | 'trial-ended'
+// | null). Degrade events call setActiveLicense(null), which erases the state
+// the reconfigure menu needs to show a useful license row; this carries the
+// reason so a cancelled customer sees "revoked: run ghost --activate <key> to
+// restore" instead of "open: unknown" (Audit 7, finding 2.6). Cleared by a
+// successful re-activation via refreshSessionAndTier().
+let SESSION_DEGRADE_REASON = null;
+
+// Re-validate the license and propagate the result into every session surface:
+// active license, TIER, and the loader's tier cap. Call after ANY event that
+// changes the installed license mid-process (in-menu activation, first-run
+// onboarding activation). Audit 7 findings 1.2/1.3: without this, a customer
+// who just paid saw "License activated" while the banner, the tier gates, and
+// the context cap kept treating them as Open until restart, and the first-run
+// wizard persisted the Open 50K cap into config for new paying customers.
+async function refreshSessionAndTier() {
+  const { result, tier } = await refreshLicenseSession(CLI_SCAN_OVERRIDES);
+  TIER = tier;
+  // A refresh that lands a usable license clears any earlier degrade note; a
+  // refresh that lands a revoked one records it (mirrors the startup blocks).
+  if (isBlocking(result.state)) {
+    SESSION_DEGRADE_REASON = result.state === 'revoked' ? 'revoked' : SESSION_DEGRADE_REASON;
+  } else {
+    SESSION_DEGRADE_REASON = null;
+  }
+  return tier;
+}
+
 const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
 
 // The Max tiers, derived directly from the 'mode:ghost-brief' policy in
@@ -210,6 +247,7 @@ function parseArgs(argv) {
     if (a === '--sessions-dir')          { out.sessionsDir = argv[++i] || ''; continue; }
     if (a.startsWith('--sessions-dir=')) { out.sessionsDir = a.slice('--sessions-dir='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
+    if (a === '--export-ci-token')  { out.exportCiToken = true; continue; }
     if (a === '--license-clear')    { out.licenseClear = true; continue; }
     if (a === '--deactivate')       { out.licenseClear = true; continue; } // alias for --license-clear
     if (a === '--license-debug')    { out.licenseDebug = true; continue; }
@@ -510,47 +548,47 @@ async function selectMode(codebaseContext, tier = 'open') {
     },
     new inquirer.Separator(IS_WINDOWS ? '── Ghost Watcher ──' : '─── Ghost Watcher™ ─────────────────────────────────'),
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[WEN] Enable Watch     - monitor commits on this repo'
-        : '🔭  Enable Watch     ' + chalk.gray('- monitor commits on this repo'),
+        : '🔭  Enable Watch     ' + chalk.gray('- monitor commits on this repo'))
+        + (!WATCH_TIERS.includes(tier) ? chalk.gray('  (Team plan)') : ''),
       value: 'watch-enable',
-      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[WST] Watch Status     - view active Watch configuration'
-        : '📋  Watch Status     ' + chalk.gray('- view active Watch configuration'),
+        : '📋  Watch Status     ' + chalk.gray('- view active Watch configuration'))
+        + (!WATCH_TIERS.includes(tier) ? chalk.gray('  (Team plan)') : ''),
       value: 'watch-status',
-      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[WCF] Configure Watch  - change branches, modes, notifications'
-        : '⚙   Configure Watch  ' + chalk.gray('- change branches, modes, notifications'),
+        : '⚙   Configure Watch  ' + chalk.gray('- change branches, modes, notifications'))
+        + (!WATCH_TIERS.includes(tier) ? chalk.gray('  (Team plan)') : ''),
       value: 'watch-configure',
-      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[WDS] Disable Watch    - remove Watch from this repo'
-        : '🚫  Disable Watch    ' + chalk.gray('- remove Watch from this repo'),
+        : '🚫  Disable Watch    ' + chalk.gray('- remove Watch from this repo'))
+        + (!WATCH_TIERS.includes(tier) ? chalk.gray('  (Team plan)') : ''),
       value: 'watch-disable',
-      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[WTM] Manage Team      - add, reassign, or deactivate members'
-        : '👥  Manage Team      ' + chalk.gray('- add, reassign, or deactivate members'),
+        : '👥  Manage Team      ' + chalk.gray('- add, reassign, or deactivate members'))
+        + (!WATCH_TIERS.includes(tier) ? chalk.gray('  (Team plan)') : ''),
       value: 'watch-team',
-      disabled: !WATCH_TIERS.includes(tier) ? chalk.gray('(Team or higher)') : false,
     },
     new inquirer.Separator(IS_WINDOWS ? '── Other ──' : '─── Other ───────────────────────────────────────'),
     {
-      name: IS_WINDOWS
+      name: (IS_WINDOWS
         ? '[PRF] Ghost Partner Profile  - create or manage white-label consultant profiles'
-        : '👤  Ghost Partner Profile  ' + chalk.gray('- create or manage white-label consultant profiles'),
+        : '👤  Ghost Partner Profile  ' + chalk.gray('- create or manage white-label consultant profiles'))
+        + (tier === 'open' ? chalk.gray('  (Pro or higher)') : ''),
       value: 'profiles',
-      disabled: TIER === 'open' ? chalk.gray('(Pro or higher)') : false,
     },
     { name: (IS_WINDOWS ? '[REC] Recon  ' : '🔍  Recon  ') + chalk.gray('- Sizing & engagement plan, no analysis'), value: 'recon' },
     { name: (IS_WINDOWS ? '[AUD] Inheritance Audit  ' : '📋  Inheritance Audit  ') + chalk.gray('- Deal-grade audit for buyers, PE diligence, fractional CTOs'), value: 'audit' },
@@ -1326,6 +1364,36 @@ async function runLicenseStatusFlow() {
 }
 
 /**
+ * Handle `ghost --export-ci-token` — print the installed signed license token
+ * to stdout for CI secret setup (GHOST_LICENSE_KEY in Ghost Watcher™ runners).
+ *
+ * The token, and ONLY the token, goes to stdout so the command is pipe-safe:
+ *   ghost --export-ci-token | gh secret set GHOST_LICENSE_KEY
+ * All guidance goes to stderr. Reads the installed record directly (never the
+ * GHOST_LICENSE_KEY env var) so exporting from a machine that itself has the
+ * env var set still exports the locally activated license.
+ *
+ * Why this exists: the signed token lives only in configstore after
+ * activation, and CI runners cannot exchange a GA- human key themselves
+ * (the worker's re-activation path is fingerprint-bound to the activating
+ * machine, by design). This flag is the supported bridge.
+ */
+async function runExportCiTokenFlow() {
+  const record = getLicenseRecord();
+  if (!record || !record.token) {
+    console.error('No license installed on this machine.');
+    console.error('Activate first with: ghost --activate <your GA- license key>');
+    console.error('Then re-run: ghost --export-ci-token');
+    process.exit(1);
+  }
+  console.error('Signed Ghost Architect™ license token (set this as the GHOST_LICENSE_KEY secret in CI):');
+  console.error('');
+  process.stdout.write(record.token + '\n');
+  console.error('');
+  console.error('Treat this value as a secret. It carries your license entitlement.');
+}
+
+/**
  * Handle `ghost --license-clear` — remove the stored license. Asks for
  * confirmation to prevent fat-finger accidents.
  */
@@ -1686,6 +1754,12 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
     if (result.state === 'hard_stop' && result.payload?.tier === 'trial') {
       TIER = 'open';
       setActiveLicense(null);
+      SESSION_DEGRADE_REASON = 'trial-ended';
+      // Re-seed the loader at the degrade site itself so no caller can forget.
+      // The tierBeforeGate re-seed in main() covers the startup path; this
+      // covers any other (or future) caller. Last-write-wins, so the double
+      // seed on the startup path is harmless.
+      setScanOptions({ tier: 'open', ...CLI_SCAN_OVERRIDES });
       console.log('\n' + boxen(
         chalk.yellow.bold(`Your ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial has ended.`) + '\n\n' +
         chalk.white('You still have access to Ghost Open.') + '\n' +
@@ -1704,11 +1778,15 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
     if (result.state === 'revoked') {
       TIER = 'open';
       setActiveLicense(null);
+      SESSION_DEGRADE_REASON = 'revoked';
+      // Same degrade-site re-seed as the lapsed-trial block above.
+      setScanOptions({ tier: 'open', ...CLI_SCAN_OVERRIDES });
       console.log('\n' + boxen(
         chalk.yellow.bold('This license has been revoked.') + '\n\n' +
         chalk.white('This usually means the subscription was cancelled.') + '\n' +
         chalk.white('You still have access to Ghost Open.') + '\n\n' +
         chalk.white('Resubscribe: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.white('To restore access after resubscribing, run: ') + chalk.cyan('ghost --activate <your new key>') + '\n' +
         chalk.white('Questions:   ') + chalk.cyan('support@ghostarchitect.dev'),
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
       ));
@@ -1928,9 +2006,12 @@ async function runBatchRetrieveCommand(id) {
 function friendlyBatchModeLabel(mode) {
   switch (mode) {
     case 'blast-radius': return 'Blast Radius';
+    case 'blast':        return 'Blast Radius';
     case 'question':     return 'Question';
     case 'poi':          return 'Points of Interest';
     case 'conflict':     return 'Conflict Detection';
+    case 'audit':        return 'Inheritance Audit';
+    case 'chat':         return 'Chat';
     default:             return mode || 'Scan';
   }
 }
@@ -2062,6 +2143,33 @@ async function reconfigureApiKey() {
     if (!val.startsWith('sk-ant-')) {
       console.log(chalk.yellow('  Warning: key does not start with sk-ant-. Continuing anyway.'));
     }
+    // Verify against the API BEFORE saving, mirroring the GitHub-token flow
+    // (Audit 7, Q8): a truncated paste used to get a confident "API key
+    // saved." and fail mid-scan. GET /v1/models is authenticated and free.
+    // Verification is advisory: a network fault must not block an offline
+    // save, so the user still decides at the Save prompt below.
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      let res;
+      try {
+        res = await fetch('https://api.anthropic.com/v1/models', {
+          headers: { 'x-api-key': val, 'anthropic-version': '2023-06-01' },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (res.ok) {
+        console.log(chalk.green(`  ${SYM.check} Key verified against the Anthropic API.`));
+      } else if (res.status === 401) {
+        console.log(chalk.red(`  ${SYM.cross} The Anthropic API rejected this key (401). Saving it will fail on your next scan.`));
+      } else {
+        console.log(chalk.yellow(`  Could not verify the key (API returned ${res.status}). You can still save it.`));
+      }
+    } catch {
+      console.log(chalk.yellow('  Could not verify the key (network issue). You can still save it.'));
+    }
     const { decision } = await inquirer.prompt([{
       type: 'list', name: 'decision', theme: inquirerTheme,
       message: chalk.cyan('Save this key?'),
@@ -2183,6 +2291,15 @@ async function reconfigureLicense() {
     activationInteractive = true;
     try {
       await runActivateFlow(val);
+      // Activation succeeded: propagate it into the RUNNING session. Without
+      // this, "License activated" printed while the banner, every tier gate,
+      // and the loader's context cap kept treating the customer as their old
+      // tier until restart (Audit 7, finding 1.2).
+      const tier = await refreshSessionAndTier();
+      if (tier !== 'open') {
+        const tierLabel = tier.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        console.log(chalk.green(`  ${SYM.check} This session is now running as Ghost Architect™ ${tierLabel}. No restart needed.\n`));
+      }
     } catch (e) {
       if (!(e instanceof ActivationAborted)) throw e;
       console.log(chalk.gray('  Returning to the menu.\n'));
@@ -2202,7 +2319,24 @@ async function reconfigureLicense() {
 // license line. Returns to the caller (main menu) only on explicit Back, or if
 // the menu prompt itself throws. Ctrl+C does not return here: inquirer 9.3.8
 // re-raises SIGINT and Ghost exits.
-async function runSelectiveReconfigure(licenseState) {
+// Live label for the reconfigure menu's license row. Reads the CURRENT session
+// state on every menu render (the old frozen-parameter label kept showing
+// "open: missing" after an in-menu activation, and a useless "open: unknown"
+// to degraded customers, Audit 7 findings 1.2 + 2.6). Degrade events null the
+// active license, so the degrade reason is carried separately and rendered
+// with the recovery action the customer actually needs.
+function licenseMenuLabel() {
+  if (SESSION_DEGRADE_REASON === 'revoked') {
+    return 'License key (revoked: run ghost --activate <key> to restore)';
+  }
+  if (SESSION_DEGRADE_REASON === 'trial-ended') {
+    return 'License key (trial ended: subscribe at ghostarchitect.dev/pricing)';
+  }
+  const state = getActiveLicense()?.state || 'missing';
+  return `License key (${TIER}: ${state})`;
+}
+
+async function runSelectiveReconfigure() {
   // Test the GitHub token once when the menu opens; cache for the session.
   let githubOk = await testGithubToken();
   while (true) {
@@ -2215,7 +2349,7 @@ async function runSelectiveReconfigure(licenseState) {
         disabled: usingEnvKey() ? chalk.gray('(set via ANTHROPIC_API_KEY env var)') : false,
       },
       { name: `GitHub reports token ${githubOk ? '(verified)' : '(bad credentials: needs update)'}`, value: 'githubToken' },
-      { name: `License key (${TIER}: ${licenseState})`, value: 'license' },
+      { name: licenseMenuLabel(), value: 'license' },
       { name: `Change scan model (${getConfig().get('defaultModel') || 'claude-sonnet-4-6'})`, value: 'model' },
       { name: 'Run full setup wizard', value: 'full' },
       { name: 'Back', value: 'back' },
@@ -2280,6 +2414,26 @@ async function main() {
   const argv = process.argv.slice(2);
   const cliOpts = parseArgs(argv);
 
+  // Stash the CLI-derived scan-option overrides where session refresh points
+  // outside main()'s scope (reconfigureLicense, the degrade blocks in
+  // renderLicenseStateAndMaybeBlock) can re-seed the loader without dropping
+  // flags the user passed at launch. setScanOptions is last-write-wins, so
+  // every re-seed must carry these or a mid-session refresh would silently
+  // discard --max-context / --exclude / --skip-redaction.
+  CLI_SCAN_OVERRIDES = {
+    maxContextOverride: cliOpts.maxContext,
+    excludePresets: cliOpts.presets,
+    excludePatterns: cliOpts.excludes,
+    skipRedaction: cliOpts.skipRedaction,
+  };
+
+  // Contradictory transport flags: resolveTransport checks stream first, so
+  // stream wins. Say so instead of silently billing streaming rates to a user
+  // who expected half-price batch (Audit 7, Q9).
+  if (cliOpts.stream && cliOpts.batch) {
+    console.log(chalk.yellow('Both --stream and --batch were passed. Running streaming.'));
+  }
+
   // --recover-session <label>: force session recovery from the checkpoint sidecar
   // for this project on the next scan, even if a main session file exists. Wired
   // into multipass.loadSession's forced-recovery path.
@@ -2343,6 +2497,10 @@ async function main() {
   }
   if (cliOpts.licenseStatus) {
     await runLicenseStatusFlow();
+    process.exit(0);
+  }
+  if (cliOpts.exportCiToken) {
+    await runExportCiTokenFlow();
     process.exit(0);
   }
   if (cliOpts.licenseClear) {
@@ -2553,13 +2711,23 @@ async function main() {
         // The success path returns normally and never calls process.exit, so
         // this only fires on a genuine activation failure.
         const realExit = process.exit;
+        let activated = false;
         try {
           process.exit = (code) => { throw new Error(`first-run-activate-exit:${code}`); };
           await runActivateFlow(licenseKey.trim());
+          activated = true;
         } catch (activationErr) {
           console.log('\n' + chalk.yellow("That key didn't activate -- you can try again later with ghost --activate <key>. Continuing setup.") + '\n');
         } finally {
           process.exit = realExit;
+        }
+        // Propagate the fresh activation into the session BEFORE the wizard
+        // runs. The wizard's context-size prompt defaults to the ACTIVE tier's
+        // cap and persists the answer; with a stale Open session it defaulted
+        // to and saved 50K for brand-new paying customers, silently halving
+        // their paid context on every future scan (Audit 7, finding 1.3).
+        if (activated) {
+          await refreshSessionAndTier();
         }
       }
     } else {
@@ -2745,7 +2913,7 @@ async function main() {
         // licenseResult is block-scoped to the license-validation try above, so
         // it is not in scope here. Read the state from the session-stored active
         // license (set via setActiveLicense during validation) instead.
-        await runSelectiveReconfigure(getActiveLicense()?.state || 'unknown');
+        await runSelectiveReconfigure();
         printBanner();
         continue;
       }
@@ -2938,6 +3106,28 @@ async function main() {
       }
     }
 
+    // Ghost Watcher™ rows are selectable at every tier (a locked row the user
+    // cannot even click is a dead end at the exact moment they are interested
+    // in the paid feature, same reasoning as the Brief rows above), so the
+    // entitlement gate lives here at dispatch: below Team, selecting any Watch
+    // row renders the upgrade paywall instead of the feature.
+    if (['watch-enable', 'watch-status', 'watch-configure', 'watch-disable', 'watch-team'].includes(mode)) {
+      const verdict = requireTier('mode:watch');
+      if (!verdict.allowed) {
+        renderPaywall(verdict.paywall, promos.paywallPromo);
+        continue;
+      }
+    }
+
+    // Ghost Partner Profiles: same selectable-row-plus-dispatch-gate pattern.
+    if (mode === 'profiles') {
+      const verdict = requireTier('feature:profiles');
+      if (!verdict.allowed) {
+        renderPaywall(verdict.paywall, promos.paywallPromo);
+        continue;
+      }
+    }
+
     // Commit Forecast quota gate — checked at dispatch so the paywall fires
     // immediately when the user picks the mode, before any UI renders.
     if (mode === 'commit-forecast') {
@@ -2952,7 +3142,12 @@ async function main() {
     // modes (POI, Conflict, Audit) have no batch transport path, so the flag was
     // silently doing nothing and the user paid streaming prices believing they
     // had opted into the half-price Batches API. Say so out loud.
-    if (cliOpts.batch && !BATCH_CAPABLE_MODES.includes(mode)) {
+    // Only the API-calling scan modes get the notice. Recon makes no LLM call
+    // at all, so "Running streaming at standard rates" there was false and
+    // cost-alarming, and menu utility picks (watch-status, dashboards) printed
+    // nonsense like "--batch is not supported for watch-status" (Audit 7, Q7).
+    const BATCH_NOTICE_MODES = ['poi', 'conflict', 'audit', 'chat'];
+    if (cliOpts.batch && BATCH_NOTICE_MODES.includes(mode) && !BATCH_CAPABLE_MODES.includes(mode)) {
       console.log(chalk.yellow(
         `\n  Note: --batch is not supported for ${friendlyBatchModeLabel(mode)}. ` +
         `Running streaming at standard rates.`
@@ -3355,7 +3550,7 @@ async function main() {
 
           console.log(chalk.cyan('  Next steps: add these secrets to your GitHub repo:'));
           console.log(chalk.gray('     ANTHROPIC_API_KEY: your Anthropic API key'));
-          console.log(chalk.gray('     GHOST_LICENSE_KEY: your Ghost Team license key'));
+          console.log(chalk.gray('     GHOST_LICENSE_KEY: the output of "ghost --export-ci-token" (run it on this machine, not your GA- key)'));
           console.log(chalk.gray('     GHOST_PORTAL_REPO: your ghost-reports repo URL'));
           console.log(chalk.gray('     GHOST_PORTAL_TOKEN: GitHub PAT with repo write scope'));
           console.log('');
@@ -3486,6 +3681,18 @@ if (process.argv.includes('--watcher-commit')) {
   const { runWatchCommit } = await import('../src/modes/watcher-commit.js');
   const { version } = _require('../package.json');
 
+  // The classic CI misconfiguration: GHOST_LICENSE_KEY set to the GA- human
+  // key instead of the signed token. decodeAndVerifyToken can never validate
+  // it ("Token must have 3 parts, got 1"), which used to surface as a generic
+  // "license is not valid" advisory line and a watcher that silently never
+  // scanned. Catch it up front and say exactly how to fix it. Exit 0: Ghost
+  // Watcher™ is advisory and never blocks a commit.
+  if (looksLikeHumanKey(process.env.GHOST_LICENSE_KEY)) {
+    console.error('👻 Ghost Watcher™: GHOST_LICENSE_KEY appears to be a license key rather than a signed token.');
+    console.error("   Run 'ghost --activate <key>' on this machine first, or set GHOST_LICENSE_KEY to the output of 'ghost --export-ci-token'.");
+    process.exit(0);
+  }
+
   let watchTier;
   try {
     // Revocation IS checked here (no skipRevocationCheck). An unattended CI run
@@ -3526,6 +3733,16 @@ if (process.argv.includes('--brief')) {
   const { fromFixForecast, fromPOI, fromConflict } = await import('../lib/ghostBriefAdapter.js');
   const { publishBriefToPortal, isPortalConfigured } = await import('../src/core/portal-publish.js');
   const { version } = _require('../package.json');
+
+  // Same CI misconfiguration guard as the watcher path: a GA- human key in
+  // GHOST_LICENSE_KEY can never validate as a signed token. Ghost Brief™ is
+  // fail-closed (gated Max-plan feature), so exit 1 here, but with the same
+  // actionable guidance instead of a generic invalid-license line.
+  if (looksLikeHumanKey(process.env.GHOST_LICENSE_KEY)) {
+    console.error('Ghost Brief™: GHOST_LICENSE_KEY appears to be a license key rather than a signed token.');
+    console.error("Run 'ghost --activate <key>' on this machine first, or set GHOST_LICENSE_KEY to the output of 'ghost --export-ci-token'.");
+    process.exit(1);
+  }
 
   // Resolve license tier before doing anything else. Fail closed on an
   // unexpected validation fault (Ghost Brief is a gated tier feature) rather

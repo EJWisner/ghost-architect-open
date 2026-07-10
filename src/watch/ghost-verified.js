@@ -17,6 +17,8 @@
 // parsers in src/redactor.js. This keeps annotation-scanning ReDoS-immune and
 // able to run on a file of any size without the 500KB regex size guard.
 
+import { CODE_EXTENSIONS } from '../constants/code-extensions.js';
+
 const MARKER = '@ghost-verified';
 
 // A marker only counts as an annotation when it sits directly after a comment
@@ -30,18 +32,31 @@ const MARKER = '@ghost-verified';
 // "// @ghost-verified", "//@ghost-verified", "//   @ghost-verified" and
 // "//\t@ghost-verified" all anchor identically. (The previous implementation
 // hardcoded a single trailing space and silently missed every other spacing.)
-const COMMENT_OPENERS = ['//', '#', '--', '/*'];
+// '*' covers JSDoc/doc-block continuation lines (' * @ghost-verified'), the
+// most common JS annotation style, which previously never anchored (Audit 7,
+// Q24). Safe under the same guards as the other openers: the marker must sit
+// directly after the opener (whitespace-tolerant), string-literal context is
+// excluded, and a bare '*' mid-expression never ENDS the pre-marker text once
+// trailing whitespace is stripped unless the marker directly follows it.
+const COMMENT_OPENERS = ['//', '#', '--', '/*', '*'];
 
 // File-extension allowlist: only source code files are eligible for the
-// @ghost-verified annotation. Documentation files (.md, .json, .yaml, etc.)
-// frequently contain the marker STRING as documentation text (changelogs,
-// README feature descriptions) and must never be scanned for it.
-const SOURCE_EXTENSIONS = new Set([
-  '.js', '.ts', '.jsx', '.tsx',
-  '.py', '.rb', '.php', '.java',
-  '.go', '.rs', '.css', '.scss',
-  '.sql', '.sh',
-]);
+// @ghost-verified annotation. Documentation and data files (.md, .json,
+// .yaml, etc.) frequently contain the marker STRING as documentation text
+// (changelogs, README feature descriptions) and must never be scanned for it.
+//
+// Derived from the shared CODE_EXTENSIONS list minus a doc/data denylist, so
+// a language made scannable is automatically annotatable. v10.0.17 added
+// Swift/Kotlin scanning while this list stayed hand-maintained: watcher
+// findings on those files could exist but never be suppressed as
+// reviewed-and-accepted (Audit 7, Q14) — the exact two-lists-disagree failure
+// code-extensions.js was created to kill. EXTRA_SOURCE_EXTENSIONS preserves
+// the entries this list always had that CODE_EXTENSIONS does not (yet) carry.
+const DOC_DATA_EXTENSIONS     = new Set(['.md', '.json', '.xml', '.yaml', '.yml']);
+const EXTRA_SOURCE_EXTENSIONS = ['.rs', '.css', '.scss'];
+const SOURCE_EXTENSIONS = new Set(
+  [...CODE_EXTENSIONS, ...EXTRA_SOURCE_EXTENSIONS].filter(e => !DOC_DATA_EXTENSIONS.has(e))
+);
 
 /**
  * Scan a single file's content for the @ghost-verified marker in comment

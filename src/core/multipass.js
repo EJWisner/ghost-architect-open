@@ -14,10 +14,11 @@ import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
-import { narrateReport, scrubEmptyHeaders, splitFindingsAtCap, rewriteCapDisclosure } from './agent/narrator.js';
+import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
+import { buildVerifiedSidecar, buildUnverifiedSidecar } from './sidecar-pipeline.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { isContextOverflow } from '../utils/errors.js';
-import { verifyReport, verifyFindings, survivedVerification, formatVerifierReport } from './verifier.js';
+import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
 import { recordUsage } from './usage-tracker.js';
 import { mergeRates } from '../profile/index.js';
@@ -398,8 +399,23 @@ export function saveSession(label, session) {
 }
 
 export function deleteSession(label) {
+  // Remove EVERY copy a persist may have left behind: the primary, its .bak
+  // sibling (writes go .tmp -> .bak -> rename), and the os.tmpdir() fallback
+  // that persistSession strategy 3 uses when the Reports volume is unwritable.
+  // Deleting only the primary let stale alternates resurrect: the next run's
+  // loadSession found the fallback and offered to resume a scan the user had
+  // already completed or restarted, every time (Audit 7, finding 2.15).
+  // Best-effort per path: one locked file must not keep the others alive.
   const p = sessionFilePath(label);
-  if (fs.existsSync(p)) fs.unlinkSync(p);
+  for (const candidate of [p, p + '.bak', alternateSessionFilePath(label)]) {
+    try {
+      if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+    } catch { /* best-effort cleanup — never throw from delete */ }
+  }
+  // The checkpoint sidecar is this scan's salvage net; once the session is
+  // deliberately deleted (completed or restarted), a surviving checkpoint
+  // would only resurrect work the user is done with.
+  clearCheckpoint(label);
 }
 
 export function listSessions() {
@@ -733,30 +749,9 @@ function writeSynthesisStageDump(runId, stage, report, projectLabel) {
   } catch { /* never let logging break the scan */ }
 }
 
-// Titles are the only stable identity a finding carries across the raw-memory
-// form and the narrated-then-reparsed form. Normalize the way the verifier's own
-// fuzzy table matcher does: casefold, collapse whitespace, drop punctuation.
-function normalizeTitleForDedupe(title) {
-  return String(title || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// First occurrence wins, so a detailed finding (which carries the narrator's
-// effort and cost estimates) beats the raw-memory copy of the same finding.
-function dedupeFindingsByTitle(findings) {
-  const seen = new Set();
-  const out = [];
-  for (const f of findings) {
-    const key = normalizeTitleForDedupe(f.title);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(f);
-  }
-  return out;
-}
+// Title normalization and dedupe live in src/core/sidecar-pipeline.js now,
+// shared with the single-pass POI and Blast paths so the three can never
+// drift (Audit 7, finding 3.4).
 
 async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalPasses, coverage, onChunk, options = {}) {
   // Diagnostic run id — timestamps all four stage dumps in this scan so they
@@ -902,53 +897,37 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
       // only ~30 existed in any artifact. The cap disclosure pointed at a JSON
       // file that did not contain them.
       //
-      // Fix: verify the undetailed remainder too, then write every survivor.
-      // Cost note: this is one extra verifier call per undetailed finding, and it
-      // only fires on scans that exceed the cap. A 71-finding scan pays for 41
-      // extra verifier calls (small prompts, max_tokens 300, truncated source).
-      const { undetailed, cap } = splitFindingsAtCap(memoryResult.findings);
-
-      const detailedSurvivors = (verifyResult.results || [])
-        .filter(survivedVerification)
-        .map(r => ({ ...r.finding, detailed: true }));
-
-      let undetailedSurvivors = [];
-      if (undetailed.length > 0) {
-        const { results: remainderResults } = await verifyFindings(
-          undetailed,
-          options.fileMap,
-          { llmVerifier: createLLMVerifier(), debugLabel: 'undetailed-remainder' }
-        );
-        undetailedSurvivors = remainderResults
-          .filter(survivedVerification)
-          .map(r => ({
-            ...r.finding,
-            // These were never narrated, so the planner never estimated effort
-            // for them. Report that honestly rather than defaulting to 0 hours,
-            // which reads as "free to fix".
-            effortHours: null,
-            detailed: false,
-          }));
-      }
-
-      // Dedupe by normalized title. The legacy narrator fallback path does not
-      // apply the cap, so on that path the "undetailed" remainder can already be
-      // present in the rendered report. Without this, those findings would appear
-      // twice in the sidecar.
-      const sidecarFindings = dedupeFindingsByTitle([...detailedSurvivors, ...undetailedSurvivors]);
-
-      // The narrator rendered the disclosure before verification ran, so its
-      // count was an upper bound. Restate it with the number that actually
-      // reached the sidecar, or remove it if verification dropped enough
-      // findings that the report is no longer capped.
-      finalOutput = rewriteCapDisclosure(finalOutput, sidecarFindings.length, cap);
-
-      if (options.onSidecarFindings) options.onSidecarFindings(sidecarFindings);
+      // buildVerifiedSidecar (shared with the single-pass POI and Blast paths)
+      // verifies the undetailed remainder, dedupes, and rewrites the disclosure
+      // to the true sidecar count. Cost note: one extra verifier call per
+      // undetailed finding, only on scans exceeding the cap.
+      const sidecar = await buildVerifiedSidecar({
+        allFindings:     memoryResult.findings,
+        detailedResults: verifyResult.results,
+        fileMap:         options.fileMap,
+        reportText:      finalOutput,
+      });
+      finalOutput = sidecar.reportText;
+      if (options.onSidecarFindings) options.onSidecarFindings(sidecar.sidecarFindings);
     } catch (err) {
-      // Verifier failure must never block the report — surface a note and continue.
+      // Verifier failure must never block the report — surface a note and
+      // continue. But do NOT ship the pre-verification disclosure over an
+      // empty sidecar: reports.js would fall back to parsing only the ~30
+      // detailed findings out of the markdown while the disclosure promises
+      // all N (Audit 7, finding 3.6). Emit the full set unverified and
+      // reconcile the disclosure with it; an honest partial artifact beats a
+      // promise pointing at findings that exist nowhere.
       if (options.onVerifierReport) {
         options.onVerifierReport({ error: err.message, note: 'Verifier errored; report returned unverified.' });
       }
+      try {
+        const fallback = buildUnverifiedSidecar({
+          allFindings: memoryResult.findings,
+          reportText:  finalOutput,
+        });
+        finalOutput = fallback.reportText;
+        if (options.onSidecarFindings) options.onSidecarFindings(fallback.sidecarFindings);
+      } catch { /* sidecar fallback is best-effort — the report still ships */ }
     }
   }
 
@@ -1505,6 +1484,17 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
       session.pendingPassResults = [];
       onProgress({ type: 'mergeDone' });
     }
+
+    // Checkpoint sidecar: the salvage net for a CORRUPTED primary session file.
+    // persistSession below guards against a missing session; this guards
+    // against an unreadable one. salvageSessionFromCheckpoints and the
+    // --recover-session flag read exactly this payload — before v10.0.18
+    // nothing ever wrote it, so every salvage attempt ended in "previous
+    // progress is lost" despite the code promising recovery (Audit 7,
+    // finding 3.3). Flat array by design: salvage funnels everything into
+    // pendingPassResults and synthesis merges from there losslessly.
+    writeCheckpoint(projectLabel, passNum, allPasses.length,
+      [...session.mergedGroups, ...session.pendingPassResults]);
 
     try {
       await persistSession(projectLabel, session);

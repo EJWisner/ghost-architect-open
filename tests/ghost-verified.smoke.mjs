@@ -165,6 +165,64 @@ console.log('Test 13: .yaml files containing marker text never verify');
   checkEqual('ghost-watcher.yaml reason null', r.reason, null);
 }
 
+// ── Tests 14-16: whitespace tolerance after the comment opener ──────────────
+// Regression fixtures for the v10.0.17 anchoring fix (Audit 7, Q23): the old
+// implementation hardcoded exactly one space after the opener, so every
+// fixture above (single space) passed while these three silently failed.
+// Reverting scanForVerified to the single-space match must fail this suite.
+console.log('Tests 14-16: opener whitespace tolerance (none, tab, multi-space)');
+{
+  const wsMap = {
+    'nospace.js':  'const a = 1; //@ghost-verified: zero spaces\n',
+    'tabbed.py':   '#\t@ghost-verified: tab separated\nprint(1)\n',
+    'multisp.sql': '--   @ghost-verified\nSELECT 1;\n',
+  };
+  const r1 = scanForVerified('nospace.js', wsMap);
+  checkEqual('//@ghost-verified (no space) verified', r1.verified, true);
+  checkEqual('//@ghost-verified reason captured', r1.reason, 'zero spaces');
+  const r2 = scanForVerified('tabbed.py', wsMap);
+  checkEqual('#\\t@ghost-verified (tab) verified', r2.verified, true);
+  const r3 = scanForVerified('multisp.sql', wsMap);
+  checkEqual('--   @ghost-verified (multi-space) verified', r3.verified, true);
+}
+
+// ── Test 17: near-miss marker warns and does not verify ─────────────────────
+console.log('Test 17: bare marker outside comment context warns, never verifies');
+{
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (msg) => warnings.push(String(msg));
+  let r;
+  try {
+    r = scanForVerified('nearmiss.js', {
+      'nearmiss.js': 'const tag = 1;\n@ghost-verified\nfoo();\n',
+    });
+  } finally {
+    console.warn = origWarn;
+  }
+  checkEqual('near-miss not verified', r.verified, false);
+  checkEqual('near-miss emitted a warning', warnings.some(w => w.includes('not anchored to a comment opener')), true);
+}
+
+// ── Test 18: JSDoc continuation-line style anchors ───────────────────────────
+console.log('Test 18: " * @ghost-verified" (doc-block continuation) verifies');
+{
+  const r = scanForVerified('jsdoc.js', {
+    'jsdoc.js': '/**\n * @ghost-verified: reviewed in design doc\n */\nfunction f() {}\n',
+  });
+  checkEqual('jsdoc continuation verified', r.verified, true);
+  checkEqual('jsdoc reason captured', r.reason, 'reviewed in design doc');
+}
+
+// ── Test 19: Swift and Kotlin files are annotatable ──────────────────────────
+console.log('Test 19: Swift/Kotlin (scannable since v10.0.17) accept the annotation');
+{
+  const r1 = scanForVerified('App.swift', { 'App.swift': '// @ghost-verified: platform team reviewed\nlet x = 1\n' });
+  checkEqual('.swift verified', r1.verified, true);
+  const r2 = scanForVerified('Main.kt', { 'Main.kt': '// @ghost-verified\nval y = 2\n' });
+  checkEqual('.kt verified', r2.verified, true);
+}
+
 if (failures > 0) {
   console.log(`\nFAILED — ${failures} assertion(s) failed\n`);
   process.exit(1);

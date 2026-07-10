@@ -24,7 +24,7 @@
 import { decodeAndVerifyToken } from './token.js';
 import { currentFingerprintHashes, matchesFingerprint } from './fingerprint.js';
 import { validateClock } from './clock.js';
-import { checkRevocation } from './revocation.js';
+import { checkRevocation, hasCachedRevokedVerdict } from './revocation.js';
 import {
   getToken,
   getLastSeenUtc,
@@ -209,22 +209,54 @@ export async function validateLicense({ skipNetworkClock = false, skipRevocation
 
   const baseResult = computeBaseResult(payload, nowMs, clockResult);
 
+  // A KNOWN-revoked license must not ride out its grace window. The grace and
+  // expired states below return before the network revocation check (correct:
+  // an expiring license needs no fresh probe), but they used to skip even the
+  // CACHED verdict, so cancel-then-coast kept full paid access for the ~6-day
+  // grace window (Audit 7, finding 3.16). Consult the sticky cache only —
+  // offline-cheap, no TTL, no network — and let the standard revoked state
+  // (with its resubscribe copy) win over grace/expired. skipRevocationCheck
+  // callers keep their fully-revocation-free contract.
+  const cachedRevoked = !skipRevocationCheck
+    && payload.lid
+    && payload.tier !== 'trial'
+    && hasCachedRevokedVerdict(payload.lid);
+  if (cachedRevoked && nowMs >= expiresMs && nowMs < hardStopMs) {
+    return {
+      ...baseResult,
+      state: 'revoked',
+      message:
+        'This license has been revoked, usually because the subscription was cancelled.\n' +
+        'Continue free with Ghost Open, or resubscribe at ghostarchitect.dev/pricing.\n' +
+        'To restore access after resubscribing, run: ghost --activate <your new key>\n' +
+        'If you believe this is an error, email support@ghostarchitect.dev.',
+    };
+  }
+
+  // The non-trial expiry copy below always includes the re-activation hint.
+  // There is no automatic token refresh: a subscriber whose Stripe plan is
+  // happily auto-billing still holds a token that ages out on a fixed date.
+  // Without the hint, a PAYING customer hits "License expired. Renew at
+  // /pricing" and either emails support, buys a second subscription, or
+  // churns angry (Audit 7, finding 2.4). Re-activating with their existing
+  // key mints a fresh token from the worker.
+  const REACTIVATE_HINT = 'Already a subscriber? Run ghost --activate <your key> to restore access.';
   if (nowMs >= hardStopMs) {
     const message = payload.tier === 'trial'
       ? `Your Ghost Pro Max trial has ended. Continue free with Ghost Open, or subscribe at ghostarchitect.dev/pricing to keep scanning.`
-      : `License expired on ${payload.expires.slice(0, 10)}. Renew at ghostarchitect.dev/pricing or email support@ghostarchitect.dev.`;
+      : `License expired on ${payload.expires.slice(0, 10)}. Renew at ghostarchitect.dev/pricing or email support@ghostarchitect.dev.\n${REACTIVATE_HINT}`;
     return { ...baseResult, state: 'hard_stop', message };
   }
   if (nowMs >= graceMs) {
     const message = payload.tier === 'trial'
       ? `Your Ghost Pro Max trial has ended. New scans stop after ${payload.hard_stop.slice(0, 10)}. Subscribe at ghostarchitect.dev/pricing to keep scanning.`
-      : `License grace period ends today. New scans will be blocked starting ${payload.hard_stop.slice(0, 10)}. Renew now.`;
+      : `License grace period ends today. New scans will be blocked starting ${payload.hard_stop.slice(0, 10)}. Renew now.\n${REACTIVATE_HINT}`;
     return { ...baseResult, state: 'expired', message };
   }
   if (nowMs >= expiresMs) {
     const message = payload.tier === 'trial'
       ? `Your Ghost Pro Max trial has ended (${payload.expires.slice(0, 10)}). Access continues through ${payload.grace_until.slice(0, 10)}. Subscribe at ghostarchitect.dev/pricing to keep scanning.`
-      : `License expired on ${payload.expires.slice(0, 10)}. Grace period through ${payload.grace_until.slice(0, 10)}. Renew now.`;
+      : `License expired on ${payload.expires.slice(0, 10)}. Grace period through ${payload.grace_until.slice(0, 10)}. Renew now.\n${REACTIVATE_HINT}`;
     return { ...baseResult, state: 'grace', message };
   }
   // (7) Revocation check — is the subscription behind this token still alive?
@@ -245,6 +277,7 @@ export async function validateLicense({ skipNetworkClock = false, skipRevocation
         message:
           'This license has been revoked, usually because the subscription was cancelled.\n' +
           'Continue free with Ghost Open, or resubscribe at ghostarchitect.dev/pricing.\n' +
+          'To restore access after resubscribing, run: ghost --activate <your new key>\n' +
           'If you believe this is an error, email support@ghostarchitect.dev.',
       };
     }

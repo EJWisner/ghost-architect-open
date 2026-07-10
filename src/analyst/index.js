@@ -6,8 +6,9 @@ import { createRequire } from 'module';
 import { AUDIT_ROADMAP_SYSTEM, buildAuditRoadmapUserMessage } from '../../prompts/audit/v1.js';
 import { narrateReport, narrateExecutiveSummary, scrubEmptyHeaders } from '../core/agent/narrator.js';
 import { verifyReport } from '../core/verifier.js';
+import { buildVerifiedSidecar, buildUnverifiedSidecar } from '../core/sidecar-pipeline.js';
 import { createLLMVerifier } from '../core/llm-verifier.js';
-import { recordUsage } from '../core/usage-tracker.js';
+import { recordUsage, beginUsageCapture, endUsageCapture, getCapturedUsage } from '../core/usage-tracker.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { mergeRates } from '../profile/index.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
@@ -188,19 +189,44 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
   //   Pass 1: cheap regex check
   //   Pass 2: LLM semantic check
   if (options.fileMap || codebaseContext.fileMap) {
+    const fileMap = options.fileMap || codebaseContext.fileMap;
     try {
       if (options.onVerifierStart) options.onVerifierStart();
-      const { annotatedReport, report: verifierCard } = await verifyReport(
+      const { annotatedReport, report: verifierCard, results } = await verifyReport(
         finalOutput,
-        options.fileMap || codebaseContext.fileMap,
+        fileMap,
         { llmVerifier: createLLMVerifier() }
       );
       finalOutput = annotatedReport;
       if (options.onVerifierReport) options.onVerifierReport(verifierCard);
+
+      // Findings sidecar — same shared pipeline as multipass synthesizeFinal.
+      // The single-pass path was the surviving copy of the pre-v10.0.18 defect:
+      // narrateReport caps at 30 and embeds the "All N findings are in
+      // .findings.json" disclosure, but nothing here verified the remainder,
+      // rewrote the count, or handed the full set to the caller, so a one-pass
+      // codebase with >30 findings shipped a promise over a sidecar holding 30
+      // (Audit 7, finding 3.4).
+      const sidecar = await buildVerifiedSidecar({
+        allFindings:     findings,
+        detailedResults: results,
+        fileMap,
+        reportText:      finalOutput,
+        debugLabel:      'single-pass-remainder',
+      });
+      finalOutput = sidecar.reportText;
+      if (options.onSidecarFindings) options.onSidecarFindings(sidecar.sidecarFindings);
     } catch (err) {
       if (options.onVerifierReport) {
         options.onVerifierReport({ error: err.message, note: 'Verifier errored; report returned unverified.' });
       }
+      // Same honest-partial fallback as multipass: full set, unverified,
+      // disclosure reconciled (Audit 7, finding 3.6).
+      try {
+        const fallback = buildUnverifiedSidecar({ allFindings: findings, reportText: finalOutput });
+        finalOutput = fallback.reportText;
+        if (options.onSidecarFindings) options.onSidecarFindings(fallback.sidecarFindings);
+      } catch { /* best-effort */ }
     }
   }
 
@@ -328,6 +354,7 @@ export async function processBlastRawOutput(rawOutput, {
   onChunk = () => {},
   onNarratorStart,
   onUsage,
+  onSidecarFindings,
 } = {}) {
   const findings = extractFindings(rawOutput, 'blast');
 
@@ -350,6 +377,17 @@ export async function processBlastRawOutput(rawOutput, {
     ? targets[0]
     : `change set of ${Array.isArray(targets) ? targets.length : 1} files`);
 
+  // Real narrator usage via the usage-tracker sink. Every internal narrator
+  // call (plan pass, prose pass, patcher, vocab extraction) records real
+  // tokens into the active capture window; the old char/4 estimate measured
+  // only raw-in/narrated-out and systematically undercounted the displayed
+  // blast cost (Audit 7, finding 3.11). Nesting-safe: if a caller already
+  // opened a window (e.g. a future POI-style bracket), take a before/after
+  // delta instead of opening a second window, because beginUsageCapture
+  // discards any prior one.
+  const outerWindow = getCapturedUsage();
+  if (!outerWindow) beginUsageCapture();
+
   const narratedReport = await narrateReport(
     memoryResult,
     {
@@ -361,16 +399,42 @@ export async function processBlastRawOutput(rawOutput, {
     onChunk
   );
 
-  // Narrator cost estimate — character-count approximation, not real API usage.
-  // (Same rationale as the streaming path: narrateReport has no aggregated usage.)
-  if (onUsage && narratedReport) {
-    const narratorInputEst  = Math.ceil(rawOutput.length / 4);
-    const narratorOutputEst = Math.ceil(narratedReport.length / 4);
-    // @ghost-verified: the stage argument passed to onUsage in processBlastRawOutput is intentionally dropped -- stage is baked into each tracker lambda (scan/verify/narrate); the 4th arg is a no-op by design
-    onUsage(narratorInputEst, narratorOutputEst, getModel(), 'narrate');
+  let narratorUsage = null;
+  if (!outerWindow) {
+    narratorUsage = endUsageCapture();
+  } else {
+    const after = getCapturedUsage();
+    narratorUsage = after ? {
+      inputTokens:  after.inputTokens  - outerWindow.inputTokens,
+      outputTokens: after.outputTokens - outerWindow.outputTokens,
+      calls:        after.calls        - outerWindow.calls,
+    } : null;
   }
 
-  return narratedReport || rawOutput;
+  if (onUsage && narratedReport) {
+    if (narratorUsage && narratorUsage.calls > 0) {
+      // @ghost-verified: the stage argument passed to onUsage in processBlastRawOutput is intentionally dropped -- stage is baked into each tracker lambda (scan/verify/narrate); the 4th arg is a no-op by design
+      onUsage(narratorUsage.inputTokens, narratorUsage.outputTokens, getModel(), 'narrate');
+    } else {
+      // Capture produced nothing (narrator path that bypassed recordUsage) —
+      // degrade to the char/4 approximation rather than reporting $0.
+      const narratorInputEst  = Math.ceil(rawOutput.length / 4);
+      const narratorOutputEst = Math.ceil(narratedReport.length / 4);
+      onUsage(narratorInputEst, narratorOutputEst, getModel(), 'narrate');
+    }
+  }
+
+  // Findings sidecar — blast findings are impact analyses, not source claims,
+  // so no verifier pass runs here; the honest sidecar is the FULL raw set with
+  // the cap disclosure reconciled to it. Without this, a >30-finding blast
+  // shipped the capped narration as its only artifact and the disclosure
+  // promised findings that existed nowhere (Audit 7, finding 3.4).
+  const sidecar = buildUnverifiedSidecar({
+    allFindings: findings,
+    reportText:  narratedReport || rawOutput,
+  });
+  if (onSidecarFindings) onSidecarFindings(sidecar.sidecarFindings);
+  return sidecar.reportText;
 }
 
 export async function runBlastRadius(codebaseContext, target, onChunk, options = {}) {
@@ -422,8 +486,9 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     profile:        options.profile,
     loadedFiles:    codebaseContext.loadedFiles || 0,
     onChunk,
-    onNarratorStart: options.onNarratorStart,
-    onUsage:         options.onUsage,
+    onNarratorStart:   options.onNarratorStart,
+    onUsage:           options.onUsage,
+    onSidecarFindings: options.onSidecarFindings,
   });
 }
 

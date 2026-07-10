@@ -47,6 +47,7 @@
 import { getConfig } from './config.js';
 import chalk from 'chalk';
 import boxen from 'boxen';
+import { IS_WINDOWS } from './cli/symbols.js';
 // FORECAST_QUOTA is owned by tier-gates.js (the policy source of truth).
 // Imported here so renderForecastPaywall copy stays in sync without duplicating
 // the constant. tier-gates never imports freemium — no circular dependency.
@@ -95,12 +96,23 @@ function getStore() {
   return getConfig();
 }
 
-// Quota counters are the paywall's only enforcement surface. A configstore
-// read/write failure must never open the gate. safeGetCount fails closed: an
-// unreadable counter is treated as "quota exhausted" (MAX_SAFE_INTEGER) so the
-// free tier blocks rather than granting unlimited scans. safeIncrementCount
-// fails closed too: if the post-scan bump can't persist, the scan is blocked as
-// a precaution rather than letting the counter silently stay put.
+// Quota counters are the paywall's only enforcement surface. Their failure
+// behavior is asymmetric, and operators should know exactly what it is:
+//
+//   READS fail closed. safeGetCount treats an unreadable counter as "quota
+//   exhausted" (MAX_SAFE_INTEGER) so the free tier blocks rather than
+//   granting unlimited scans.
+//
+//   WRITES fail open, by explicit call-site policy. safeIncrementCount throws
+//   on a persist failure, but the scan-counter call sites (src/reports.js and
+//   src/modes/prompt-triage.js) catch and continue: the scan already ran, and
+//   a disk hiccup must never destroy a report the user paid API costs for.
+//   Net effect: a configstore that READS fine but cannot WRITE (root-owned
+//   file from an old sudo run, read-only home) leaves the counter stuck and
+//   the quota never triggers. That is an accepted trade-off on an
+//   honor-system free tier, not an enforced contract — do not describe it as
+//   fail-closed (Audit 7, finding 3.15). The Commit Forecast counter's call
+//   site does NOT catch, so that increment failure does surface to the user.
 function safeGetCount(key) {
   try {
     return getStore().get(key) || 0;
@@ -115,12 +127,16 @@ function safeIncrementCount(key) {
     const current = getStore().get(key) || 0;
     getStore().set(key, current + 1);
   } catch (err) {
+    // Honest message: the scan already completed; only the counter update
+    // failed. Callers decide whether to surface or swallow the throw (the
+    // saved-report call sites swallow it — see the module comment above).
     process.stderr.write(
       '[Ghost] Quota counter write failed: ' +
-      err.message + '. Scan blocked as a precaution.\n'
+      err.message + '. The scan completed; the free-scan counter may not have advanced. ' +
+      'Check disk space and config file permissions.\n'
     );
     throw new Error(
-      'Quota system error. Please contact ' +
+      'Quota counter update failed. Please contact ' +
       'support@ghostarchitect.dev if this persists.'
     );
   }
@@ -320,7 +336,9 @@ export function renderFixForecastPaywall(paywallPromo = '') {
 // is worker-driven; when empty the promo block is not rendered.
 export function renderAuditPaywall(paywallPromo = '') {
   const lines = [
-    chalk.cyan.bold('📋  Inheritance Audit - Pro feature'),
+    // IS_WINDOWS guard: the raw emoji renders as mojibake on legacy Windows
+    // consoles, and this is a primary conversion surface (Audit 7, Q21).
+    chalk.cyan.bold(IS_WINDOWS ? '[AUD]  Inheritance Audit - Pro feature' : '📋  Inheritance Audit - Pro feature'),
     '',
     chalk.white('The Inheritance Audit produces a deal-grade report for'),
     chalk.white('buyer diligence, fractional CTO onboarding, and'),
@@ -353,9 +371,13 @@ export function renderQuotaPaywall(paywallPromo = '') {
   const lines = [
     chalk.yellow.bold(`You've used your ${SCAN_QUOTA} free Ghost Architect™ reports.`),
     '',
-    chalk.white('Upgrade to keep going: unlimited reports, all modes'),
-    chalk.white('including Inheritance Audit, hardware-bound license,'),
-    chalk.white('and email support.'),
+    // Accuracy note: do NOT say "all modes". Pro (the first tier listed below)
+    // does not include Ghost Brief, Executive Brief, or Ghost Watcher; saying
+    // "all modes" at the conversion moment sets up a post-purchase trust hit
+    // (Audit 7, finding 2.7). Name what every paid tier actually unlocks.
+    chalk.white('Upgrade to keep going: unlimited POI, Blast Radius,'),
+    chalk.white('Conflict, and Prompt Triage reports, plus Inheritance'),
+    chalk.white('Audit and email support.'),
   ];
   if (paywallPromo) {
     lines.push('');

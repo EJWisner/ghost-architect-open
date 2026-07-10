@@ -254,6 +254,15 @@ const MODE_DISPLAY = {
   'mode:chat':            'Chat',
   'mode:ghost-brief':     'Ghost Brief™',
   'mode:executive-brief': 'Executive Brief™',
+  'mode:watch':           'Ghost Watcher™',
+};
+
+// Feature gates that render a real upgrade paywall at dispatch (the menu rows
+// are selectable at every tier so the pitch is reachable; see bin/ghost.js).
+// Feature gates NOT listed here keep the kind:'unknown' no-renderer signal —
+// they are soft-gate callout sites, not blocking paywalls.
+const FEATURE_DISPLAY = {
+  'feature:profiles': 'Ghost Partner Profiles',
 };
 
 // Human labels for tiers, and the order in which we advertise the LOWEST paid
@@ -318,10 +327,23 @@ export function paywallFor(gateId, tier) {
       requiredExact: isMaxOnlyGate(gateId),
     };
   }
-  // Feature gates currently have no rendered paywall — Phase 2/3 will wire
-  // soft-gate callouts (D3) at feature sites instead of blocking. Returned
-  // kind:'unknown' so a caller that mistakenly tries to render gets a
-  // visible "where's the renderer" signal rather than a silent no-op.
+  // Feature gates listed in FEATURE_DISPLAY render the standard upgrade
+  // paywall (the Ghost Partner Profiles menu row is selectable at every tier,
+  // so its dispatch gate needs real copy). All other feature gates keep the
+  // kind:'unknown' no-renderer signal — Phase 2/3 wires soft-gate callouts
+  // (D3) at those sites instead of blocking, and a caller that mistakenly
+  // tries to render gets a visible "where's the renderer" signal rather than
+  // a silent no-op.
+  if (FEATURE_DISPLAY[gateId]) {
+    return {
+      kind: 'upgrade',
+      gateId,
+      tier,
+      modeName: FEATURE_DISPLAY[gateId],
+      requiredTier: minRequiredTierLabel(gateId),
+      requiredExact: isMaxOnlyGate(gateId),
+    };
+  }
   return { kind: 'unknown', gateId, tier };
 }
 

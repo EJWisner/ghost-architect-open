@@ -8,7 +8,7 @@ import fs from 'fs';
 import { execFileSync } from 'child_process';
 import { getTierCap } from './loader/tierCaps.js';
 import { getActiveTier } from './license/session.js';
-import { MODEL_RATES } from './core/estimator.js';
+import { MODEL_RATES, getPricing } from './core/estimator.js';
 
 // ── Configstore path resolution (Linux sudo/root hardening) ──────────────────
 // configstore@6 resolves to ${XDG_CONFIG_HOME || ~/.config}/configstore/<name>.json
@@ -31,33 +31,48 @@ const CONFIGSTORE_NAME = 'ghost-architect';
 // pricing in every cost estimate.
 //
 // Order is the menu order. Index 0 is the default.
+//
+// Blurbs may be a string or a function of the current date, so time-scoped
+// copy (introductory pricing windows) expires on its own instead of going
+// stale in a shipped binary.
 const SELECTABLE_MODELS = [
   ['claude-sonnet-4-6', 'recommended, best balance of speed and depth'],
-  ['claude-sonnet-5',   'newer Sonnet, introductory pricing through Aug 31 2026'],
+  ['claude-sonnet-5',   (now) => now < new Date('2026-09-01T00:00:00Z')
+    ? 'newer Sonnet, introductory pricing through Aug 31 2026'
+    : 'newer Sonnet'],
   ['claude-opus-4-8',   'more capable, slower, costlier'],
   ['claude-fable-5',    'deepest synthesis, highest cost'],
 ];
 
-const MODEL_CHOICES = SELECTABLE_MODELS.map(([value, blurb]) => {
-  const rate = MODEL_RATES[value];
-  if (!rate) {
+// Validate at module load (fail loudly on a typo'd id), but build the priced
+// labels at CALL time via getPricing(): estimator pricing is date-aware
+// (Sonnet 5 flips from $2/$10 to $3/$15 on Sep 1 2026), and a label built once
+// from raw MODEL_RATES would keep quoting the intro price after the estimator
+// started billing the standard one — a silent misquote on the exact surface
+// this picker exists to make honest (Audit 7, finding 2.1).
+for (const [value] of SELECTABLE_MODELS) {
+  if (!MODEL_RATES[value]) {
     throw new Error(
       `config.js: model "${value}" is offered in the picker but has no entry in ` +
       `MODEL_RATES (src/core/estimator.js). Cost estimates would silently fall ` +
       `back to Sonnet pricing. Add the rate or remove the choice.`
     );
   }
-  // Show the real per-million rates so the buyer sees the cost delta at the
-  // moment they choose, not after the scan. Batch mode halves both figures.
-  const price = `$${rate.inputPerM.toFixed(0)}/$${rate.outputPerM.toFixed(0)} per Mtok`;
-  return { name: `${value} (${blurb}) ${price}`, value };
-});
+}
 
 // Shared with bin/ghost.js's "Change scan model" reconfigure item so the wizard
 // and the reconfigure menu can never offer different models. Returns a fresh
 // copy: inquirer mutates choice objects.
 export function getModelChoices() {
-  return MODEL_CHOICES.map(c => ({ ...c }));
+  const now = new Date();
+  return SELECTABLE_MODELS.map(([value, blurb]) => {
+    // Show the real per-million rates so the buyer sees the cost delta at the
+    // moment they choose, not after the scan. Batch mode halves both figures.
+    const rate  = getPricing(value, now);
+    const price = `$${rate.inputPerM.toFixed(0)}/$${rate.outputPerM.toFixed(0)} per Mtok`;
+    const text  = typeof blurb === 'function' ? blurb(now) : blurb;
+    return { name: `${value} (${text}) ${price}`, value };
+  });
 }
 
 function isLinuxSudoRoot() {
@@ -374,7 +389,7 @@ export async function runSetupWizard() {
       type: 'list',
       name: 'defaultModel',
       message: chalk.cyan('Default Claude model:'),
-      choices: MODEL_CHOICES,
+      choices: getModelChoices(),
       default: 0
     },
     {

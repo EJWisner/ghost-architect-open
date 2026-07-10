@@ -486,7 +486,11 @@ export async function runPromptTriageMode(options = {}) {
         severity:    (f.severity || 'INFO').toUpperCase(),
         files:       f.file ? [f.file] : [],
         effortHours: 0,
-        confidence:  f.confidence || 85,
+        // Number.isFinite, not ||: absence of a confidence claim must not be
+        // rewritten as 85 (the same absence-read-as-claim pattern the
+        // flagFinding/verifier fix eradicated in v10.0.17), and a legitimate
+        // 0 must survive. null = "no claim", rendered as needs-review.
+        confidence:  Number.isFinite(f.confidence) ? f.confidence : null,
         detail:      f.detail || f.message || '',
       }));
       const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -543,7 +547,10 @@ export async function runPromptTriageMode(options = {}) {
     }));
     const piMeta = {
       findings: piFindings,
-      filesAnalyzed: loaded.files.length + ' prompt' + (loaded.files.length === 1 ? '' : 's'),
+      // scannedFilePaths, not loaded.files: redaction-skipped prompts were
+      // never analyzed and must not inflate the project-history coverage
+      // figure (same rule as the terminal count above).
+      filesAnalyzed: scannedFilePaths.length + ' prompt' + (scannedFilePaths.length === 1 ? '' : 's'),
       targetModel: targetModel || null,
       detectorsRun: detectors.length,
     };

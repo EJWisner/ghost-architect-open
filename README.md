@@ -2,188 +2,18 @@
 
 > AI-powered codebase archaeology: understand what you inherited.
 
-### v10.0.17
-- Patch: license revocation checking added, so a cancelled subscription now stops Ghost Watcher™ and the gated modes instead of running until the token expires. Commit Forecast quota bypass closed. Trial and paid scans no longer drain the Open free-scan quota. The verifier no longer silently deletes real findings when a rate limit interrupts verification. Ghost Watcher™ no longer publishes a clean portal state, or marks findings resolved, when a scan did not run. Claude Fable 5 added to the model picker. Around forty further correctness, cost-accuracy, and copy fixes.
-
-### v10.0.16
-- Patch: PRICING export name collision fixed, forecast-overlay context cap intent documented, blast cost tracker stage argument corrected, blast radius observations separated from action-required findings in PR comments and portal.
-
-### v10.0.15
-- Patch: chat and question mode system prompt rewritten to calibrate response depth to question complexity.
-
-### v10.0.14
-- Patch: em dashes and bare branding swept from reports, false-positives phrasing removed, assets/ in npm tarball, verifier now keeps source-confirmed findings, AWS redactor SHA fix, Windows menu descriptions restored, clock-skew license panel fixed, Max-plan copy corrected, and ten additional polish fixes.
-
-### v10.0.13
-- Patch: assets/ directory and common binary asset extensions (.png, .jpg, .gif, .svg, .woff, .ttf, .eot, .ico, .mp4, .mp3, .pdf) excluded from scans, audit paywall pricing corrected to read from the canonical pricing constants (Pro was shown at $99/mo instead of $25/mo).
-
-### v10.0.12
-- Patch: license detection copy corrected, fallback session path now read on resume, repo name derivation warns on fallback, concurrent index.json writes use optimistic locking, clock state validated on read, GitHub PAT env var priority added, em dashes removed from emails, narrator patcher timeout now visible.
-
-### v10.0.11
-- Patch: clock ratchet window widened to 5 minutes with GHOST_CLOCK_TOLERANCE override, session salvage filters checkpoints by project label, interrupted publish recovery no longer loops forever plus --force-clear-markers flag, basePath trimmed with typed InvalidBasePathError, audit synthesis and multipass CLI unhandled rejections wrapped, sudo chown failures logged, DISPUTED drops logged at INFO, watcher email shows auto-verified count.
-
-### v10.0.10
-- Patch: monotonic clock ratchet rejects past timestamps, quota counters fail-closed, verifier drops DISPUTED findings, narrator cap raised to 30 with transparency note, batch checkpoint write warnings, planner API error visibility, keyPersonRisk basePath validation, redactContent direct callers enforce partial-redaction guard.
-
-### v10.0.9
-- Patch: enterprise price uses PRICING constant, manifest parser crash-proofed, redactor partial redaction enforced at callers, monotonic clock future timestamp rejected, mobile publish non-atomic writes protected, batch store optimistic locking added, GitHub rate limit handled, audit log local durable failure file.
-
-### v10.0.8
-- Patch: GitHub reconfigure menu repo URL bugs fixed, session recovery visibility added, verifier regeneration fires on UNVERIFIED findings, audit JSON parse confirmed hardened, profile model validation added, audit log durable failure record.
-
-### v10.0.7
-- Hotfix: Reconfigure menu no longer crashes with a ReferenceError (out-of-scope licenseResult), and FREE_QUOTA is removed entirely so SCAN_QUOTA from tier-gates.js is the single source of truth for the free-scan quota.
-
-### v10.0.6
-- Patch: cost reporting fixed (was ~9x off on multi-pass POI scans), selective reconfigure menu added, GitHub token now keychain-secured, prompt injection two-stage architecture, race condition in projects fixed, and four additional findings from Ghost POI self-scan.
-
-### v10.0.5
-- Patch: Executive Brief renders a graceful empty state instead of erroring, ghost --brief --output flag now wired through (both --output=path and --output path forms), and the README install command uses --location=global.
-
-### v10.0.4
-- Patch: session cost summary cleaned up, keyless wizard loop fixed, wrong paywall copy corrected, pricing constants completed, POI false-positive copy removed, Prompt Triage now redacts before every API call, Node 20 deprecation warning fixed.
-
-### v10.0.3
-- Patch: README privacy section corrected, LICENSE replaced with real BUSL-1.1 text, Ghost Watcher false-clean signal fixed, trial hard-stop degrades to Open, profile creation fixed, npm license detection from package-lock.json, 9 unwired tests added, and website em dash sweep across 34 pages.
-
-### v10.0.2
-- Patch: format.js tier key mismatch fixed (generateKey now accepts canonical tier strings), enableWatch CRLF branch injection fixed, cost-estimator output token estimates added for audit, prompt-triage, recon, and forecast modes.
-
-### v10.0.1
-- Patch: trial funnel and paywall fixes. Trial tier now has full Pro Max parity (Audit and Ghost Brief unlocked, 100K context cap), so the "free 7-day Ghost Pro Max trial" CTA delivers what it promises, and that CTA now appears on the Open welcome banner. ghost --brief no longer crashes (ReferenceError: profile is not defined). Chat mode reports its real version instead of inventing one. Ghost Watcher self-refuting filter no longer deletes "inconsistent X between A and B" findings. Audit dev scaffold removed. Fix Forecast now previews against proposed changes, not the baseline. Banner renders [Pro Max] not [Pro-max]. See CHANGELOG.md for the full list.
-
-### v10.0.0
-- Full 32-finding audit remediation. Pricing corrected across all four CLI paywalls, README, and the website FAQ (single source of truth in src/constants/pricing.js). Trial CTA now leads every paywall. Portal PR-comment link fixed (missing .html 404). Setup wizard no longer hard-blocks without an API key. Clock skew degrades to a warning instead of a hard block. Verifier concurrency bounded to 4. Plus 26 more trust, conversion, and technical fixes. See CHANGELOG.md for the complete list.
-
-### v9.4.40
-- Fixed a multipass crash: const IS_WINDOWS and const SYM were trapped inside a JSDoc comment in the multi-pass scanner, causing a ReferenceError on pass-complete, batch-merge, and coverage output. Both declarations moved to live code. Caught by Ghost Watcher.
-
-### v9.4.39
-- Guided analysis prompt: after processing files, Ghost now opens with "Ready to analyze N files. What would you like Ghost to do?" instead of dropping straight into the mode menu. Suggested by Alex Artiukh (summusforge) during his trial.
-- First-run license flow: on first launch, Ghost asks "Do you have a Ghost license key?" before the setup wizard -- entering a key activates immediately; otherwise you are pointed at the free 7-day trial or Ghost Open. A bad key warns and continues, and never kills the first-run session.
-- README: added an Important note on running ghost from any directory and entering the full path to your codebase when prompted.
-
-### v9.4.38
-- Cross-platform config hardening: Linux `sudo ghost --activate` now resolves the license store to the invoking user's real home, eliminating the silent Open-tier fallback on relaunch. Five Configstore instances consolidated into one getConfig() singleton; automatic ownership reconciliation after sudo; explicit warning on root-without-sudo activation. macOS and Windows behavior unchanged.
-- Git hook intelligence: extensionless hook files (pre-commit, post-checkout, commit-msg, and 13 others) are now scanned by basename across all three loader paths (directory, ZIP, GitHub), so a .git/hooks folder is fully analyzed regardless of extension.
-- Added git-hooks-scanning smoke test; suite now 30 tests.
-
-### v9.4.37
-- Count reconciled: the v9.4.35 POI self-audit resolved 14 findings (not 13) -- corrected in CHANGELOG and README
-- Added tests/forecast-context-cap.smoke.mjs -- regression fixture for the resolveContextCap .effective extraction (the v9.4.36 fix); test suite now 29 tests
-
-### v9.4.36
-- forecast-overlay: resolveContextCap() return value was used as a number instead of extracting .effective, so the tier context cap was silently never enforced on large forecast change sets -- fixed by reading .effective. Caught by Ghost Watcher on the v9.4.35 release commit.
-
-### v9.4.35
-- POI self-audit: Ghost scanned Ghost and resolved 14 latent edge-case findings across error handling, concurrency, and silent-failure paths -- none affecting the happy path
-- Reliability: always-exit-0 CI contract hardened; billing-limit 400s no longer misclassified as context overflow; enableWatch re-throws non-scope GitHub errors instead of misleading advice; PDF generation surfaces actionable python3/reportlab errors
-- Concurrency: atomic temp+rename project writes; bounded SHA-conflict retry for portal files, pending-batch files, and all four enterprise org files
-- Correctness: diff hunk-numbering underflow fixed (@@ starts correct for deep-in-file changes); Sonnet-5 pricing auto-switches to standard rate from Sep 1 2026 (no manual edit)
-- Added 3 regression fixtures (hunk numbering, Sonnet-5 pricing, enterprise concurrency); test suite now 28 tests
-
-### v9.4.34
-- @ghost-verified annotation added to tokenizer.js countTokensExactImpl delegation -- Gemini/unknown cache-namespace isolation is an intentional performance trade-off, not a conflict
-- SELF_REFUTING_RE extended with two new patterns: "not a runtime failure" and "performance issue, not a correctness" -- post-generation filter now catches self-refuting findings that slip past the prompt-side DO NOT FLAG rule
-
-### v9.4.33
-- tokenizer.js: fixed countTokensExact OpenAI delegation -- now calls countTokensImpl() directly instead of countTokens() to keep 'fast' and 'exact' cache namespaces genuinely isolated; removed dead resolveApiKey import
-- Conflict Detection prompt: added self-refuting DO NOT FLAG rule -- findings that self-describe as "no current runtime failure", "no runtime impact", "correct behavior", or "redundancy rather than a conflict" are now suppressed at generation
-- Prompt snapshots regenerated to match updated conflict prompt
-
-### v9.4.32
-- @ghost-verified annotation added to src/modes/prompt-triage.js import block -- confirmed false positive, all four functions (estimateMultiCallCost, formatCost, formatCostRange, calcActualCost) are correctly exported from src/core/estimator.js and imported directly; src/estimator.js barrel shim gap is latent, not live
-
-### v9.4.31
-- Finding lifecycle tracking: Ghost Watcher now computes a resolved/new delta on every run -- findings that disappear after a fix are marked Resolved in the portal with the commit they were fixed in; new findings are tracked as first-seen this commit. Branch-filtered so multi-branch repos stay clean.
-- Ghost Portal: Resolved findings section added to Watch tab findings view (both portal-template.html and portal-ejwisner.html) -- collapsible green section showing fixed findings with commit reference
-- verifiedFindings now written to STATE file -- closes gap where @ghost-verified findings disappeared from portal on state-only commits
-- __GHOST_VERSION__ placeholder replaces brittle version-literal .replace() in enableWatch() -- eliminates silent desync risk on future releases
-- claude-fable-5 added to temperature guard (sampling-params.js) and pricing table (estimator.js -- $10/$50 per million tokens)
-- Pricing table completed: claude-opus-4-8 and claude-opus-5 added at $5/$25 per million tokens
-- Wrangler upgraded to 4.106.0 (global)
-
-### v9.4.30
-- @ghost-verified annotation added to `src/license/clock.js` CLOCK_STATE_KEY (confirmed false positive -- no collision risk in scoped Conf namespace)
-- GitHub Actions template updated to Node.js 24 (eliminates Node 20/22 deprecation warnings on CI runs)
-- Conflict Detection JSON repair extended with two new tiers: trailing-comma sweep (Repair 4) and trailing-comma plus truncation combined (Repair 5) -- catches "Expected ',' or '}'" parse errors from model output
-- Conflict Detection prompt tightened: speculation hard-suppressed at generation (DO NOT FLAG, CONFIDENCE RULE, SEVERITY RULE all updated to eliminate LOW carve-out for hypothetical findings)
-
-**v9.4.29** -- fix: README ghost-watcher.yaml example updated to object form for blast_radius (was plain boolean, users copying the example would silently lose skip_if_message_contains behavior)
-
-**v9.4.28** -- fix: ghost-watcher.yaml and buildWatchConfig skip blast radius on version-tagged release commits (v9./v10./v11. prefix); blast_radius config now uses object form with enabled flag; watcher-commit.js guards handle enabled:false object form; @ghost-verified annotations for corrected-file-generator ensures filter and batch-store Configstore split-access
-
-**v9.4.27** -- fix: blast-multipass.js batch synthesis now handles 'errored' result type explicitly (previously silent empty report on batch failure); @ghost-verified annotations added for 4 confirmed false positives
-
-**v9.4.26** -- fix: blast narrator switched from streaming to narrateReportSync (blocking messages.create) eliminating streaming timeout failures on CI; blast-multipass synthesis pass converted to batch API; both changes remove the 180s timeout wrapper and retry logic that caused degraded-run emails on large codebases
-
-**v9.4.25** -- fix: SELF_REFUTING_RE extended to catch 'not a concrete conflict', 'no concrete runtime failure path', 'no active cross-file call path' and similar model-generated self-negations that were slipping through the filter; self-refuting-filter smoke test updated with 5 new drop cases
-
-**v9.4.24** -- fix: corrected-file-generator syntaxChars now includes quotes preventing switch-case labels from being stripped as prose; watch/index.js workflow template now replaces hardcoded version 9.0.15 in fallback telemetry payload; dedup.js selectKeepers uses baseId for GENERAL_DETECTORS lookup matching classifyDetector consistency; @ghost-verified annotations added for two latent dedup classification notes
-
-**v9.4.23** -- fix: dedup.js reverts ambiguousInstruction and underspecifiedConstraints to GENERAL_DETECTORS (promotion to SPECIFIC in v9.4.21 caused duplicate findings on overlap with conflictingInstructions); poi.js empty-scan publish payload annotated @ghost-verified
-
-**v9.4.22** -- fix: projects.js saveProjectIntelligence now populates all fields buildPublishPayload reads at top level (resolved, reportText, version, txtFile, mdFile, pdfFile, newFindings); diff-renderer @@ line number calculation verified correct and annotated; prompts-extracted conflict snapshots regenerated to v0.4 content
-
-**v9.4.21** -- fix: mobile-publish meta fallbacks for findingCount and severity counts; MODE2_THRESHOLD extracted to named constant; analyst/index.js temperature replaced with getSamplingParams; ambiguousInstruction and underspecifiedConstraints promoted to SPECIFIC_DETECTORS; tokenLimit registry entries flagged mayUseNetwork; GENERAL_DETECTORS stale entries removed; conflict system prompt v0.4 tightened to require concrete runtime impact; @ghost-verified annotations added for 7 intentional design decisions; portal degraded-run banner now shows affected commit SHA
-
-**v9.4.20** -- fix: blast narrator failure now sends degraded-run email instead of raw findings; narrator timeout increased 90s to 180s; extractCandidates adds bad-escape-character JSON repair; dogfood detector IDs corrected; watcher-batch.js preflight uses getSamplingParams; portal commit ID filter added to Findings and Prompts tabs; pulse-stats Cache-Control no-store, cache layer removed
-
-**v9.4.19** -- fix: tokenLimitContextOverflow and tokenLimitExcessive detector IDs corrected to camelCase (were slash-format, causing dedup misclassification as orthogonal); corrected-file-generator tryMode2N now skips signature-shaped patches; reports.js stale float-detection confidence branch removed; extractCandidates adds truncation-repair retry for malformed JSON fences from max_tokens truncation; dogfood-2026-05-11.json detector IDs updated to unboundedOutput
-
-**v9.4.18** -- fix: integrationMismatch FINDINGS_CAP comment corrected to 10 (was stale at 5 after CC100 change); buildWatchConfig iterations block now opt-in (default null, no iterations key emitted unless caller passes maxIterations) matching v9.3.7 documented intent that no config = no limit
-
-**v9.4.17** -- fix: unboundedOutput detector ID corrected to 'unboundedOutput' (was 'output/unbounded', causing dedup misclassification); buildTokenUsage uses getWatcherModel() instead of hardcoded claude-sonnet-4-6 so cost estimates reflect configured model; integrationMismatch FINDINGS_CAP aligned to 10 matching all sibling detectors; tokenLimit detector tier labels fully aligned to Tier 1; raw telemetry temp file write removed (commitHash/repoHash were unhashed on disk)
-
-**v9.4.16** -- fix: getSamplingParams extracted to shared src/utils/sampling-params.js utility -- narrator.js, watcher-commit.js, blast-multipass.js, extractor.js all import from single source; mobile-publish.js reads estimatedHours/Cost from scanRecord.meta fallback; corrected-file-generator Heuristic 1 now checks syntaxChars before stripping colon-terminated lines; conflict.js dead SESSION_PREFIX throw removed; enterprise.js getFileContent renamed to getFileParsed; verifier.js LINE_NUMBER_RE tightened to require explicit line keyword or file:N pattern
-
-**v9.4.15** -- fix: src/watch/index.js naive parseRepo replaced with GHES-aware import; resolveContextCap default source message no longer references --max-context flag; wizard.js unused YAML import removed; capSeverity docstrings corrected in poorOrganization/poorDocumentation/inefficientFewShot; corrected-file-generator prose-word docstring aligned to actual regex; prompts-extracted conflict snapshots regenerated to current JSON output format
-
-**v9.4.14** -- fix: 18 conflict-finding cleanups -- portal-publish parseRepo GHES-aware; shared Anthropic client singleton; capSeverity HIGH enforcement in poorOrganization/poorDocumentation/inefficientFewShot; corrected-file-generator prose filter narrowed; blast-multipass resolveApiKey; findingsFromResults confidence 0-100; dashboard severity null fallback; dedup dead detector ID removed; conflict prompt imports through barrel; tokenLimit tier labels corrected; skipTiers docs; upsertFile encoding contract normalized across 4 files; fileMap refactor in loader; conflict session prefix hardened; SessionCostTracker stage tracking; getSamplingParams explicit allowlist; codemaseRoot test fixture fixed
-
-**v9.4.13** -- fix: enterprise.js + mobile-publish.js use robust GHES-aware parseRepo from team-sync.js; dashboard remainingFindings slice bug fixed (Jira export); storePendingBatch SHA conflict retry; 14 conflict-finding cleanups (stale docstrings, getModel rename, detector ID, session type guard, slugify dedup, MODE_OUTPUT_ESTIMATES forecast modes, Sonnet 5 sampling param guard + pricing, separate POST per conflict chunk, cancel handler for stuck ANALYZING state)
-
-**v9.4.12** -- fix: Conflict Detection now chunks large codebases into sub-900 KB batches to prevent CI upload drops; all chunk findings merged via extractCandidates; conflict-chunking smoke test added and wired into npm test chain
-
-**v9.4.11** -- fix: blast narrator retry (90s timeout, one retry on transient CI connection drop); narratorFailed flag in portal payload; degraded-run warning banner + rerun link in Watch Findings tab; widened SELF_REFUTING_RE to catch "rather than a runtime conflict" and "Runtime impact: none" patterns; values-match regex lookahead fix; self-refuting-filter smoke test wired into npm test chain
-
-**v9.4.10** -- fix: finding quality improvements -- junk file tokens (version strings, paren-contaminated paths) rejected from Files extraction; rollback-plan report sections no longer parsed as findings; self-refuting conflict findings dropped before surfacing; finding-parser smoke test wired into npm test chain
-
-### v9.4.9
-- fix: `scanForVerified` now rejects non-source files (`.md`, `.json`, `.yaml`, `.yml`, `.txt`, `.html`) via `SOURCE_EXTENSIONS` allowlist -- closes false-positive verified findings on documentation files that contain the `@ghost-verified` marker as text
-
-**v9.4.8** Add clarifying comment to ghost-watcher.yaml explaining batch.timeout_minutes vs Actions job timeout relationship. Update buildTokenUsage comment to reference getPricing() instead of hardcoded rates.
-
-**v9.4.7** Fix codemaseRoot typo in ghostBrief.js -- codebaseRoot value now correctly passed from all callers instead of falling back to process.cwd(). Fix @ghost-verified self-reference trap -- annotation detection now requires comment-prefix context (// # -- /*), preventing string literals and doc comments from triggering false verified segregation. Adds Python, SQL, CSS comment support.
-
-**v9.4.6** Fix ghost --configure-admin-token header box rendering before the input prompt.
-
-**v9.4.5** Internal admin CLI commands for license management. Portal @ghost-verified renderer showing Reviewed · Expected Behavior section in Findings tab.
-
-**v9.4.4** Fix TIER_CAPS missing trial tier (now explicit 50K, matching Open). Fix narrateConflictReport temperature inconsistency (0 → 0.3, matching report narration family). Add trial upgrade hint.
-
-**v9.4.3** Fix verified findings leaking into Ghost Brief prompts. @ghost-verified findings now correctly excluded from Ghost Brief and detailed prompt generation. Add allowedTiers() helper to tier-gates.js -- MAX_TIERS in bin/ghost.js now derives from policy instead of a hardcoded array, preventing gate drift. Wire test-loop-api-error.js into CI test suite.
-
-**v9.4.2** Fix GitHub Actions workflow timeout. Template and live workflow timeout raised to 360 minutes (GitHub maximum). The Actions job is no longer the limiting factor -- batch poll timeouts and the store-and-resume logic own time management, preventing unnecessary incomplete-run emails on large codebase scans.
-
-**v9.4.1** Fix Ghost Brief and Executive Brief interactive menu gating. BRIEF_TIERS in bin/ghost.js incorrectly included team and enterprise tiers, allowing non-Max users to run Ghost Brief interactively while Watcher blocked them. Replaced with shared MAX_TIERS constant (pro-max, team-max, enterprise-max) matching tier-gates.js policy. Also fixes Executive Brief which shared the same incorrect gate.
-
-**v9.4.0** Add @ghost-verified annotation system. Developers can mark low-signal findings with @ghost-verified in source files. Ghost Watcher segregates these as Reviewed · Expected Behavior in PR comments and scan files, keeping real findings clean.
-
-**v9.3.9** Add Max tier support to CLI license parser and token validator. Pro Max, Team Max, and Enterprise Max licenses now activate correctly via ghost --activate.
-
-**v9.3.8** Wire Ghost Brief tier gate (Max-tier only: pro-max, team-max, enterprise-max). Wire conflict_verify verifier in Ghost Watcher (opt-in, quick mode, drops low-signal findings). Refactor redactor.js PEM replacement strings to named constants. Fix buildTokenUsage to derive batch rates from estimator.js pricing table. Add detailed_prompts to ghost-watcher.yaml config.
-
-**v9.3.7** Fix Max-tier context caps (Pro Max/Team Max/Enterprise Max now correctly get 100K/150K/200K tokens). Remove iteration limit from Ghost Watcher (no-config = no limit, opt-in only). Extract shouldSkipForIterationLimit as exported pure helper with full test coverage. Fix FREE_QUOTA duplication in freemium.js.
-
-**v9.3.6** Add token/cost telemetry to Ghost Watcher writer. All batch paths (blast, conflict, prompts, resume) now record inputTokens, outputTokens, and estimatedCostUsd at Anthropic batch API rates ($1.50/$7.50 per 1M tokens). Unit tests added for buildTokenUsage and sumBatchUsage.
-
-**v9.3.5** Ghost Watcher™ PR comments are now fully markdown-escaped. Finding titles and branch names can no longer inject markdown into GitHub PR comments.
-
 Ghost Architect™ is a CLI tool powered by Claude that helps developers, architects, and consultants deeply **understand** existing codebases. Not generate new code: illuminate what's already there. It works on any platform, any language, any stack.
 
-The most expensive moments in any engagement are not writing new code. They are the first weeks on an inherited codebase, and the gut-check before every risky change. A senior architect spending 2-3 days reading legacy code before contributing costs $3,000 to $5,000 in billable time. Ghost Architect compresses that to minutes.
+The most expensive moments in any engagement are not writing new code. They are the first weeks on an inherited codebase, and the gut-check before every risky change. A senior architect spending 2-3 days reading legacy code before contributing costs $3,000 to $5,000 in billable time. Ghost Architect™ compresses that to minutes.
+
+---
+
+## What's New
+
+### v10.0.18
+- Patch: full Audit 7 remediation. Ghost Watcher™ CI licensing fixed with the new `ghost --export-ci-token` command (a GA- license key in GHOST_LICENSE_KEY now gets clear guidance instead of a silent skip). Activating a license mid-session now takes effect immediately: tier, gates, and context cap update without a restart, and the first-run wizard no longer persists the Open 50K cap for freshly activated paying customers. Enterprise usage totals now migrate correctly from pre-10.0.17 audit files. The full-findings sidecar and honest cap disclosure now apply to single-pass POI and Blast, not just multipass, and single-pass POI reports now carry the verifier's annotations. Resumed multi-chunk conflict scans retrieve every chunk. Session checkpoint recovery actually writes checkpoints. Locked menu rows are selectable so paywalls can render. Roughly forty-five further correctness, cost-accuracy, and copy fixes.
+
+Full version history: [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -220,172 +50,7 @@ Finds where two sides of the codebase expect different things. Catches contract 
 **Leg 3 -- Ghost Brief™** (requires a Max plan: Pro Max, Team Max, or Enterprise Max)
 Generates a developer-ready remediation prompt for every finding. Paste directly into Claude Code, Cursor, Copilot, or any AI coding tool.
 
-Ghost Watcher™ (Team plan and above) runs Blast Radius™ and Conflict Detection™ automatically on every commit. Leg 3, Ghost Brief™, is added automatically on Max plans (Pro Max, Team Max, Enterprise Max); plain Team and Enterprise get legs 1 and 2. No configuration. No manual scans. Every push, every time.
-
-## What's New in v9.3.1
-
-Ghost Watcher™ now emails the customer after every scan.
-
-- **New: Findings email** -- When Ghost Watcher™ finds issues, it emails a notification with per-finding detail (severity badge, title, affected files, and description) plus a severity summary (critical / high / medium / low counts).
-- **New: Clean scan email** -- When Ghost Watcher™ finds zero findings, it emails a confirmation that the commit is clean.
-- Both emails are fire-and-forget and never block the CI pipeline.
-
-## What's New in v9.3.0
-
-Cost-aware streaming vs batch transport menu on every scan mode, plus batch retrieval commands and transport metadata in every report.
-
-- **New: Streaming vs Batch transport menu** -- Every scan mode that calls the Anthropic API now opens with a cost-aware choice: run live (streaming) for real-time results, or submit to the Message Batches API for half-price processing you retrieve when ready. The menu shows the loaded file count, a token estimate, and the streaming and batch cost side by side. Pass --stream or --batch to skip the menu; CI and Ghost Watcher runs default to batch automatically.
-- **New: Batch retrieval commands** -- ghost batch-status lists every pending batch and whether it is ready. ghost batch-retrieve <id> pulls a finished batch and produces the same report files a live run would have.
-- **New: Dynamic pending-batch menu rows** -- The main menu injects a row per pending batch, grayed out while processing and selectable once ready, so you can retrieve straight from the menu.
-- **New: Transport metadata in every artifact** -- The findings.json sidecar carries a transport block (method, timestamps, version), and the PDF, Markdown, TXT, and Ghost Brief HTML each carry a one-line footer, for example "Scan transport: Streaming (completed 9:49am)".
-- **New: Question mode batch support** -- Question mode joins Blast Radius in supporting the transport menu, batch submission, and batch retrieval.
-- **Fix: Deterministic output** -- Every Anthropic call site now sets temperature 0, so repeated scans of the same codebase produce consistent results.
-- **Fix: Setup wizard tier cap** -- The first-run wizard now defaults the context size to your actual tier cap (Open 50K, Pro 100K, Team 150K, Enterprise 200K) instead of a hardcoded 50K, sourced from the single canonical tier-cap table.
-- **Fix: Accurate source identity** -- The loader records the source of every scan (ZIP path for archive loads, owner and repo for GitHub loads), and batch repository names are derived from the git remote origin rather than the current directory name.
-
-## What's New in v9.2.3
-
-Ghost Brief™ now generates correctly after Batches API scans.
-
-- **Fix: Ghost Brief generates after batch Blast Radius** -- Raw batch output is now passed through the narrator before finding extraction, replicating the old streaming path. Ghost Brief receives findings with populated file arrays and generates prompts correctly.
-
-## What's New in v9.2.2
-
-Critical fix for Ghost Watcher™ Batches API on GitHub Actions.
-
-- **Fix: Replaced Anthropic SDK batch transport with native fetch** -- The SDK's internal HTTP client drops connections on GitHub Actions runners when calling /v1/messages/batches. Native Node.js fetch succeeds reliably. All four batch operations (submit, poll, cancel, preflight) now use native fetch directly.
-
-## What's New in v9.2.1
-
-Ghost Watcher™ batch submission is now more resilient to transient network drops in GitHub Actions.
-
-- **Fix: submitBatch retry with backoff** -- Batch submissions now retry up to 4 times with exponential backoff (2s→4s→8s) on transient connection errors (Premature close, ECONNRESET, socket hang up). Previously the SDK's 2 built-in retries were insufficient for CI network flakiness.
-- **New: Preflight reachability check** -- Before uploading the full codebase context, Ghost Watcher™ sends a tiny 1-token test batch to verify the Anthropic Batches API is reachable. If the endpoint is unreachable, the run exits cleanly with a clear diagnostic message instead of burning a 0.6MB upload.
-- **New: Body size logging** -- The batch request body size is logged on every submission so CI logs show the real payload size.
-
-## What's New in v9.2.0
-
-Ghost Watcher™ now uses the Anthropic Message Batches API for Blast Radius and Conflict Detection -- eliminating Premature close failures on large codebases entirely.
-
-- **Major: Anthropic Batches API** -- Ghost Watcher™ submits scans as async batch requests processed server-side. No streaming connection to drop. No more Premature close errors regardless of codebase size.
-- **Major: Auto-resume** -- If a GitHub Actions job is interrupted before results arrive, Ghost Watcher™ automatically retrieves and delivers the results on the next commit push. No manual intervention required.
-- **New: Incomplete run emails** -- When a run is interrupted, you receive an email explaining what happened and confirming results will be delivered automatically.
-- **New: Resume notification emails** -- When Ghost Watcher™ detects and resumes an incomplete scan, you receive emails at resume-detected and resume-complete milestones.
-- **New: Pending portal state** -- Ghost Portal shows a pending state entry immediately when a batch is submitted, rather than silence while processing.
-- **New: Configurable batch settings** -- Control poll interval and timeout via ghost-watcher.yaml batch section.
-- **Fix: GitHub Actions timeout raised to 90 minutes** -- Accommodates batch polling window.
-
-## What's New in v9.1.4
-
-Ghost Watcher™ Blast Radius and Conflict Detection now complete successfully in CI environments.
-
-- **Fixed: Premature close on Blast Radius and Conflict Detection in CI** -- All three Anthropic API stream calls in the analyst have been switched to non-streaming (stream: false) in CI environments. This eliminates mid-response stream closure on large context windows. Local dev still uses streaming as before.
-
-## What's New in v9.1.3
-
-Ghost Watcher™ now uses non-streaming Anthropic API calls in CI environments, eliminating Premature close failures on large context scans.
-
-- **Fixed: Premature close in CI** -- Ghost Watcher™ now detects CI environments and switches to non-streaming API calls (stream: false). This eliminates stream timeouts on large context windows (150K Team, 200K Enterprise). Local dev still uses streaming as before.
-
-## What's New in v9.1.2
-
-Ghost Watcher™ now correctly uses the full tier token allowance in GitHub Actions CI environments.
-
-- **Fixed: Ghost Watcher™ CI context cap** -- Team tier now uses 150K tokens in CI (was incorrectly clamped to 50K Open tier default). Enterprise now uses 200K. Added `ignoreSavedContext` flag to bypass stale configstore values on ephemeral CI runners.
-- **Fixed: Stream retry on transient errors** -- Premature close, ECONNRESET, and socket hang up errors now retry up to 2 times with exponential backoff before failing. Reduces false zero-findings runs caused by network blips in CI.
-
-## What's New in v9.1.0
-
-Ghost Architect™ scanned its own codebase using Ghost Brief™ and fixed 7 issues found in dogfood pass 10. Ghost Watcher™ confirmed zero findings after the push.
-
-- **Critical fixed:** Prompt injection defense hardened in consultant profile sanitization -- Unicode NFC normalization, zero-width character rejection, bidirectional override blocking
-- **High fixed:** Temp directory leak in Commit Forecast -- try-finally cleanup on all exit paths
-- **High fixed:** API error masking in agent loop -- `ok` field added to result, test coverage added
-- **High fixed:** LLM plan validation -- findings can no longer be silently dropped from reports without disclosure
-- **High fixed:** Manifest concurrent write race -- content verification added to post-write check
-- **High fixed:** Audit log failure threshold lowered from 3 to 1 -- warns on first failure with timestamp
-- **High:** File prioritizer error handling already present from pass 9
-
-## What's New in v9.0.8
-
-### 🔭 Ghost Watcher™ — Automatic commit monitoring
-
-**Fixes in v9.0.8:**
-- Team and Enterprise tier now correctly applies 150,000 token context cap in CI
-- License validation works on ephemeral GitHub Actions runners (fingerprint bypass in CI)
-- Custom branches added in Enable Watch wizard now correctly appear in GitHub Actions workflow trigger
-- PR comment portal link now uses correct lowercase slug
-- Enable Watch wizard version-pins the workflow to the installed Ghost version
-
-Ghost Watcher™ monitors every commit automatically. When a developer pushes to GitHub, Ghost fires — analyzing changed files against the full codebase, surfacing findings, and generating a Ghost Brief™ prompt pack. Results land in Ghost Portal before the PR reviewer opens the tab.
-
-**Available on Ghost Team and Ghost Enterprise memberships.**
-
----
-
-## What's New in v8.2.5
-
-**Ghost Partner Profiles — now in the top-level menu**
-
-Ghost Partner Profiles white-label every Ghost Architect output under your firm name. Your branding. Your methodology. Your billing rates. Across all seven report types.
-
-New in v8.2.5: Ghost Partner Profile is now accessible from the very first Ghost menu — no codebase selection required. Select a profile, activate it for your session, and every scan you run uses your branding automatically.
-
-```bash
-# Access from the top-level menu
-ghost
-# Select: Ghost Partner Profile
-# Or create a profile directly
-ghost --create-profile
-# Or load a specific profile for one run
-ghost --profile ~/.ghost/profiles/my-profile.yaml
-# Set a profile as your default
-ghost --set-default-profile my-profile-slug
-```
-
-**Executive Brief** — one-page business intelligence report for non-technical stakeholders. Health score 0-100, plain-language executive narrative, manual vs AI-assisted cost comparison table, three-phase remediation sequence. Available on Pro Max, Team Max, Enterprise Max.
-
-**Ghost Brief** — after every scan, Ghost generates a prompt pack. One prompt per finding. Structured. Sequenced. Blast-radius-aware. Paste into any AI coding tool. Available on Pro Max, Team Max, Enterprise Max.
-
----
-
-## What's New in v8.1.2
-
-**Ghost Brief™ dogfood pass 4.** Six fixes: prompt injection via consultant profile fields (narrator.js), freemium quota bypass closed (tier-gates.js), seat registration verification race fixed (enterprise.js), silent Tier 2 detector failures now surface to stderr, GitHub Enterprise Server URL parsing fixed for team-sync, GitHub API rate limit retry with user-facing progress messages and continue/stop prompt.
-
----
-
-## What's New in v8.1.0
-
-**Ghost Brief™ dogfood pass 1 and 2.** Ghost Architect™ scanned its own codebase using Ghost Brief™ and Claude Code fixed 19 findings across two iterative passes. Zero critical findings remaining. Test suite expanded with 4 new smoke test files.
-
----
-
-## What's New in v8.0.3
-
-**Ghost Brief™ prompt quality overhaul.** Prompts now include full remediation context, fix steps, constraints, confidence score, and effort estimate extracted directly from scan findings. Validation hints are now finding-specific.
-
----
-
-## What's New in v8.0.2
-
-### Ghost Brief™
-
-Convert any Ghost scan into a validated, blast-radius-aware Claude Code prompt pack. Feed `ghost-brief.json` directly into Claude Code, Cursor, or Copilot. Ghost briefs the AI. The AI fixes the code.
-
-**Run it:**
-
-```bash
-ghost --brief --input=ghost-report.json
-```
-
-Or select Ghost Brief™ from the interactive menu after any scan.
-Ghost auto-detects your most recent findings file and confirms
-before generating.
-
-Ghost reads your findings JSON, converts each finding into a structured prompt with blast-radius ordering, validation hints, and file context — and writes `ghost-brief.json` to disk. If Ghost Portal™ is configured, the Brief is pushed automatically.
-
-Ghost Brief™ requires Ghost Pro Max or higher.
+Ghost Watcher™ (Team plan and above) runs Blast Radius™ and Conflict Detection™ automatically on every commit. Leg 3, Ghost Brief™, requires a Max Watcher plan (Team Max or Enterprise Max); plain Team and Enterprise get legs 1 and 2. Pro Max includes Ghost Brief™ on manual scans. No configuration. No manual scans. Every push, every time.
 
 ---
 
@@ -407,7 +72,7 @@ If it's code, Ghost reads it.
 
 ---
 
-## Nine modes
+## Eleven modes
 
 **💬 Question**
 Ask anything about the codebase in plain English. Ghost answers like a senior architect who has read every file.
@@ -415,6 +80,9 @@ Ask anything about the codebase in plain English. Ghost answers like a senior ar
 > *"Why does this integration use synchronous SOAP calls?"*
 > *"What would happen if I removed this middleware?"*
 > *"Walk me through the checkout pipeline, top to bottom."*
+
+**💬 Chat** *(Pro and above)*
+Multi-turn conversation over the loaded codebase. Where Question is single-shot, Chat keeps the thread: ask a follow-up, drill into a file, challenge an answer, and Ghost holds the full context of the conversation. Shows the real API cost of each exchange and the running session total as you go.
 
 **🗺 Points of Interest Scan**
 Auto-generates a structured intelligence report organized into four categories:
@@ -442,14 +110,14 @@ Scan a codebase for places where two or more parts make conflicting assumptions 
 Useful before deployments, integration work, or migrations.
 
 **🔮 Commit Forecast**
-Analyze your proposed changes against the production codebase and forecast the Blast Radius and Conflict impact before you commit or push. Ghost does not apply changes, does not commit, does not push — it shows you what *would* happen if you did.
+Analyze your proposed changes against the production codebase and forecast the Blast Radius and Conflict impact before you commit or push. Ghost does not apply changes, does not commit, does not push. It shows you what *would* happen if you did.
 
 Two entry surfaces:
 
 - **Pre-commit:** Ghost auto-discovers your working-tree changes via `git diff --name-only HEAD`. Run it before every push. No arguments needed.
 - **Offline / received files:** Point Ghost at a folder of proposed files that mirrors the repo structure. Covers the offshore-review use case: an architect receives files from an offshore team and wants to assess impact before accepting them.
 
-> Cut your container-to-stage cycles from five to one. Ghost analyzes your proposed changes against the production codebase directly — before you push — so you find out in seconds, not after a failed deploy.
+> Cut your container-to-stage cycles from five to one. Ghost analyzes your proposed changes against the production codebase directly, before you push, so you find out in seconds, not after a failed deploy.
 
 **🧪 Prompt Triage**
 Audit prompts and prompt-driven workflows in your codebase for structural issues: missing context, ambiguous instructions, brittle assumptions, token bloat. Designed for teams building LLM-integrated applications who need to catch prompt drift before it reaches production.
@@ -468,6 +136,28 @@ Diff two saved Ghost reports (before and after a refactor, upgrade, or fix cycle
 
 **📊 Project Dashboard**
 Track remediation velocity across all your scanned projects. Shows critical/high/medium/low finding counts, resolved vs. remaining, and progress over time. Pro+ feature.
+
+**📋 Inheritance Audit** *(Pro and above)*
+The deal-grade report. Full section below.
+
+---
+
+## 📋 Inheritance Audit: the deal-grade report
+
+The Inheritance Audit is the mode built for the moment money changes hands: buy-side technical diligence, PE portfolio evaluation, fractional CTO onboarding, and modernization scoping. Where a POI scan tells an engineer what to fix, the Inheritance Audit tells a buyer or an executive what they are inheriting and what it will take to modernize it.
+
+One run produces a client-ready PDF (white-labeled when a Ghost Partner™ profile is loaded) built from four analyzers:
+
+- **Stack Reality**: what the codebase actually runs on, versus what the seller or the wiki claims. Framework versions, EOL exposure, dependency drift.
+- **Key-Person Risk**: concentration analysis of who wrote what. Surfaces the modules only one person has ever touched, before that person leaves the deal.
+- **Dependency Map**: the load-bearing external dependencies and how deeply they are wired in.
+- **Modernization Roadmap**: a sequenced 90-day plan for bringing the codebase forward, sized against what the other three analyzers found.
+
+Cost honesty: the first three analyzers run locally and cost nothing. The Modernization Roadmap synthesis is the audit's only billed API call (typically a few cents), you pick the model for it per run (including Claude Fable 5 for the deepest synthesis on an important deal), Ghost shows you the estimate before spending, and reports the real cost after.
+
+When to reach for it: before a term sheet, before signing an SOW on an inherited platform, in the first week of a fractional CTO engagement, or any time someone asks "what are we actually buying?"
+
+Inheritance Audit requires Ghost Pro or above (included in the free 7-day Ghost Pro Max™ trial).
 
 ---
 
@@ -615,6 +305,7 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Feature | Open (free) | Pro | Pro Max | Team | Team Max | Enterprise | Ent. Max |
 |---|---|---|---|---|---|---|---|
 | Question | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Chat (multi-turn conversation) | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Points of Interest scan | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Blast Radius + Rollback | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Conflict Detection | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -622,18 +313,19 @@ This makes Ghost safe to use on proprietary enterprise codebases, client work, a
 | Prompt Triage | 4 free scans (shared) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Recon sizing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reports saved as MD / PDF / TXT | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Project labels + history tracking | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Project Dashboard | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Compare Reports (before/after) | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Inheritance Audit (deal-grade) | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Ghost Partner™ profiles | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| White-label PDF rendering | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Per-profile billing rate overrides | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Ghost Brief™** | — | — | ✅ | — | ✅ | — | ✅ |
-| **Unified Brief (all seats)** | — | — | — | — | ✅ | — | ✅ |
-| **Ghost Partner co-engagement** | — | — | — | — | — | — | ✅ |
-| Team sync features | — | — | — | ✅ | ✅ | ✅ | ✅ |
-| Custom enterprise gating | — | — | — | — | — | ✅ | ✅ |
+| Project labels + history tracking | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Project Dashboard | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Compare Reports (before/after) | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Inheritance Audit (deal-grade) | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Ghost Partner™ profiles | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| White-label PDF rendering | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Per-profile billing rate overrides | - | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Ghost Brief™** | - | - | ✅ | - | ✅ | - | ✅ |
+| **Unified Brief (all seats)** | - | - | - | - | ✅ | - | ✅ |
+| **Ghost Partner™ co-engagement** | - | - | - | - | - | - | ✅ |
+| Ghost Watcher™ (auto scans on every commit) | - | - | - | ✅ | ✅ | ✅ | ✅ |
+| Team sync features | - | - | - | ✅ | ✅ | ✅ | ✅ |
+| Custom enterprise gating | - | - | - | - | - | ✅ | ✅ |
 | Context cap | 50K tokens | 100K | 100K | 150K | 150K | 200K | 200K |
 | Pricing | Free, BYOK | $25/mo | $99/mo | $399/mo | $799/mo | $1,200/mo+ | $2,500/mo+ |
 
@@ -714,7 +406,7 @@ Ghost shows a cost estimate **before** every scan and the actual cost **after**.
 | Operation | Codebase size | Est. cost (Sonnet 4.6) |
 |---|---|---|
 | Recon (sizing only) | Any | ~$0.05 |
-| Question exchange | Any | ~$0.02 to $0.08 |
+| Question exchange | Any | ~$0.05 to $0.35 |
 | Commit Forecast | Any | ~$0.15 to $0.60 |
 | Points of Interest scan | Small (~50 files) | ~$0.15 |
 | Points of Interest scan | Medium (~150 files) | ~$1.50 |
@@ -726,7 +418,7 @@ Ghost shows a cost estimate **before** every scan and the actual cost **after**.
 
 A typical full session (one POI scan, two blast radius analyses, and several questions on a medium enterprise codebase) runs roughly **$1.50 to $3.00 total.**
 
-Ghost uses **Claude Sonnet 4.6** by default. Switch to **Claude Opus 4.7** in settings for maximum analytical depth on the most complex codebases.
+Ghost uses **Claude Sonnet 4.6** by default. The model picker in settings also offers **Claude Sonnet 5** (the least expensive option), **Claude Opus 4.8**, and **Claude Fable 5** (the deepest synthesis) for the most complex codebases, with real per-million-token rates shown next to each choice.
 
 At the end of every session, Ghost displays a summary of every operation run and the total session cost.
 
@@ -865,7 +557,7 @@ Before every push, know what your changes will break.
 5. Fix anything critical before you push
 ```
 
-**Result:** container-to-stage cycles drop from five to one. You find out what breaks before the push, not after a failed deploy. The offshore version of the same workflow — point Ghost at a folder of received files instead of your working tree, and assess impact before accepting the changes.
+**Result:** container-to-stage cycles drop from five to one. You find out what breaks before the push, not after a failed deploy. The offshore version of the same workflow: point Ghost at a folder of received files instead of your working tree, and assess impact before accepting the changes.
 
 ---
 
@@ -955,21 +647,21 @@ Documentation and product info: [ghostarchitect.dev](https://ghostarchitect.dev)
 
 ## Ghost Portal™
 
-Ghost Portal™ is a web-based dashboard that displays your scan reports in a living, shareable interface — organized by mode, project, and severity. Every scan you run automatically pushes its artifacts to your private GitHub repository and appears in your Portal within seconds.
+Ghost Portal™ is a web-based dashboard that displays your scan reports in a living, shareable interface, organized by mode, project, and severity. Every scan you run automatically pushes its artifacts to your private GitHub repository and appears in your Portal within seconds.
 
 **Activate Ghost Portal™ (Pro and above)**
 
 1. Visit [ghostarchitect.dev/portal-setup](https://ghostarchitect.dev/portal-setup)
-2. Click **Connect GitHub** — Ghost will request permission to create one private repository in your account
+2. Click **Connect GitHub** and Ghost will request permission to create one private repository in your account
 3. Your Portal goes live immediately at `ghostarchitect.dev/portal-{your-github-username}`
-4. Run any Ghost scan — reports push automatically, no additional configuration needed
+4. Run any Ghost scan: reports push automatically, no additional configuration needed
 
 **What your Portal includes**
 
 - All scan modes: Points of Interest, Blast Radius, Conflict Detection, Commit Forecast, Fix Forecast, Inheritance Audit, Prompt Triage, and more
 - Per-project remediation tracking with progress over time
 - Client-ready PDF reports accessible from any browser
-- No file attachments — share a URL, not a document
+- No file attachments: share a URL, not a document
 
 Ghost Portal™ is available on Ghost Pro, Team, and Enterprise tiers. Ghost Open users can upgrade at [ghostarchitect.dev/pricing](https://ghostarchitect.dev/pricing).
 
@@ -999,7 +691,7 @@ Ghost Architect™ is source-available under the Business Source License 1.1. Us
 
 ## 🔭 Ghost Watcher™
 
-Ghost Watcher™ is a headless CI pipeline that runs inside GitHub Actions. Every commit your team pushes triggers a full Ghost Architect™ scan automatically — no manual runs, no forgotten reviews.
+Ghost Watcher™ is a headless CI pipeline that runs inside GitHub Actions. Every commit your team pushes triggers a full Ghost Architect™ scan automatically. No manual runs, no forgotten reviews.
 
 ### The loop
 Developer commits → GitHub Actions fires → Ghost Watcher™ runs
@@ -1030,7 +722,7 @@ This step is controlled by the `detailed_prompts` key under `scans:` in `ghost-w
 
 - Ghost Team or Ghost Enterprise membership
 - GitHub repository (public or private)
-- Anthropic API key (BYOK — charged to your own account)
+- Anthropic API key (BYOK, charged to your own account)
 - Ghost Portal configured
 
 ### Setup
@@ -1059,7 +751,7 @@ After running the wizard, add these four secrets to your GitHub repo under **Set
 | Secret | Description |
 |--------|-------------|
 | `ANTHROPIC_API_KEY` | Your Anthropic API key |
-| `GHOST_LICENSE_KEY` | Your Ghost Team or Enterprise license key |
+| `GHOST_LICENSE_KEY` | The signed license token printed by `ghost --export-ci-token`. Run that command on the machine where you activated Ghost, then paste its output here. Do not use your GA- license key itself: CI runners cannot validate it, and the watcher will skip every commit. |
 | `GHOST_PORTAL_REPO` | Your ghost-reports repo URL |
 | `GHOST_PORTAL_TOKEN` | GitHub PAT with repo write scope |
 
@@ -1077,27 +769,27 @@ Every commit triggers a GitHub Actions job. To watch it:
 
 After each run completes, open Ghost Portal and click **Ghost Watcher™** to see:
 
-- **Commits tab** — every watched commit with severity chips. Click any commit to expand findings and prompts.
-- **Findings tab** — all findings aggregated across all commits, sorted by severity
-- **Prompts tab** — all Ghost Brief™ prompts ready to copy into your AI coding tool
+- **Commits tab**: every watched commit with severity chips. Click any commit to expand findings and prompts.
+- **Findings tab**: all findings aggregated across all commits, sorted by severity
+- **Prompts tab**: all Ghost Brief™ prompts ready to copy into your AI coding tool
 
 ### PR comments
 
 When a commit is part of a pull request, Ghost Watcher™ posts a comment directly on the PR with:
 
 - Findings count and severity breakdown
-- Phase 1 findings (Critical + High — fix first)
-- Phase 2 findings (Medium + Low — fix second)
+- Phase 1 findings (Critical + High, fix first)
+- Phase 2 findings (Medium + Low, fix second)
 - Link to Ghost Portal to copy prompts
 
 ### Cost expectations
 
-Ghost Watcher™ uses your own Anthropic API key. Estimated cost per commit:
+Ghost Watcher™ uses your own Anthropic API key and runs every scan through the Anthropic Message Batches API, which bills at half the streaming rate. Estimated cost per commit at batch rates:
 
 | Scans enabled | Est. cost per commit |
 |---------------|---------------------|
-| Blast Radius only | $0.15 – $0.30 |
-| Blast Radius + Conflict Detection | $0.95 – $1.80 |
+| Blast Radius only | $0.08 – $0.15 |
+| Blast Radius + Conflict Detection | $0.48 – $0.90 |
 
 The Enable Watch wizard shows a cost estimate before you confirm setup.
 
@@ -1111,7 +803,7 @@ git commit -m "docs: fix typo in README [ghost-skip]"
 
 ### Disabling Watch
 
-Run Ghost and select **Ghost Watcher™ → Disable Watch** from the menu. This sets `enabled: false` in `ghost-watcher.yaml` without removing the workflow file — re-enable anytime.
+Run Ghost and select **Ghost Watcher™ → Disable Watch** from the menu. This sets `enabled: false` in `ghost-watcher.yaml` without removing the workflow file. Re-enable anytime.
 
 ### Configuration file
 
@@ -1142,4 +834,4 @@ ghost_watcher:
 
 ### Ghost Watcher™ never blocks a commit
 
-Ghost Watcher™ is advisory only. Findings are surfaced for remediation — they never prevent a commit from going through. Exit code is always 0.
+Ghost Watcher™ is advisory only. Findings are surfaced for remediation. They never prevent a commit from going through. Exit code is always 0.

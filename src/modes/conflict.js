@@ -107,7 +107,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       chalk.gray('Est. cost: ') + chalk.bold(display.stats.cost) + '   ' +
       chalk.gray('Est. time: ') + chalk.bold(display.stats.time) +
       (display.risks.length > 0
-        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas:') + '\n' +
+        ? '\n\n' + chalk.yellow.bold(`${SYM.warn}  High-risk areas:`) + '\n' +
           display.risks.slice(0, 4).map(r => chalk.yellow(`   • ${r}`)).join('\n')
         : '') +
       (display.warnings.length > 0
@@ -401,10 +401,17 @@ export async function runConflictMode(codebaseContext, options = {}) {
   } catch (err) {
     if (spinner) spinner.stop();
     showFriendlyError(err);
+    // A multi-pass conflict scan dying on pass 4 of 5 is real money that used
+    // to be reported nowhere (Audit 7, finding 3.10). The tracker is in scope
+    // and already holds the per-stage spend; show it, mirroring POI.
+    if (tracker.totalCost > 0) {
+      console.log(chalk.yellow('\n  The scan did not complete. You were billed for the work that ran:'));
+      showConflictCost(tracker);
+    }
   }
 }
 
-// ── Severity label renderer — matches colorizeOutput palette ─────────────────
+// ── Severity label renderer ──────────────────────────────────────────────────
 function severityLabel(sev) {
   const s = (sev || 'UNKNOWN').toUpperCase();
   if (s === 'CRITICAL') return chalk.bgRed.white.bold(' CRITICAL ');
@@ -450,7 +457,7 @@ async function promptFixForecast(findings, forecasted = new Set()) {
     name:    'chosen',
     message: chalk.cyan('Select findings to forecast (space to toggle, enter to confirm):'),
     choices: eligible.map((f, i) => {
-      const doneMark = forecasted.has(f.id) ? chalk.green(' [✓ forecasted]') : '';
+      const doneMark = forecasted.has(f.id) ? chalk.green(` [${SYM.check} forecasted]`) : '';
       return {
         name:  `  [${i + 1}]  ${severityLabel(f.severity)}  ${f.title}${doneMark}`,
         value: f,
@@ -461,25 +468,6 @@ async function promptFixForecast(findings, forecasted = new Set()) {
   return chosen; // array, may be empty
 }
 
-function colorizeOutput(text) {
-  return text
-    .replace(/🔀 CONTRACT CONFLICTS/g,   chalk.blue.bold('🔀 CONTRACT CONFLICTS'))
-    .replace(/🗄️ SCHEMA CONFLICTS/g,     chalk.yellow.bold('🗄️  SCHEMA CONFLICTS'))
-    .replace(/⚙️ CONFIG CONFLICTS/g,      chalk.cyan.bold('⚙️  CONFIG CONFLICTS'))
-    .replace(/🔢 CONSTANT CONFLICTS/g,   chalk.green.bold('🔢 CONSTANT CONFLICTS'))
-    .replace(/📦 DEPENDENCY CONFLICTS/g, chalk.red.bold('📦 DEPENDENCY CONFLICTS'))
-    .replace(/🧩 INTERFACE CONFLICTS/g,  chalk.magenta.bold('🧩 INTERFACE CONFLICTS'))
-    .replace(/⚡ CONFLICT SUMMARY/g,     chalk.magenta.bold('⚡ CONFLICT SUMMARY'))
-    .replace(/CONFIRMED/g,  chalk.red.bold('CONFIRMED'))
-    .replace(/POSSIBLE/g,   chalk.yellow.bold('POSSIBLE'))
-    .replace(/CRITICAL/g,   chalk.bgRed.white.bold(' CRITICAL '))
-    .replace(/\bHIGH\b/g,   chalk.red.bold('HIGH'))
-    .replace(/\bMEDIUM\b/g, chalk.yellow.bold('MEDIUM'))
-    .replace(/\bLOW\b/g,    chalk.green.bold('LOW'))
-    .replace(/Resolution:/g, chalk.green.bold('Resolution:'))
-    .replace(/Impact:/g,     chalk.yellow('Impact:'))
-    .replace(/Severity:/g,   chalk.cyan('Severity:'));
-}
 
 // ── Shared Fix Forecast execution: checkbox + cost-gate + H3 + serial run ────
 // Called by runConflictMode (post-scan), runSavedFixForecast (standalone menu),

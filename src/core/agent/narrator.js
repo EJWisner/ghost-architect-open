@@ -585,8 +585,13 @@ function getCapDisclosure(total, cap) {
 }
 
 // Matches any disclosure getCapDisclosure has ever emitted, so a report rendered
-// by one version and rewritten by another still reconciles.
-const CAP_DISCLOSURE_LINE = /^_This report (?:details|shows) the top \d+ findings by severity[^\n]*_$/m;
+// by one version and rewritten by another still reconciles. Leading/trailing
+// emphasis is tolerated ([*_]*): Pass 2 is allowed to restyle lines, and a
+// disclosure it decorated to "**_This report ..._**" used to slip past this
+// anchor while the patcher's presence check still matched — so the canonical
+// line was never spliced and the stale pre-verification count shipped
+// (Audit 7, finding 3.18).
+const CAP_DISCLOSURE_LINE = /^[*_]*This report (?:details|shows) the top \d+ findings by severity[^\n]*[*_]$/m;
 
 /**
  * Replace the rendered cap disclosure with one stating the true sidecar count.

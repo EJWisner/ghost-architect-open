@@ -111,7 +111,7 @@ export async function runPOIMode(codebaseContext, options = {}) {
       chalk.gray('Est. cost: ') + chalk.bold(display.stats.cost) + '   ' +
       chalk.gray('Est. time: ') + chalk.bold(display.stats.time) +
       (display.risks.length > 0
-        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas:') + '\n' +
+        ? '\n\n' + chalk.yellow.bold(`${SYM.warn}  High-risk areas:`) + '\n' +
           display.risks.slice(0, 4).map(r => chalk.yellow(`   • ${r}`)).join('\n')
         : '') +
       (display.warnings.length > 0
@@ -160,10 +160,12 @@ export async function runPOIMode(codebaseContext, options = {}) {
   let buffer  = '';
   let started = false;
   let spinner = null;
-  // The full verified finding set from a multipass run, including the findings
-  // ranked below the narrator's prose cap. Stays null on the single-pass path,
-  // where the report already contains every finding and reports.js can parse
-  // them straight out of it.
+  // The full verified finding set, including the findings ranked below the
+  // narrator's prose cap. Populated by BOTH scan paths: multipass via
+  // multiResult.findings, single-pass via runPOIScan's onSidecarFindings
+  // callback (the old comment here claimed the single-pass report "already
+  // contains every finding", which was false once the narrator's 30-finding
+  // cap fired — Audit 7, finding 3.4).
   let sidecarFindings = null;
 
   try {
@@ -350,7 +352,14 @@ export async function runPOIMode(codebaseContext, options = {}) {
       // Single-pass path: smaller codebases. Same rule — capture to buffer, no stream.
       const readSpinner = ora({ text: chalk.gray('Ghost is reading your project...'), color: 'cyan' }).start();
       let narratorSpinner = null;
-      await runPOIScan(
+      // Use the RETURN VALUE as the report. The chunks streamed into `buffer`
+      // below are the narrator's pre-verifier draft (captured silently for
+      // fallback); the return value is the finished report AFTER verifier
+      // annotations, false-positive drops, empty-header scrubbing, and the
+      // cap-disclosure rewrite. Discarding the return value shipped the
+      // unverified draft on every single-pass scan (found during the Audit 7
+      // remediation; not in the audit list).
+      const singlePassReport = await runPOIScan(
         codebaseContext,
         (chunk) => {
           // Silent capture; spinner covers the UX.
@@ -379,8 +388,14 @@ export async function runPOIMode(codebaseContext, options = {}) {
           },
           projectLabel: label || 'project',
           profile,  // Ghost Partner — consultant lens injected into scan + narrator
+          // Full verified finding set (detailed + remainder) for the sidecar,
+          // same contract as the multipass path's multiResult.findings.
+          onSidecarFindings: (found) => {
+            if (Array.isArray(found) && found.length > 0) sidecarFindings = found;
+          },
         }
       );
+      if (singlePassReport) buffer = singlePassReport;
       if (narratorSpinner) { narratorSpinner.succeed(chalk.green('  Report ready')); narratorSpinner = null; }
       if (readSpinner && readSpinner.isSpinning) readSpinner.stop();
       console.log('\n');
@@ -593,19 +608,3 @@ export async function runPOIMode(codebaseContext, options = {}) {
   }
 }
 
-function colorizeOutput(text) {
-  return text
-    .replace(/🔴 RED FLAGS/g, chalk.red.bold('🔴 RED FLAGS'))
-    .replace(/🏛️ LANDMARKS/g, chalk.blue.bold('🏛️  LANDMARKS'))
-    .replace(/⚰️ DEAD ZONES/g, chalk.gray.bold('⚰️  DEAD ZONES'))
-    .replace(/⚡ FAULT LINES/g, chalk.yellow.bold('⚡ FAULT LINES'))
-    .replace(/📊 REMEDIATION SUMMARY/g, chalk.cyan.bold('📊 REMEDIATION SUMMARY'))
-    .replace(/CRITICAL/g, chalk.bgRed.white.bold(' CRITICAL '))
-    .replace(/\bHIGH\b/g, chalk.red.bold('HIGH'))
-    .replace(/\bMEDIUM\b/g, chalk.yellow.bold('MEDIUM'))
-    .replace(/\bLOW\b/g, chalk.green.bold('LOW'))
-    .replace(/Effort:/g, chalk.cyan('Effort:'))
-    .replace(/Complexity:/g, chalk.cyan('Complexity:'))
-    .replace(/Recommended fix:/g, chalk.green.bold('Recommended fix:'))
-    .replace(/Fix priority:/g, chalk.yellow('Fix priority:'));
-}

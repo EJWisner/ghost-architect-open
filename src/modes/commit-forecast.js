@@ -29,6 +29,7 @@ import path from 'path';
 import os   from 'os';
 
 import { showFriendlyError }   from '../utils/errors.js';
+import { offerUnsavedReport }  from '../cli/unsaved-report.js';
 import { runBlastRadius }      from '../analyst/index.js';
 import { runConflictScan, getConflictPassInfo, normalizeCandidateToFinding } from '../core/conflict.js';
 import { runPostScanFixForecast } from './conflict.js';
@@ -590,7 +591,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         `  ·  Est. cost: ~$${blastInfo.estCost}  ·  Est. time: ~${blastInfo.estMinutes} min`
       ));
     } else {
-      showCostEstimate(patchedContext, 'blast', model);
+      // 'forecast', not 'blast': the mode label renders in the cost box at the
+      // payment-consent moment, and "Blast Radius Analysis" there was
+      // confusing even though a blast pass is part of the forecast.
+      showCostEstimate(patchedContext, 'forecast', model);
     }
   }
   if (analysisMode === 'conflict' || analysisMode === 'both') {
@@ -850,8 +854,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
             ));
           }
 
-          const inputTokens  = Math.ceil(patchedContext.context.length / 4) + 200;
-          const outputTokens = Math.ceil(conflictBuffer.length / 4);
           showConflictCost(result.tracker);
           console.log('');
         } else {
@@ -923,6 +925,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     console.log(chalk.gray(`  📋 ${saved.mdFile}`));
     if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}  ← review-ready PDF`));
     console.log('');
+  } else {
+    // Declining to save must not silently destroy the report. The analysis
+    // already ran (and for Open, the forecast credit is already spent, by
+    // design: the value is the analysis itself); this buffer is the only copy.
+    // Same recovery path as POI/Blast/Conflict. See src/cli/unsaved-report.js.
+    await offerUnsavedReport(forecastReport, { prefix: 'ghost-commit-forecast' });
   }
 
   // ── Fix Forecast follow-up (conflict path only) ──────────────────────────
@@ -942,7 +950,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   // Forecast value is in the analysis itself, not the saved artifact.
   if (tier === 'open') {
     incrementForecastCount();
-    const remaining = 0; // FORECAST_QUOTA - 1 = 0 after first use
     console.log(chalk.cyan(
       `💡 You've used your free Commit Forecast. Upgrade to Pro for unlimited Forecasts.\n` +
       `   https://ghostarchitect.dev/pricing`

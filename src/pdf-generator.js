@@ -369,9 +369,13 @@ export async function generatePDF(reportText, outputPath, meta = {}) {
           let j = i + 1;
           while (j < lines.length) {
             const next = lines[j].trim();
-            // Stop at next finding, section header, or blank line after content
+            // Stop at next finding, section header, or blank line after content.
+            // Test the LOOKAHEAD line for a section header: the old predicate
+            // reused the outer line's isMdSec (always false in this branch),
+            // so a `## SECTION` inside the window never terminated the height
+            // estimate (Audit 7, Q25 — pagination-estimate only).
             if (/^###\s/.test(next) || /^\d+\.\s+[A-Z]/.test(next) && next.length > 10) break;
-            if (isMdSec || /^\p{Extended_Pictographic}\s/u.test(next)) break;
+            if (/^##\s/.test(next) || /^\p{Extended_Pictographic}\s/u.test(next)) break;
             lookahead += next ? 14 : 4;
             if (lookahead > 120) break; // cap estimate at 120px — if it's bigger it'll paginate mid-block which is fine
             j++;

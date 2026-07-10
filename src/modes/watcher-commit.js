@@ -1394,7 +1394,6 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // A prior run may have submitted a batch and then hit the GitHub Actions
   // wall-clock limit before it ended. The batch kept processing on Anthropic's
   // servers; pick it up now, deliver the results, and clear it.
-  const resumedFindings = [];
   if (octokitPortal && portalRepoPath) {
     const pendingBatches = await retrievePendingBatches(octokitPortal, portalRepoPath);
     if (pendingBatches.length > 0) {
@@ -1491,22 +1490,44 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         }
 
         try {
-          const resumeResults = await pollBatch(anthropic, pending.batchId, {
-            pollIntervalMs: 10000,
-            timeoutMs: 60000,
-            onProgress: (p) => console.log(`Ghost Watcher: resume check — ${p.status}`),
-          });
+          // Poll EVERY chunk this record carries. Multi-chunk conflict scans
+          // store all their batch IDs in pending.batchIds; legacy records and
+          // single-chunk scans fall back to the single batchId. A timeout on
+          // any chunk throws BatchTimeoutError and leaves the whole record
+          // pending for the next run, so a partially finished set is never
+          // reported as complete (Audit 7, finding 3.2).
+          const idsToPoll = Array.isArray(pending.batchIds) && pending.batchIds.length
+            ? pending.batchIds
+            : [pending.batchId];
+          const resumeResults = [];
+          for (let ci = 0; ci < idsToPoll.length; ci++) {
+            const chunkLabel = idsToPoll.length > 1 ? ` chunk ${ci + 1}/${idsToPoll.length}` : '';
+            const chunkResults = await pollBatch(anthropic, idsToPoll[ci], {
+              pollIntervalMs: 10000,
+              timeoutMs: 60000,
+              onProgress: (p) => console.log(`Ghost Watcher: resume check${chunkLabel}: ${p.status}`),
+            });
+            resumeResults.push(...chunkResults);
+          }
           const resumeUsage = sumBatchUsage(resumeResults);
 
-          // Extract findings from the resumed result by scan type.
-          const rawText = resumeResults[0]?.text || '';
+          // Extract findings from the resumed results by scan type, merging
+          // every chunk's output.
+          const rawTexts = resumeResults.map(r => r?.text || '');
           let pendingFindings = [];
           if (pending.type === 'blast') {
-            pendingFindings = extractFindings(rawText).map(f => ({ ...f, source_mode: 'blast' }));
+            // Same narration + file-enrichment path as the fresh run. The bare
+            // extractFindings parse left every finding's files array empty,
+            // which downstream drops from Ghost Brief™ and the portal
+            // (Audit 7, finding 3.8).
+            pendingFindings = (await blastFindingsFromRaw(rawTexts[0] || '', {
+              profile,
+              changedFiles: pending.changedFiles || [],
+              codebaseContext: null,
+            })).map(f => ({ ...f, source_mode: 'blast' }));
           } else if (pending.type === 'conflict') {
-            pendingFindings = extractCandidates([rawText]).map(normalizeCandidateToFinding).map(f => ({ ...f, source_mode: 'conflict' }));
+            pendingFindings = extractCandidates(rawTexts).map(normalizeCandidateToFinding).map(f => ({ ...f, source_mode: 'conflict' }));
           }
-          resumedFindings.push(...pendingFindings);
 
           const sev = buildSeverityCounts(pendingFindings);
 
@@ -1651,7 +1672,35 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     console.log('Ghost Watcher: skipping Blast Radius — commit message matches a configured skip pattern.');
   }
 
-  if (watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast) {
+  // Single source of truth for "which scans will this run submit". Reused by
+  // Step 5 (blast), Step 6 (conflict), and the Step 8 completeness accounting
+  // so the three can never drift.
+  const blastWillRun    = watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast;
+  const conflictWillRun = watchConfig.scans?.conflict_detection !== false;
+
+  // ── Step 4b: pending state, before any submission ─────────────────────────
+  // Fires for EVERY config that will run at least one scan. This used to live
+  // inside the blast branch only, so a conflict-only config (or a release
+  // commit matching a blast skip pattern) showed nothing on the portal and no
+  // PR comment until results landed, the exact silence-during-a-batch gap the
+  // pending state exists to close (Audit 7, finding 2.10). The specific batch
+  // IDs are not known yet; the pending state is about visibility, not IDs.
+  if (blastWillRun || conflictWillRun) {
+    if (prNumber && watchConfig.notifications?.pr_comment !== false) {
+      await postCommentToPR(repoPath, prNumber,
+        `👻 **Ghost Watcher™** is analyzing this commit using the Anthropic Batches API.\n\n` +
+        `Results will be posted here automatically when complete -- usually within 15 minutes.`);
+    }
+    await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, repoPath, commitHashFull, {
+      commitHash: commitHashFull, branch, developer: developer.name,
+      timestamp: new Date().toISOString(), status: 'pending', batchId: null,
+      message: 'Ghost Watcher™ is analyzing this commit. Results will appear here automatically.',
+      findings: [], findingCount: 0,
+      severity: { critical: 0, high: 0, medium: 0, low: 0 }, prompts: 0,
+    });
+  }
+
+  if (blastWillRun) {
     console.log('Ghost Watcher: running Blast Radius (batch)...');
     let blastBatchId = null;
     try {
@@ -1671,28 +1720,18 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     }
 
     if (blastBatchId) {
-      // Immediate PR comment so reviewers see Ghost is working right away.
-      if (prNumber && watchConfig.notifications?.pr_comment !== false) {
-        await postCommentToPR(repoPath, prNumber,
-          `👻 **Ghost Watcher™** is analyzing this commit using the Anthropic Batches API.\n\n` +
-          `Results will be posted here automatically when complete -- usually within 15 minutes.\n\n` +
-          `_Batch ID: ${blastBatchId}_`);
-      }
+      // The "analyzing" PR comment and pending portal state were pushed in
+      // Step 4b, before submission, so they cover conflict-only configs too.
 
       // Persist the batch so a future run can resume it if this job is cut short.
+      // changedFiles rides along so the resume path can run the same narration
+      // and file enrichment as the fresh path (blastFindingsFromRaw uses it
+      // only for the project label; safe when absent on legacy records).
       await storePendingBatch(octokitPortal, portalRepoPath, blastBatchId, {
-        type: 'blast', commitHash: commitHashFull, repo: repoPath, repoOwner,
+        type: 'blast', changedFiles,
+        commitHash: commitHashFull, repo: repoPath, repoOwner,
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
-      });
-
-      // Push PENDING state to the portal so the customer sees "analyzing".
-      await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, repoPath, commitHashFull, {
-        commitHash: commitHashFull, branch, developer: developer.name,
-        timestamp: new Date().toISOString(), status: 'pending', batchId: blastBatchId,
-        message: 'Ghost Watcher™ is analyzing this commit. Results will appear here automatically.',
-        findings: [], findingCount: 0,
-        severity: { critical: 0, high: 0, medium: 0, low: 0 }, prompts: 0,
       });
 
       try {
@@ -1741,7 +1780,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // async batch pass. Candidates are parsed with the unchanged extractCandidates.
   let conflictFindings = [];
 
-  if (watchConfig.scans?.conflict_detection !== false) {
+  if (conflictWillRun) {
     console.log('Ghost Watcher: running Conflict Detection (batch)...');
     let conflictBatchId = null;
     let conflictBatchIds = [];
@@ -1765,8 +1804,14 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     }
 
     if (conflictBatchId) {
+      // batchIds carries EVERY chunk so a resume after a timeout polls and
+      // merges all of them. Persisting only the first ID silently dropped
+      // chunks 2..N on resume: exactly the large codebases most likely to
+      // time out delivered a "results retrieved" state covering a fraction
+      // of the repo (Audit 7, finding 3.2). batchId stays the record key.
       await storePendingBatch(octokitPortal, portalRepoPath, conflictBatchId, {
-        type: 'conflict', commitHash: commitHashFull, repo: repoPath, repoOwner,
+        type: 'conflict', batchIds: conflictBatchIds,
+        commitHash: commitHashFull, repo: repoPath, repoOwner,
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
       });
@@ -1872,8 +1917,10 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // scan ran AND no scan that was expected to run failed. Otherwise a config
   // typo or API outage would render a permanent false-green "safe to merge" on
   // every commit. "Expected" = enabled (and, for blast, not release-skipped).
-  const blastExpected    = watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast;
-  const conflictExpected = watchConfig.scans?.conflict_detection !== false;
+  // Derived once in Step 4b (blastWillRun / conflictWillRun) so the pending
+  // state, the scan branches, and this completeness accounting cannot drift.
+  const blastExpected    = blastWillRun;
+  const conflictExpected = conflictWillRun;
   const incompleteScans  = [];
   if (blastExpected    && !scanRan.blast)    incompleteScans.push('Blast Radius');
   if (conflictExpected && !scanRan.conflict) incompleteScans.push('Conflict Detection');
@@ -1942,8 +1989,18 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   // false green on the portal AND the resolved-tracking delta below would mark
   // every prior open finding as resolvedInCommit:<thisSha>. Never do either off
   // an empty result set — the else-branch writes an explicit 'incomplete' state.
+  // Action/observation split, identical to the Step 9 sidecar and the PR
+  // comment: Blast Radius impact observations are "exposed", not "broken",
+  // and must not inflate finding counts, severity rollups, or the resolved-
+  // findings lifecycle. Before this, the same commit showed different counts
+  // on the Watch tab, in watch-<sha>.json, and in the findings email, and the
+  // email's "N require your attention" contradicted the PR comment's
+  // no-action-required framing for observations (Audit 7, Q26).
+  const stateActionFindings    = allFindings.filter(f => f.source_mode !== 'blast');
+  const stateBlastObservations = allFindings.filter(f => f.source_mode === 'blast');
+
   if (runComplete && octokitPortal && portalOwner && portalRepoName) {
-    const sevAll = buildSeverityCounts(allFindings);
+    const sevAll = buildSeverityCounts(stateActionFindings);
 
     // Finding lifecycle delta -- compare current findings against the most
     // recent completed run to classify each finding as new or carried-over,
@@ -1959,15 +2016,17 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         priorCommitHash = prior.commitHash || null;
         const priorFindings = prior.findings;
 
-        // Classify each current finding as new (no match in prior) or carried.
-        for (const curr of allFindings) {
+        // Classify each current ACTION finding as new (no match in prior) or
+        // carried. Observations never enter the lifecycle: they are context,
+        // not defects to resolve.
+        for (const curr of stateActionFindings) {
           const matched = priorFindings.some(p => similarFinding(curr, p));
           if (!matched) newFindingIds.push(curr.id);
         }
 
         // Classify each prior finding with no current match as resolved.
         for (const prev of priorFindings) {
-          const stillActive = allFindings.some(c => similarFinding(prev, c));
+          const stillActive = stateActionFindings.some(c => similarFinding(prev, c));
           if (!stillActive) {
             resolvedFindings.push({
               id:               prev.id,
@@ -1988,7 +2047,8 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       commitHash: commitHashFull, branch, developer: developer.name,
       timestamp: new Date().toISOString(), status: 'complete', batchId: null,
       message: 'Ghost Watcher™ analysis complete.',
-      findings: allFindings, findingCount: allFindings.length,
+      findings: stateActionFindings, findingCount: stateActionFindings.length,
+      blastRadiusObservations: stateBlastObservations,
       severity: sevAll, prompts: briefPromptCount,
       tokenUsage: buildTokenUsage(totalInputTokens, totalOutputTokens),
       verifiedFindings, verifiedFindingCount: verifiedFindings.length,
@@ -2033,19 +2093,21 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           portalSlug: portalSlug || repoOwner,
         });
         await sendWatcherEmail(emailRecipients, eDegraded.subject, eDegraded.html);
-      } else if (allFindings.length > 0) {
-        // One or more findings — email a summary with per-finding detail.
-        const sev = buildSeverityCounts(allFindings);
+      } else if (stateActionFindings.length > 0) {
+        // One or more ACTION findings — email a summary with per-finding
+        // detail. Blast observations stay out of "N require your attention",
+        // matching the PR comment and the portal (Audit 7, Q26).
+        const sev = buildSeverityCounts(stateActionFindings);
         const eFindings = emailFindings({
           repo:          repoPath,
           shortSha:      commitSha,
-          findingsCount: allFindings.length,
+          findingsCount: stateActionFindings.length,
           verifiedCount: verifiedFindings.length,
           criticalCount: sev.critical,
           highCount:     sev.high,
           mediumCount:   sev.medium,
           lowCount:      sev.low,
-          findings:      allFindings,
+          findings:      stateActionFindings,
           portalSlug:    portalSlug || repoOwner,
         });
         await sendWatcherEmail(emailRecipients, eFindings.subject, eFindings.html);

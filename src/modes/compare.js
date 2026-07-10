@@ -32,7 +32,7 @@ export async function runCompareMode() {
   } catch {}
 
   if (reports.length < 2) {
-    console.log(chalk.yellow('  ⚠  You need at least 2 saved reports to compare.'));
+    console.log(chalk.yellow(`  ${SYM.warn}  You need at least 2 saved reports to compare.`));
     console.log(chalk.gray('  Run a POI scan and save it first.\n'));
     return;
   }

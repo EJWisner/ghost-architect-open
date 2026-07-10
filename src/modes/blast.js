@@ -1,5 +1,8 @@
 import { showFriendlyError } from '../utils/errors.js';
 import { SYM, IS_WINDOWS } from '../cli/symbols.js';
+import { createRequire } from 'module';
+const _blastRequire = createRequire(import.meta.url);
+const { version: GHOST_VERSION } = _blastRequire('../../package.json');
 import { offerUnsavedReport } from '../cli/unsaved-report.js';
 import chalk from 'chalk';
 import boxen from 'boxen';
@@ -234,7 +237,7 @@ export async function runBlastMode(codebaseContext, options = {}) {
       chalk.gray('Est. cost: ') + chalk.bold(display.stats.cost) + '   ' +
       chalk.gray('Est. time: ') + chalk.bold(display.stats.time) +
       (display.risks.length > 0
-        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas:') + '\n' +
+        ? '\n\n' + chalk.yellow.bold(`${SYM.warn}  High-risk areas:`) + '\n' +
           display.risks.slice(0, 4).map(r => chalk.yellow(`   • ${r}`)).join('\n')
         : '') +
       (display.warnings.length > 0
@@ -317,6 +320,11 @@ export async function runBlastMode(codebaseContext, options = {}) {
 
   let buffer = '';
 
+  // Declared OUTSIDE the try so the catch below can report what the failed
+  // run already billed (Audit 7, finding 3.10). A multi-stage blast dying
+  // midway is real money; POI's failure path reports it, this one must too.
+  const blastTracker = new SessionCostTracker();
+
   try {
     // Streaming-to-stdout was causing the report to scroll off-screen
     // before the user could read it (POI mode hit the same problem and
@@ -325,8 +333,12 @@ export async function runBlastMode(codebaseContext, options = {}) {
     // The spinner stays on screen the whole time and gives a clear
     // "still working" signal. The full report lives in `buffer` and
     // is what we save to disk; the user reads it from the saved files.
-    const blastTracker = new SessionCostTracker();
     const blastUsage   = (i, o, m, stage) => blastTracker.record('blast', i, o, m, stage || 'scan');
+
+    // The FULL finding set (including any ranked past the narrator's cap),
+    // delivered by the shared sidecar pipeline. Preferred over re-parsing the
+    // capped report text when building meta.findings below.
+    let blastSidecarFindings = null;
 
     const result = await runBlastRadius(
       codebaseContext,
@@ -338,8 +350,14 @@ export async function runBlastMode(codebaseContext, options = {}) {
         },
         profile,  // Ghost Partner — threads consultant lens into prompt + narrator
         onUsage: blastUsage,
+        onSidecarFindings: (found) => {
+          if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
+        },
       }
     );
+    // Prefer the return value: it carries the reconciled cap disclosure. The
+    // chunk-accumulated buffer is the mid-narration draft.
+    if (result) buffer = result;
 
     spinner.succeed(chalk.green('Blast radius report ready'));
     console.log('');
@@ -384,7 +402,12 @@ export async function runBlastMode(codebaseContext, options = {}) {
       // (commits c2aeaad + dc352b0): mode populates meta.findings, reports.js
       // Strategy 2 conditional consumes it; falls back to buildFindingsSidecar
       // for callers that don't supply it.
-      const parsedFindings = extractFindings(buffer);
+      // Prefer the full sidecar set from the shared pipeline (includes findings
+      // ranked past the narrator's cap); fall back to parsing the report text
+      // for callers/paths that never fired the callback.
+      const parsedFindings = (blastSidecarFindings && blastSidecarFindings.length > 0)
+        ? blastSidecarFindings
+        : extractFindings(buffer);
       const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
       const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
       const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
@@ -414,6 +437,10 @@ export async function runBlastMode(codebaseContext, options = {}) {
         medium:       mediumCount,
         low:          lowCount,
         totalHours,
+        // Real cost and version, matching POI/Conflict (Audit 7, Q2): the
+        // manifest and MD "Analysis Cost" rows rendered blank for Blast.
+        cost:         blastTracker.totalCost.toFixed(4),
+        version:      GHOST_VERSION,
         // Transport metadata — this scan ran live (streaming). Stamped into
         // findings.json and the PDF/Ghost Brief footer. See src/lib/transport-meta.js.
         transport:    buildStreamingTransport(),
@@ -442,6 +469,12 @@ export async function runBlastMode(codebaseContext, options = {}) {
   } catch (err) {
     spinner.fail(chalk.red('Blast radius analysis failed'));
     showFriendlyError(err);
+    // A failed scan still billed for whatever ran before the failure. Say so,
+    // mirroring POI's failure path, instead of hiding the spend.
+    if (blastTracker.totalCost > 0) {
+      console.log(chalk.yellow('\n  The scan did not complete. You were billed for the work that ran:'));
+      showConflictCost(blastTracker);
+    }
   }
 }
 
@@ -552,17 +585,26 @@ export async function retrieveBlastBatchResult(rawOutput, entry) {
   // Reproduce the streamed report into a buffer (no stdout streaming on
   // retrieve — the report is read from the saved files, same as a live run).
   let buffer = '';
-  await processBlastRawOutput(rawOutput, {
+  let batchSidecarFindings = null;
+  const finished = await processBlastRawOutput(rawOutput, {
     targets:      ctx.targets,
     projectLabel: ctx.projectLabel,
     rates:        ctx.rates,
     profile:      ctx.profile || null,
     loadedFiles:  ctx.loadedFiles || 0,
     onChunk:      (chunk) => { buffer += chunk; },
+    onSidecarFindings: (found) => {
+      if (Array.isArray(found) && found.length > 0) batchSidecarFindings = found;
+    },
   });
+  // Prefer the return value: it carries the reconciled cap disclosure.
+  if (finished) buffer = finished;
 
-  // Same sidecar-findings derivation as the streaming save block.
-  const parsedFindings = extractFindings(buffer);
+  // Same sidecar-findings derivation as the streaming save block: prefer the
+  // full pipeline set, fall back to parsing the (possibly capped) report text.
+  const parsedFindings = (batchSidecarFindings && batchSidecarFindings.length > 0)
+    ? batchSidecarFindings
+    : extractFindings(buffer);
   const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
   const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
   const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
@@ -584,6 +626,7 @@ export async function retrieveBlastBatchResult(rawOutput, entry) {
     medium:       mediumCount,
     low:          lowCount,
     totalHours,
+    version:      GHOST_VERSION,
     // Transport metadata — this scan ran via the Message Batches API.
     transport:    buildBatchTransport({ submittedAt: entry && entry.submittedAt }),
   };
@@ -592,20 +635,3 @@ export async function retrieveBlastBatchResult(rawOutput, entry) {
   return { saved, buffer };
 }
 
-function colorizeOutput(text) {
-  return text
-    .replace(/💥 DIRECT DEPENDENCIES/g, chalk.red.bold('💥 DIRECT DEPENDENCIES'))
-    .replace(/🌊 RIPPLE EFFECTS/g, chalk.yellow.bold('🌊 RIPPLE EFFECTS'))
-    .replace(/🧨 DANGER ZONES/g, chalk.red.bold('🧨 DANGER ZONES'))
-    .replace(/✅ SAFE ZONES/g, chalk.green.bold('✅ SAFE ZONES'))
-    .replace(/⚠️ BEFORE YOU TOUCH IT/g, chalk.yellow.bold('⚠️  BEFORE YOU TOUCH IT'))
-    .replace(/🛠️ REMEDIATION PLAN/g, chalk.cyan.bold('🛠️  REMEDIATION PLAN'))
-    .replace(/\bCRITICAL\b/g, chalk.bgRed.white.bold(' CRITICAL '))
-    .replace(/\bHIGH\b/g, chalk.red.bold('HIGH'))
-    .replace(/\bMEDIUM\b/g, chalk.yellow.bold('MEDIUM'))
-    .replace(/\bLOW\b/g, chalk.green.bold('LOW'))
-    .replace(/Estimated effort:/g, chalk.cyan('Estimated effort:'))
-    .replace(/Recommended approach:/g, chalk.green.bold('Recommended approach:'))
-    .replace(/Testing requirements:/g, chalk.yellow('Testing requirements:'))
-    .replace(/Rollback plan:/g, chalk.yellow('Rollback plan:'));
-}

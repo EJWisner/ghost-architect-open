@@ -24,6 +24,9 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
+import { createRequire } from 'module';
+const _reconRequire = createRequire(import.meta.url);
+const { version: GHOST_VERSION } = _reconRequire('../../package.json');
 import { runRecon } from '../core/agent/planner.js';
 import { saveReport } from '../reports.js';
 import { promptProjectLabel } from '../projects.js';
@@ -98,7 +101,7 @@ export async function runReconMode(codebaseContext, options = {}) {
       chalk.gray('Full-scan cost: ')      + chalk.bold('~$' + plan.totalEstCost) + '   ' +
       chalk.gray('Full-scan time: ')      + chalk.bold('~' + plan.estMinutes + ' min') +
       (plan.highRiskAreas?.length
-        ? '\n\n' + chalk.yellow.bold('⚠  High-risk areas surfaced:') + '\n' +
+        ? '\n\n' + chalk.yellow.bold(`${SYM.warn}  High-risk areas surfaced:`) + '\n' +
           plan.highRiskAreas.slice(0, 5).map(r => chalk.yellow(`   • ${r}`)).join('\n')
         : '') +
       (plan.warningFlags?.length
@@ -127,7 +130,7 @@ export async function runReconMode(codebaseContext, options = {}) {
       filesAnalyzed:  `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
       totalFiles:     codebaseContext.totalFiles,
       cost:           '0.0500',  // single planner call, fixed estimate
-      version:        '4.7.0',
+      version:        GHOST_VERSION,   // was a hardcoded '4.7.0' — a sales-facing scoping artifact claimed a 4.x Ghost produced it
       findingCount:   0,         // recon doesn't produce findings
       critical:       0,
       high:           0,

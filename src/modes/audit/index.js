@@ -39,9 +39,12 @@ import { buildAuditReport } from './reportBuilder.js';
 import { saveReport } from '../../reports.js';
 // @ghost-verified: these imports resolve to src/projects.js and src/estimator.js (CLI layer wrappers) not src/core/ -- intentional, audit mode uses CLI display functions
 import { promptProjectLabel } from '../../projects.js';
-import { showAuditCostEstimate, showActualCost } from '../../estimator.js';
+import { showAuditCostEstimate, showActualCost, calcActualCost } from '../../estimator.js';
+import { createRequire } from 'module';
+const _auditRequire = createRequire(import.meta.url);
+const { version: GHOST_AUDIT_VERSION } = _auditRequire('../../../package.json');
 import { beginUsageCapture, endUsageCapture } from '../../core/usage-tracker.js';
-import { getConfig } from '../../config.js';
+import { getConfig, getModelChoices } from '../../config.js';
 import { PRICING } from '../../constants/pricing.js';
 
 import { SYM, IS_WINDOWS } from '../../cli/symbols.js';
@@ -65,13 +68,13 @@ async function runAuditOpenPaywall() {
     chalk.gray('fractional CTOs, and modernization consultants.') + '\n\n' +
     chalk.white('Inheritance Audit produces a 5-page deal-grade PDF combining') + '\n' +
     chalk.white('four analyzers:') + '\n\n' +
-    chalk.green('  ✓  ') + chalk.white('Stack Reality Check: what the codebase actually contains,') + '\n' +
+    chalk.green(`  ${SYM.check}  `) + chalk.white('Stack Reality Check: what the codebase actually contains,') + '\n' +
     chalk.gray('     framework versions, end-of-life flags') + '\n' +
-    chalk.green('  ✓  ') + chalk.white('Key-Person Risk: who has been writing this code,') + '\n' +
+    chalk.green(`  ${SYM.check}  `) + chalk.white('Key-Person Risk: who has been writing this code,') + '\n' +
     chalk.gray('     key-person dependency, contributor concentration') + '\n' +
-    chalk.green('  ✓  ') + chalk.white('Hidden Dependency Map: license risk, EOL exposure,') + '\n' +
+    chalk.green(`  ${SYM.check}  `) + chalk.white('Hidden Dependency Map: license risk, EOL exposure,') + '\n' +
     chalk.gray('     commercial encumbrances the buyer is inheriting') + '\n' +
-    chalk.green('  ✓  ') + chalk.white('Modernization Roadmap: LLM-synthesized stabilize-vs-rebuild') + '\n' +
+    chalk.green(`  ${SYM.check}  `) + chalk.white('Modernization Roadmap: LLM-synthesized stabilize-vs-rebuild') + '\n' +
     chalk.gray('     recommendation with a 90-day plan and confidence rating') + '\n\n' +
     chalk.white('The audit produces deal-committee-ready TXT, MD, and PDF reports') + '\n' +
     chalk.white('in roughly 30 to 60 seconds at roughly $0.02 to $0.04 per audit') + '\n' +
@@ -83,6 +86,10 @@ async function runAuditOpenPaywall() {
     chalk.gray( '                          engagements') + '\n' +
     chalk.white('  •  Ghost Enterprise      custom branding + multi-engagement') + '\n' +
     chalk.gray( '                          audit history') + '\n\n' +
+    // Trial CTA first, matching every other paywall: the highest-converting
+    // line was missing from this fallback panel (Audit 7, finding Q6/2-tier).
+    chalk.green.bold(`Start a free ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial (no card required):`) + '\n' +
+    chalk.cyan('  ' + PRICING.TRIAL_URL.replace(/^https?:\/\//, '')) + '\n\n' +
     chalk.cyan('Upgrade at:  ') + chalk.cyan.underline('https://ghostarchitect.dev/pricing'),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
@@ -184,15 +191,14 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // Model picker — per-run choice for the Modernization Roadmap LLM call.
   // Defaults to whatever the user has set in `defaultModel` config so
   // pressing Enter respects their global preference. Audit is a high-stakes
-  // deliverable; users may want Opus for an important deal even if they
-  // run POI on Sonnet day-to-day. Same two choices the config picker offers.
+  // deliverable; users may want a deeper model for an important deal even if
+  // they run POI on Sonnet day-to-day. Choices come from getModelChoices()
+  // (config.js), the same derived, per-Mtok-priced list the wizard and the
+  // reconfigure menu use — this used to be a hardcoded duplicate with no
+  // prices and no priced-but-unpickable guard, on the one picker where price
+  // display matters most (Audit 7, finding 2.2).
   const configuredModel = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
-  const modelChoices = [
-    { name: 'claude-sonnet-4-6 (recommended, best balance)',        value: 'claude-sonnet-4-6' },
-    { name: 'claude-sonnet-5 (newer Sonnet, intro pricing)',        value: 'claude-sonnet-5' },
-    { name: 'claude-opus-4-8 (most powerful, slower and costlier)', value: 'claude-opus-4-8' },
-    { name: 'claude-fable-5 (deepest synthesis, highest cost)',     value: 'claude-fable-5' },
-  ];
+  const modelChoices = getModelChoices();
   const defaultChoiceIdx = modelChoices.findIndex(c => c.value === configuredModel);
   const { model } = await inquirer.prompt([{
     type: 'list', name: 'model',
@@ -280,10 +286,15 @@ export async function runAuditMode(codebaseContext, options = {}) {
   }
   // Runs on BOTH paths. A roadmap that failed partway still burned tokens, and
   // a stubbed roadmap made no call at all (calls === 0, nothing is printed).
+  // auditCostUsd is hoisted so the saveReport meta below can stamp the real
+  // cost into the manifest and MD "Analysis Cost" row, which rendered blank
+  // for audits while the terminal showed the real figure (Audit 7, Q2).
+  let auditCostUsd = null;
   try {
     const auditUsage = endUsageCapture();
     if (auditUsage && auditUsage.calls > 0) {
       showActualCost(auditUsage.inputTokens, auditUsage.outputTokens, model);
+      auditCostUsd = calcActualCost(auditUsage.inputTokens, auditUsage.outputTokens, model).totalCost.toFixed(4);
     }
   } catch { /* cost reporting must never sink the audit */ }
 
@@ -347,6 +358,9 @@ export async function runAuditMode(codebaseContext, options = {}) {
         medium:   mediumCount,
         low:      lowCount,
         totalHours,
+        // Real cost and version, matching POI/Conflict (Audit 7, Q2).
+        ...(auditCostUsd ? { cost: auditCostUsd } : {}),
+        version: GHOST_AUDIT_VERSION,
       });
       saveSpinner.succeed(chalk.green(`  ${SYM.check} Reports saved`));
     } catch (err) {
@@ -437,7 +451,7 @@ function renderStackRealityFindings(stackReality) {
   // Surprise findings
   if (surpriseFindings && surpriseFindings.length > 0) {
     console.log('');
-    console.log(chalk.yellow.bold('  ⚠ Reality-vs-pitch callouts'));
+    console.log(chalk.yellow.bold(`  ${SYM.warn} Reality-vs-pitch callouts`));
     for (const surprise of surpriseFindings) {
       console.log(`    ${chalk.yellow('→')} ${chalk.white(surprise)}`);
     }

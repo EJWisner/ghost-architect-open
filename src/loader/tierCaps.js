@@ -4,6 +4,7 @@
 // in bin/ghost.js. Enterprise tier is detected at runtime via repo name check.
 
 import chalk from 'chalk';
+import { SYM } from '../cli/symbols.js';
 
 export const TIER_CAPS = {
   open: 50000,
@@ -60,7 +61,7 @@ export function resolveContextCap(tier, userRequested, source = 'default') {
   }
 
   if (typeof userRequested !== 'number' || !Number.isFinite(userRequested) || userRequested <= 0) {
-    console.warn(chalk.yellow(`⚠ Invalid --max-context value. Using tier default: ${tierCap.toLocaleString()} tokens.`));
+    console.warn(chalk.yellow(`${SYM.warn} Invalid --max-context value. Using tier default: ${tierCap.toLocaleString()} tokens.`));
     return { effective: tierCap, clamped: false, tierCap, tier: normalizedTier };
   }
 
@@ -73,19 +74,31 @@ export function resolveContextCap(tier, userRequested, source = 'default') {
     // they hadn't touched. Filed under TODO-architect-open-clamp-message-misleading.md.
     let msg;
     if (source === 'config') {
-      msg = `⚠ Context cap clamped from ${userRequested.toLocaleString()} (from saved settings) to ${tierCap.toLocaleString()} on the ${normalizedTier} tier. Run \`ghost --reconfigure\` to update your default.`;
+      msg = `${SYM.warn} Context cap clamped from ${userRequested.toLocaleString()} (from saved settings) to ${tierCap.toLocaleString()} on the ${normalizedTier} tier. Run \`ghost --reconfigure\` to update your default.`;
     } else if (source === 'default') {
       // Defensive case: no flag and no saved value, but the resolved default
       // still exceeds the cap. Word it without naming --max-context, which the
       // user never passed.
-      msg = `⚠ Default context value ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
+      msg = `${SYM.warn} Default context value ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
     } else {
       // 'cli' (the common case) references --max-context as the visible source.
-      msg = `⚠ --max-context ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
+      msg = `${SYM.warn} --max-context ${userRequested.toLocaleString()} exceeds your tier limit (${tierCap.toLocaleString()}). Clamping to ${tierCap.toLocaleString()}.`;
     }
     console.warn(chalk.yellow(msg));
     if (hint) console.warn(chalk.gray(`  ${hint}`));
     return { effective: tierCap, clamped: true, tierCap, tier: normalizedTier };
+  }
+
+  // Saved-settings value BELOW the plan's ceiling: honor it (it is the user's
+  // saved preference) but say so. The silent case burned real customers: the
+  // first-run wizard used to persist Open's 50K for freshly activated paying
+  // users, who then scanned at half their paid context on every run with no
+  // indication anything was off (Audit 7, finding 1.3). CLI values below the
+  // cap stay silent: --max-context is a deliberate per-run choice.
+  if (source === 'config' && userRequested < tierCap) {
+    console.warn(chalk.yellow(
+      `${SYM.warn} Your saved context limit (${userRequested.toLocaleString()} tokens) is below your plan's cap (${tierCap.toLocaleString()}). Run \`ghost --reconfigure\` to update it.`
+    ));
   }
 
   return { effective: userRequested, clamped: false, tierCap, tier: normalizedTier };

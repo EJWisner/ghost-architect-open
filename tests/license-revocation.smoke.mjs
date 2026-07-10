@@ -165,6 +165,43 @@ const otherVerdict = await checkRevocation('LICOTHER');
 check("different licenseId does not inherit revoked -> 'unknown'", () =>
   assert.strictEqual(otherVerdict, 'unknown'));
 
+// ── Forced re-probe (the support path for resubscribes) ────────────────────
+// GHOST_LICENSE_VERIFY_FORCE=1 must be able to clear a sticky revoked verdict
+// with a FRESH non-revoked worker answer (the customer resubscribed and the
+// worker flipped their record back), but must NEVER fail open: a forced probe
+// that learns nothing keeps the sticky verdict.
+console.log('\n── Forced re-probe ──');
+
+process.env.GHOST_LICENSE_VERIFY_FORCE = '1';
+
+mode = 'down';
+const forcedOfflineVerdict = await checkRevocation('LICREVOKED');
+check("force + worker down -> still 'revoked' (force never fails open)", () =>
+  assert.strictEqual(forcedOfflineVerdict, 'revoked'));
+
+mode = 'garbage';
+const forcedGarbageVerdict = await checkRevocation('LICREVOKED');
+check("force + unparseable body -> still 'revoked'", () =>
+  assert.strictEqual(forcedGarbageVerdict, 'revoked'));
+
+mode = 'activated';
+const forcedResubVerdict = await checkRevocation('LICREVOKED');
+check("force + fresh 'activated' verdict -> 'active' (resubscribe takes effect)", () =>
+  assert.strictEqual(forcedResubVerdict, 'active'));
+check('forced non-revoked verdict overwrites the sticky cache', () => {
+  const c = getRevocationCache();
+  assert.strictEqual(c?.status, 'activated');
+});
+
+delete process.env.GHOST_LICENSE_VERIFY_FORCE;
+
+// Sticky flag is gone: a later offline run with a fresh cache resolves from
+// the cache, not the network.
+mode = 'down';
+const postResubOffline = await checkRevocation('LICREVOKED');
+check("after forced resubscribe, offline run -> 'active' (fresh cache)", () =>
+  assert.strictEqual(postResubOffline, 'active'));
+
 // ── Re-activation clears the cache ─────────────────────────────────────────
 console.log('\n── Re-activation ──');
 

@@ -446,10 +446,27 @@ Respond with JSON only:
     const clean  = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(clean);
 
+    // Validate the verdict against the enum. verifyConflicts partitions with
+    // strict === against the four Verdict values, so an off-enum string the
+    // model invented ("LIKELY_CONFLICT", "TRUE_POSITIVE", lowercase variants)
+    // used to land in NO bucket: counted in stats.total, absent from every
+    // report section, gone without a trace (Audit 7, finding 3.7). Normalize
+    // case, then map anything unrecognized to INSUFFICIENT (surfaced with a
+    // caveat, never silently dropped).
+    const normalizedVerdict = typeof parsed.verdict === 'string'
+      ? parsed.verdict.trim().toUpperCase()
+      : '';
+    const verdict = Object.prototype.hasOwnProperty.call(Verdict, normalizedVerdict)
+      ? Verdict[normalizedVerdict]
+      : Verdict.INSUFFICIENT;
+
     return {
       ...candidate,
-      verdict:    parsed.verdict    || Verdict.INSUFFICIENT,
-      confidence: parsed.confidence || 50,
+      verdict,
+      // Number.isFinite, not ||: a legitimate confidence of 0 is the model's
+      // least-confident possible answer and must not be rewritten as 50 (same
+      // bug class fixed in verifyOne in v10.0.17).
+      confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 50,
       evidence:   parsed.evidence   || '',
       method:     'quick',
     };

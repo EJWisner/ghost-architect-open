@@ -14,6 +14,7 @@ import { redactContent, showRedactionSummary } from '../redactor.js';
 import { isBackKeyword } from '../cli/prompt-helpers.js';
 import { expandTilde } from '../utils/paths.js';
 import { CODE_EXTENSIONS } from '../constants/code-extensions.js';
+import { SYM } from '../cli/symbols.js';
 
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
@@ -170,6 +171,25 @@ const IGNORED_EXTENSIONS = new Set([
 // binary asset type. Shared by all three loader paths (directory, ZIP, GitHub).
 // path.basename handles the forward-slash paths used by ZIP entryName and GitHub
 // tree paths on every platform.
+// Dot-path contract, shared by the ZIP and GitHub loaders (Audit 7, finding
+// 3.13). The directory walk's glob runs WITHOUT dot:true, so dotfiles and
+// dot-directories under the scan root are never loaded there (.github/,
+// .husky/, .circleci/ would token-bill CI config on every scan — see the
+// comment above the glob in _loadFromDirPath), with one targeted exception:
+// .env.example, which carries reviewable config-shape signal and gets its own
+// dot-glob. ZIP archives and GitHub trees enumerate dot paths, so without
+// this predicate the same repo produced different file sets, findings, and
+// costs depending on how it was fed to Ghost. One contract, three inputs:
+// dotted segments are excluded everywhere, .env.example is always allowed.
+// (Scanning a dotted directory DIRECTLY, e.g. pointing Ghost at .git/hooks,
+// still works on the directory path: the dotted segment is in the scan root
+// there, not in the relative path this predicate sees.)
+function isDotExcluded(relPath) {
+  const segments = String(relPath || '').split('/').filter(Boolean);
+  return segments.some((seg, i) =>
+    seg.startsWith('.') && !(i === segments.length - 1 && seg === '.env.example'));
+}
+
 export function isScannablePath(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const base = path.basename(filePath);
@@ -259,7 +279,7 @@ async function _loadFromDirPath(dirPath, options = {}) {
   });
   const defaultExcluded = beforeDefaults - codeFiles.length;
   if (defaultExcluded > 0) {
-    console.log(chalk.gray(`  ℹ  Default excludes: skipped ${defaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+    console.log(chalk.gray(`  ${SYM.info}  Default excludes: skipped ${defaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
   }
 
   const patterns = resolveExcludePatterns(SCAN_OPTIONS.excludePresets, SCAN_OPTIONS.excludePatterns);
@@ -267,7 +287,7 @@ async function _loadFromDirPath(dirPath, options = {}) {
     const { kept, excluded } = filterPaths(codeFiles, dirPath, patterns);
     codeFiles = kept;
     if (excluded > 0) {
-      console.log(chalk.gray(`  ℹ  Exclusions: skipped ${excluded} file(s) matching ${patterns.length} pattern(s)`));
+      console.log(chalk.gray(`  ${SYM.info}  Exclusions: skipped ${excluded} file(s) matching ${patterns.length} pattern(s)`));
     }
   }
 
@@ -381,6 +401,8 @@ export async function loadFromZipPath(zipPath) {
       if (ignored) break;
     }
     if (ignored) { zipDefaultExcluded++; continue; }
+    // Dot-path parity with the directory walk (see isDotExcluded).
+    if (isDotExcluded(entry.entryName)) { zipDefaultExcluded++; continue; }
     const filename = path.basename(entry.entryName);
     if (IGNORED_FILES.includes(filename)) { zipDefaultExcluded++; continue; }
 
@@ -393,7 +415,15 @@ export async function loadFromZipPath(zipPath) {
       const content = entry.getData().toString('utf8');
       const estTokens = Math.ceil(content.length / 4);
       if (estTokens > MAX_FILE_TOKENS) {
-        console.log(chalk.gray(`  ⚠ Skipped ${filename} — too large (${Math.round(estTokens/1000)}k tokens)`));
+        console.log(chalk.gray(`  ${SYM.warn} Skipped ${filename}: too large (${Math.round(estTokens/1000)}k tokens)`));
+        continue;
+      }
+      // Same minified-bundle filter the directory walk applies. Without it, a
+      // ZIP scan of the same repo loaded jquery.min.js and friends straight
+      // into paid context, so cost and noise differed by input method
+      // (Audit 7, finding 3.12).
+      if (isMinified(entry.entryName, content)) {
+        console.log(chalk.gray(`  ${SYM.warn} Skipped ${filename}: minified/bundled file`));
         continue;
       }
       fileMap[entry.entryName] = content;
@@ -402,10 +432,10 @@ export async function loadFromZipPath(zipPath) {
   }
 
   if (zipDefaultExcluded > 0) {
-    console.log(chalk.gray(`  ℹ  Default excludes: skipped ${zipDefaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+    console.log(chalk.gray(`  ${SYM.info}  Default excludes: skipped ${zipDefaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
   }
   if (zipExcludedCount > 0) {
-    console.log(chalk.gray(`  ℹ  Exclusions: skipped ${zipExcludedCount} file(s) inside ZIP`));
+    console.log(chalk.gray(`  ${SYM.info}  Exclusions: skipped ${zipExcludedCount} file(s) inside ZIP`));
   }
 
   spinner.succeed(`Extracted ${count} code files from ZIP`);
@@ -531,7 +561,7 @@ async function loadFromGitHub() {
       // Public repos work without auth — don't let a dead token block access to them.
       if (err.status === 401 && githubToken) {
         spinner.stop();
-        console.log(chalk.yellow('  ⚠  Configured GitHub token was rejected — retrying anonymously for public repo access...'));
+        console.log(chalk.yellow(`  ${SYM.warn}  Configured GitHub token was rejected. Retrying anonymously for public repo access...`));
         spinner.start(`Fetching ${owner}/${repo}...`);
         ({ octokit, repoData } = await tryFetch(null));
       } else {
@@ -567,6 +597,8 @@ async function loadFromGitHub() {
       if (!item || typeof item !== 'object' || typeof item.path !== 'string') return false;
       if (item.type !== 'blob') return false;
       if (!isScannablePath(item.path)) return false;
+      // Dot-path parity with the directory walk (see isDotExcluded).
+      if (isDotExcluded(item.path)) { ghDefaultExcluded++; return false; }
       // Apply default IGNORED_DIRS (handles single-segment + multi-segment like 'pub/static').
       const segments = item.path.split('/');
       for (const d of IGNORED_DIRS) {
@@ -591,10 +623,10 @@ async function loadFromGitHub() {
     });
 
     if (ghDefaultExcluded > 0) {
-      console.log(chalk.gray(`  ℹ  Default excludes: skipped ${ghDefaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
+      console.log(chalk.gray(`  ${SYM.info}  Default excludes: skipped ${ghDefaultExcluded} file(s) (node_modules, vendor, build artifacts, lock files, etc.)`));
     }
     if (ghExcludedCount > 0) {
-      console.log(chalk.gray(`  ℹ  Exclusions: skipped ${ghExcludedCount} file(s) from remote tree`));
+      console.log(chalk.gray(`  ${SYM.info}  Exclusions: skipped ${ghExcludedCount} file(s) from remote tree`));
     }
 
     spinner.stop();
@@ -637,7 +669,7 @@ async function loadFromGitHub() {
     let fetchCap = DEFAULT_FETCH_CAP;
     if (filteredFiles.length > DEFAULT_FETCH_CAP) {
       console.log('');
-      console.log(chalk.yellow.bold(`  ⚠  Large repo: ${filteredFiles.length} code files in your selected folders.`));
+      console.log(chalk.yellow.bold(`  ${SYM.warn}  Large repo: ${filteredFiles.length} code files in your selected folders.`));
       console.log(chalk.gray(`     Default fetch cap is ${DEFAULT_FETCH_CAP} files. Fetching all ${filteredFiles.length} will`));
       console.log(chalk.gray(`     take longer and use more GitHub API quota.`));
       console.log(chalk.gray(`     You’ll see an accurate cost estimate inside the mode, before you run`));
@@ -671,7 +703,7 @@ async function loadFromGitHub() {
       // fetch its content. Skip it rather than passing undefined to getBlob
       // (which would otherwise produce a confusing 404/validation error).
       if (typeof file.sha !== 'string') {
-        console.log(chalk.gray(`  ⚠ Skipped ${file.path} — tree entry missing a blob sha`));
+        console.log(chalk.gray(`  ${SYM.warn} Skipped ${file.path}: tree entry missing a blob sha`));
         continue;
       }
       // Inner retry loop: a rate-limited file is retried after a wait; any
@@ -685,7 +717,11 @@ async function loadFromGitHub() {
             const content = Buffer.from(data.content, 'base64').toString('utf8');
             const estTokens = Math.ceil(content.length / 4);
             if (estTokens > MAX_FILE_TOKENS) {
-              console.log(chalk.gray(`  ⚠ Skipped ${file.path} — too large (${Math.round(estTokens/1000)}k tokens)`));
+              console.log(chalk.gray(`  ${SYM.warn} Skipped ${file.path}: too large (${Math.round(estTokens/1000)}k tokens)`));
+            } else if (isMinified(file.path, content)) {
+              // Same minified-bundle filter as the directory walk and ZIP path
+              // (Audit 7, finding 3.12).
+              console.log(chalk.gray(`  ${SYM.warn} Skipped ${file.path}: minified/bundled file`));
             } else {
               fileMap[file.path] = content;
               fetched++;
@@ -694,7 +730,7 @@ async function loadFromGitHub() {
           break; // fetched (or intentionally skipped) — move to next file
         } catch (err) {
           if (!isRateLimitError(err)) {
-            console.log(chalk.gray(`  ⚠ Skipped ${file.path} — fetch error: ${err.message}`));
+            console.log(chalk.gray(`  ${SYM.warn} Skipped ${file.path}, fetch error: ${err.message}`));
             break;
           }
 
@@ -731,9 +767,9 @@ async function loadFromGitHub() {
 
     spinner.succeed(`Processed ${fetched} files from ${owner}/${repo}`);
     if (stoppedEarly) {
-      console.log(chalk.yellow(`  ⚠ Stopped early at the rate limit — analyzed ${fetched} of ${total} selected file(s).`));
+      console.log(chalk.yellow(`  ${SYM.warn} Stopped early at the rate limit. Analyzed ${fetched} of ${total} selected file(s).`));
     } else if (filteredFiles.length > fetchCap) {
-      console.log(chalk.yellow(`  ⚠ Large repo — analyzed first ${fetchCap} code files (${filteredFiles.length} total)`));
+      console.log(chalk.yellow(`  ${SYM.warn} Large repo: analyzed first ${fetchCap} code files (${filteredFiles.length} total)`));
     }
 
     // Attach the parsed source repo identity so callers can identify the source.
@@ -753,13 +789,13 @@ async function loadFromGitHub() {
     const isRateLimit = isRateLimitError(err) || msg.includes('rate') || msg.includes('429');
     if (isRateLimit) {
       console.log('');
-      console.log(chalk.yellow('  ⚠  GitHub API rate limit reached.'));
+      console.log(chalk.yellow(`  ${SYM.warn}  GitHub API rate limit reached.`));
       console.log(chalk.gray('  Add a GitHub token in Reconfigure to increase your limit from 60 to 5,000 requests/hour.'));
       console.log(chalk.gray('  Alternative: Download the repo as a ZIP and use "ZIP file" instead.'));
       console.log('');
     } else if (isAuthOrNotFound) {
       console.log('');
-      console.log(chalk.yellow('  ⚠  This repository is private or requires authentication.'));
+      console.log(chalk.yellow(`  ${SYM.warn}  This repository is private or requires authentication.`));
       console.log('');
       console.log(chalk.white('  To access private repositories:'));
       console.log(chalk.gray('  1. Go to github.com/settings/tokens'));
@@ -824,7 +860,7 @@ async function readFiles(filePaths, basePath) {
 
   if (skipped > 0 || truncated > 0) {
     console.log(chalk.gray(
-      `  ℹ  Loader: skipped ${skipped} minified/bundled files` +
+      `  ${SYM.info}  Loader: skipped ${skipped} minified/bundled files` +
       (truncated > 0 ? `, truncated ${truncated} oversized files` : '')
     ));
   }
@@ -949,7 +985,7 @@ function buildContext(fileMap) {
 
     // Structured, actionable per-rule error so users can debug without diving
     // into the debug logs: which rule, on which file, and why.
-    console.log(chalk.red('\n  ⚠  Redaction failed on one or more rules.'));
+    console.log(chalk.red(`\n  ${SYM.warn}  Redaction failed on one or more rules.`));
     for (const f of allFailedRules) {
       const where = f.file ? ` on ${f.file}` : '';
       console.log(chalk.red(`      • Redaction rule '${f.rule}' failed${where}: ${f.error}`));
@@ -962,7 +998,7 @@ function buildContext(fileMap) {
       // Pro+ escape hatch: bypass the fail-closed abort and continue with the
       // best-effort redacted content. Warn prominently — secrets in the files
       // above may reach the API unredacted.
-      console.log(chalk.yellow.bold('\n  ⚠  --skip-redaction is set: continuing WITHOUT complete redaction.'));
+      console.log(chalk.yellow.bold(`\n  ${SYM.warn}  --skip-redaction is set: continuing WITHOUT complete redaction.`));
       console.log(chalk.yellow.bold('     SECRETS MAY BE EXPOSED to the API in the files listed above.'));
       console.log(chalk.yellow('     Proceed only if you trust this codebase. Fix the failing rule(s) to restore full protection.\n'));
       // Fall through — buildContext continues using the best-effort redactedFileMap.
@@ -1022,12 +1058,12 @@ function buildContext(fileMap) {
   const capLabel = clamped
     ? `${maxTokens.toLocaleString()} tokens (clamped from ${userRequested.toLocaleString()} by ${tier} tier)`
     : `${maxTokens.toLocaleString()} tokens (${tier} tier, cap ${tierCap.toLocaleString()})`;
-  console.log(chalk.gray(`  ℹ  Context cap: ${capLabel}`));
+  console.log(chalk.gray(`  ${SYM.info}  Context cap: ${capLabel}`));
 
   if (loadedFiles < totalFiles) {
-    console.log(chalk.yellow(`  ⚠ Context limit: processed ${loadedFiles} of ${totalFiles} files (~${approxTokens.toLocaleString()} tokens)`));
+    console.log(chalk.yellow(`  ${SYM.warn} Context limit: processed ${loadedFiles} of ${totalFiles} files (~${approxTokens.toLocaleString()} tokens)`));
   } else {
-    console.log(chalk.green(`  ✓ Processed ${loadedFiles} files (~${approxTokens.toLocaleString()} tokens)`));
+    console.log(chalk.green(`  ${SYM.check} Processed ${loadedFiles} files (~${approxTokens.toLocaleString()} tokens)`));
   }
 
   return { context, fileIndex, totalFiles, loadedFiles, fileMap: activeFileMap };

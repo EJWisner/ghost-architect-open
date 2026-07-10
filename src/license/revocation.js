@@ -66,28 +66,54 @@ function cacheIsFresh(entry, licenseId) {
  * @param {object} opts       — { force?: boolean } skip the cache TTL
  * @returns {Promise<'revoked'|'active'|'unknown'>}
  */
+/**
+ * Cache-only sticky check: has this license already been seen revoked?
+ * No TTL, no network, no env-var bypass — the synchronous companion to
+ * checkRevocation for call sites that must stay offline-cheap (the validator's
+ * grace/expired branches consult it so a revoked license does not keep full
+ * paid access through its grace window, Audit 7 finding 3.16).
+ */
+export function hasCachedRevokedVerdict(licenseId) {
+  if (!licenseId) return false;
+  const cached = getRevocationCache();
+  return !!(cached && cached.license_id === licenseId && cached.status === 'revoked');
+}
+
 export async function checkRevocation(licenseId, opts = {}) {
   if (!licenseId) return 'unknown';
 
   const cached = getRevocationCache();
 
+  // GHOST_LICENSE_VERIFY_FORCE=1 bypasses the TTL AND the sticky-revoked
+  // short-circuit, re-probing the worker every run. Exists for two reasons:
+  // verifying a revocation end-to-end without waiting out the 24h cache, and
+  // letting support tell a customer "run this once" when a resubscribe needs
+  // to take effect immediately. That second reason is precisely the sticky
+  // case, so force MUST be allowed to skip it: a fresh worker verdict
+  // overwrites the cache below, clearing the sticky flag on a resubscribe.
+  // Force never fails open, though: every did-not-learn-anything path in this
+  // function falls back to the cached revoked verdict, so pulling the
+  // ethernet cable with force set does not resurrect a revoked license.
+  const force = opts.force || process.env.GHOST_LICENSE_VERIFY_FORCE === '1';
+  const stickyRevoked = !!(cached && cached.license_id === licenseId && cached.status === 'revoked');
+
   // Sticky revocation. Checked before the TTL and before the network: once
-  // revoked, always revoked, until a fresh activation rewrites the record.
-  if (cached && cached.license_id === licenseId && cached.status === 'revoked') {
+  // revoked, always revoked, until a fresh activation rewrites the record or
+  // a forced probe brings back a fresh non-revoked worker verdict.
+  if (stickyRevoked && !force) {
     return 'revoked';
   }
 
-  // GHOST_LICENSE_VERIFY_FORCE=1 bypasses the TTL and re-probes every run.
-  // Exists for two reasons: verifying a revocation end-to-end without waiting
-  // out the 24h cache, and letting support tell a customer "run this once" when
-  // a resubscribe needs to take effect immediately.
-  const force = opts.force || process.env.GHOST_LICENSE_VERIFY_FORCE === '1';
   if (!force && cacheIsFresh(cached, licenseId)) {
     return cached.status === 'revoked' ? 'revoked' : 'active';
   }
 
-  // Explicit opt-out for offline/air-gapped installs and for tests.
-  if (process.env.GHOST_NO_LICENSE_VERIFY === '1') return 'unknown';
+  // Explicit opt-out for offline/air-gapped installs and for tests. A cached
+  // revoked verdict still blocks: the opt-out skips the probe, it does not
+  // grant amnesty.
+  if (process.env.GHOST_NO_LICENSE_VERIFY === '1') {
+    return stickyRevoked ? 'revoked' : 'unknown';
+  }
 
   let status;
   try {
@@ -108,17 +134,22 @@ export async function checkRevocation(licenseId, opts = {}) {
     // Any non-200 is "we did not learn anything". Notably a 404
     // (license_not_found) must NOT be read as revoked: an admin-issued key that
     // was never written to KV, or a KV read hiccup, would lock out a paying
-    // customer. Only an explicit revoked status blocks.
-    if (!res.ok) return 'unknown';
+    // customer. Only an explicit revoked status blocks. When the probe was
+    // FORCED past a sticky revoked verdict, "learned nothing" keeps the sticky
+    // verdict; only an explicit non-revoked worker answer clears it.
+    if (!res.ok) return stickyRevoked ? 'revoked' : 'unknown';
 
     const body = await res.json();
-    if (!body || body.ok !== true || typeof body.status !== 'string') return 'unknown';
+    if (!body || body.ok !== true || typeof body.status !== 'string') {
+      return stickyRevoked ? 'revoked' : 'unknown';
+    }
     status = body.status;
   } catch {
     // Network down, DNS failure, timeout, proxy, TLS error, malformed JSON.
-    // Fail open. The sticky-revoked check above already ran, so a previously
-    // revoked license does not get resurrected by pulling the ethernet cable.
-    return 'unknown';
+    // Fail open for the never-revoked case; fall back to the sticky verdict
+    // otherwise, so a previously revoked license does not get resurrected by
+    // pulling the ethernet cable (with or without force).
+    return stickyRevoked ? 'revoked' : 'unknown';
   }
 
   // Persist whatever the worker told us, including 'activated'/'pending', so

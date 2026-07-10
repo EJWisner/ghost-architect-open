@@ -171,7 +171,7 @@ export async function assertEnterprise(workspace) {
     'Ghost Enterprise requires a dedicated enterprise sync repo.\n' +
     '  None of your configured workspaces are enterprise repos.\n\n' +
     '  To upgrade: contact support@ghostarchitect.dev\n' +
-    '  Ghost Enterprise starts at $1,200/mo'
+    `  Ghost Enterprise starts at $${PRICING.ENTERPRISE.monthly.toLocaleString()}/mo`
   );
 }
 
@@ -510,6 +510,73 @@ function clearLocalAuditFailures() {
   }
 }
 
+// Defensive number coercion for audit-event costs. Some modes historically
+// wrote cost as a $-prefixed string like "$0.0014" instead of a raw number.
+// Strip non-numeric characters and parse; parse failure means zero, because
+// bad data must never crash the aggregation. Single source of truth for the
+// coercion used by the totals accumulator, the migration seed, and the
+// window-sum fallback in getUsageReport, so the three can never disagree.
+function coerceEventCost(cost) {
+  return typeof cost === 'number'
+    ? cost
+    : (parseFloat(String(cost || 0).replace(/[^\d.-]/g, '')) || 0);
+}
+
+// Sum the scan events in an audit window into a totals shape. Used to seed the
+// monotonic accumulator the first time appendAuditEvent touches a pre-totals
+// (pre-v10.0.18-migration) audit file. Mirrors getUsageReport's filter: only
+// 'scan' events contribute.
+function sumScanEvents(events) {
+  const totals = { scans: 0, cost: 0, findings: 0 };
+  for (const e of events) {
+    if (e?.type !== 'scan') continue;
+    totals.scans    += 1;
+    totals.cost     += coerceEventCost(e.cost);
+    totals.findings += typeof e.findingCount === 'number' ? e.findingCount : 0;
+  }
+  return totals;
+}
+
+/**
+ * Pure state transition for org/audit.json: append one stamped event and
+ * advance the monotonic totals accumulator. Exported for direct unit testing
+ * (tests/enterprise-totals-migration.smoke.mjs); appendAuditEvent wires it
+ * into the CAS retry loop.
+ *
+ * The `events` array is capped to the last 1000 entries, which means an
+ * aggregate computed by iterating it silently understates lifetime usage once
+ * the cap is exceeded. The `totals` accumulator survives truncation. Only
+ * 'scan' events contribute, matching getUsageReport's filter.
+ *
+ * MIGRATION (first write against a pre-totals audit file): seed the
+ * accumulator by summing the scan events already in the window instead of
+ * starting from zero. Without this, the first post-upgrade scan writes
+ * totals = {scans: 1} while 800 real events sit in the window, and
+ * getUsageReport (which PREFERS persisted totals) collapses the org's
+ * lifetime numbers to one scan. Window contents are a floor, not the true
+ * lifetime figure, but they are strictly better than zero and identical to
+ * what the report showed before totals existed.
+ */
+export function applyAuditEvent(c, newEvent) {
+  const totals = c?.totals
+    ? {
+        scans:    c.totals.scans    || 0,
+        cost:     c.totals.cost     || 0,
+        findings: c.totals.findings || 0,
+      }
+    : sumScanEvents(c?.events || []);
+  if (newEvent.type === 'scan') {
+    totals.scans    += 1;
+    totals.cost     += coerceEventCost(newEvent.cost);
+    totals.findings += typeof newEvent.findingCount === 'number' ? newEvent.findingCount : 0;
+  }
+  return {
+    ...c,
+    events: [...(c?.events || []), newEvent].slice(-1000),
+    totals,
+  };
+}
+
 /**
  * Append an audit event.
  * Called automatically after every scan push.
@@ -521,40 +588,11 @@ export async function appendAuditEvent(event, workspace) {
     const octokit = getOctokit(entry);
     const { owner, repo } = parseRepo(entry.repo);
     await mutateOrgFile(octokit, owner, repo, 'org/audit.json',
-      (c) => {
-        const newEvent = {
-          ...event,
-          seatId: getSeatId(),
-          timestamp: new Date().toISOString(),
-        };
-        // The `events` array is capped to the last 1000 entries below, which
-        // means an aggregate computed by iterating it silently understates
-        // lifetime usage once the cap is exceeded. Maintain a monotonic
-        // `totals` accumulator alongside the capped window so billing/
-        // compliance numbers survive truncation. Only 'scan' events contribute,
-        // matching getUsageReport's filter. Coerce cost the same way (some
-        // legacy events wrote it as a "$0.0014" string).
-        const prev = c?.totals || { scans: 0, cost: 0, findings: 0 };
-        const totals = {
-          scans:    prev.scans    || 0,
-          cost:     prev.cost     || 0,
-          findings: prev.findings || 0,
-        };
-        if (newEvent.type === 'scan') {
-          const cost = typeof newEvent.cost === 'number'
-            ? newEvent.cost
-            : (parseFloat(String(newEvent.cost || 0).replace(/[^\d.-]/g, '')) || 0);
-          const findings = typeof newEvent.findingCount === 'number' ? newEvent.findingCount : 0;
-          totals.scans    += 1;
-          totals.cost     += cost;
-          totals.findings += findings;
-        }
-        return {
-          ...c,
-          events: [...(c?.events || []), newEvent].slice(-1000),
-          totals,
-        };
-      },
+      (c) => applyAuditEvent(c, {
+        ...event,
+        seatId: getSeatId(),
+        timestamp: new Date().toISOString(),
+      }),
       'enterprise: audit log');
 
     // Audit event landed — reset the consecutive-failure streak and clear the
@@ -688,13 +726,8 @@ export async function getUsageReport(workspace) {
   for (const e of events) {
     if (e.type !== 'scan') continue;
     totalScans++;
-    // Defensive number coercion. Some modes historically wrote cost as a
-    // $-prefixed string like "$0.0014" instead of a raw number. Strip any
-    // leading non-numeric characters and parse. If parsing fails, treat
-    // as zero — never let bad data crash the aggregation.
-    const eventCost = typeof e.cost === 'number'
-      ? e.cost
-      : (parseFloat(String(e.cost || 0).replace(/[^\d.-]/g, '')) || 0);
+    // Coercion shared with the totals accumulator; see coerceEventCost above.
+    const eventCost = coerceEventCost(e.cost);
     const eventFindings = typeof e.findingCount === 'number' ? e.findingCount : 0;
     totalCost += eventCost;
     totalFindings += eventFindings;

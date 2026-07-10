@@ -150,44 +150,53 @@ Synthesize these into ONE unified Blast Radius report with:
 
 ${combinedResults}`;
 
-  // Submit synthesis as a batch request — no client-side timeout risk.
-  // Batch API processes on Anthropic's side; we poll until complete.
-  const batch = await anthropic.messages.batches.create({
-    requests: [{
-      custom_id: 'blast-synthesis',
-      params: {
-        model:      synthesisModel,
-        max_tokens: 8096,
-        // @ghost-verified: getSamplingParams returns only {} or {temperature} -- no extra fields that batch API would reject
-        ...getSamplingParams(0, synthesisModel),
-        system:     systemPrompt,
-        messages:   [{ role: 'user', content: userMessage }],
-      },
-    }],
-  });
-
-  // Poll until the batch completes (30s intervals, 20-minute ceiling).
-  let batchResult = null;
-  for (let i = 0; i < 40; i++) {
-    await new Promise(r => setTimeout(r, 30000));
-    const status = await anthropic.messages.batches.retrieve(batch.id);
-    if (status.processing_status === 'ended') {
-      batchResult = status;
-      break;
-    }
-  }
   // Extract the synthesis output from the batch result. The Batch API can settle
   // a request as succeeded, errored, canceled, or expired. We must handle every
   // non-succeeded state explicitly: falling through would return '' and silently
   // discard the paid per-pass reports we already have in combinedResults.
   let synthesisOutput = '';
   try {
-    // The 20-minute poll timeout is raised from INSIDE this try, deliberately.
-    // It used to throw from above the block, which routed it straight past the
-    // salvage catch below. Every other non-success synthesis state preserved the
-    // paid per-pass reports; the timeout, the single most likely failure mode on
-    // a large repo, was the one path that threw them away.
+    // Submission AND polling live INSIDE this try, deliberately. The v10.0.17
+    // fix moved the 20-minute timeout throw in here so it hit the salvage
+    // catch, but left batches.create and up to 40 batches.retrieve calls
+    // above the block: one transient ECONNRESET or 5xx from any of those 41
+    // network calls still threw past the salvage and discarded every paid
+    // per-pass report (Audit 7, finding 3.5). Now every failure mode of the
+    // synthesis stage, transport included, falls back to the unmerged
+    // per-pass reports.
+
+    // Submit synthesis as a batch request — no client-side timeout risk.
+    // Batch API processes on Anthropic's side; we poll until complete.
+    const batch = await anthropic.messages.batches.create({
+      requests: [{
+        custom_id: 'blast-synthesis',
+        params: {
+          model:      synthesisModel,
+          max_tokens: 8096,
+          // @ghost-verified: getSamplingParams returns only {} or {temperature} -- no extra fields that batch API would reject
+          ...getSamplingParams(0, synthesisModel),
+          system:     systemPrompt,
+          messages:   [{ role: 'user', content: userMessage }],
+        },
+      }],
+    });
+
+    // Poll until the batch completes (30s intervals, 20-minute ceiling).
+    let batchResult = null;
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 30000));
+      const status = await anthropic.messages.batches.retrieve(batch.id);
+      if (status.processing_status === 'ended') {
+        batchResult = status;
+        break;
+      }
+    }
     if (!batchResult) {
+      // Best-effort cancel: we are abandoning this batch, and if it later
+      // completes server-side the customer is billed ~8K output tokens that no
+      // tracker ever records (Audit 7, finding 3.20). Cancellation failure is
+      // irrelevant to the salvage path, so swallow it.
+      try { await anthropic.messages.batches.cancel(batch.id); } catch { /* best-effort */ }
       throw new Error('Blast synthesis batch timed out after 20 minutes.');
     }
     for await (const item of await anthropic.messages.batches.results(batch.id)) {
