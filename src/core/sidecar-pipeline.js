@@ -62,7 +62,13 @@ export function dedupeFindingsByTitle(findings) {
     const key = normalizeTitleForDedupe(f.title);
     if (!key) continue;
     const isDupe = seen.some((s) => {
-      if (s.key === key) return true;
+      // Exact-title matches require file overlap too, same as containment:
+      // identical generic titles ("missing error handling") in DIFFERENT
+      // modules are distinct findings, and collapsing them silently shrank
+      // the sidecar and the disclosure count (Audit 9, finding 3.9). The
+      // both-empty case still collapses via filesOverlap's carve-out, which
+      // buildVerifiedSidecar's narrator-polish dedupe relies on.
+      if (s.key === key) return filesOverlap(s.files, f.files);
       const shorter = s.key.length <= key.length ? s.key : key;
       const longer  = s.key.length <= key.length ? key : s.key;
       return shorter.length > 10 && longer.includes(shorter) && filesOverlap(s.files, f.files);

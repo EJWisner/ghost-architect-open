@@ -221,13 +221,24 @@ export async function runBlastMode(codebaseContext, options = {}) {
   const model = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   showCostEstimate(codebaseContext, 'blast', model);
 
+  // Declared here, ABOVE the planner preview, so every billed call in this
+  // mode lands in one tracker: the planner preview is a real API call that
+  // was never recorded, understating the COST BREAKDOWN and meta.cost on
+  // every interactive blast run (Audit 9, finding 3.11). Also outside the
+  // scan try below so the catch can report what a failed run already billed
+  // (Audit 7, finding 3.10).
+  const blastTracker = new SessionCostTracker();
+
   // ── Agent Planner ─────────────────────────────────────────────────────────
   // The planner takes a focusAreas string. For multi-target we pass a
   // joined summary; for single target we pass it verbatim.
   const focusAreas = Array.isArray(target) ? target.join(', ') : target;
   try {
     const reconSpinner = ora({ text: chalk.gray('Ghost is sizing up your codebase...'), color: 'cyan' }).start();
-    const reconPlan    = await runRecon(codebaseContext.fileMap || {}, 'blast', { focusAreas });
+    const reconPlan    = await runRecon(codebaseContext.fileMap || {}, 'blast', {
+      focusAreas,
+      onUsage: (i, o, m) => blastTracker.record('blast', i, o, m, 'plan'),
+    });
     reconSpinner.stop();
     const display = formatPlanForDisplay(reconPlan);
 
@@ -320,11 +331,6 @@ export async function runBlastMode(codebaseContext, options = {}) {
   }).start();
 
   let buffer = '';
-
-  // Declared OUTSIDE the try so the catch below can report what the failed
-  // run already billed (Audit 7, finding 3.10). A multi-stage blast dying
-  // midway is real money; POI's failure path reports it, this one must too.
-  const blastTracker = new SessionCostTracker();
 
   try {
     // Streaming-to-stdout was causing the report to scroll off-screen

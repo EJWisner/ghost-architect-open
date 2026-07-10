@@ -22,6 +22,7 @@ import { mergeRates } from '../profile/index.js';
 import { getTierCap } from '../loader/tierCaps.js';
 import { generateFindingId } from '../utils/finding-parser.js';
 import { SessionCostTracker } from './estimator.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 
 // Per-pass token budget for conflict detection. Scales with tier cap to leave
 // uniform 20% headroom across all tiers. Setting this equal to or near the
@@ -46,7 +47,7 @@ async function callClaude(prompt, system, maxTokens = 8096, onChunk = null, onUs
   const anthropic = getClient();
   let result = '';
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: maxTokens, temperature: 0, system,
+    model: getModel(), max_tokens: maxTokens, ...getSamplingParams(0, getModel()), system,
     messages: [{ role: 'user', content: prompt }]
   });
   for await (const chunk of stream) {

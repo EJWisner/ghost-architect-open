@@ -229,12 +229,16 @@ export async function validateLicense({ skipNetworkClock = false, skipRevocation
   // between cancellation and expiry (that run cached the verdict). A customer
   // who cancelled and did NOT run Ghost until after expiry had no cached
   // verdict and coasted through the entire grace window at full paid tier
-  // (Audit 8, finding 3.3). Probe the worker for that window, under
+  // (Audit 8, finding 3.3). Probe the worker from expiry onward, under
   // checkRevocation's existing contract: fail-open on every network fault,
-  // 24h TTL cache, ~3s ceiling. Past hard_stop no probe is needed; the
-  // license blocks either way and the cached verdict already selects the
-  // resubscribe copy.
-  if (!knownRevoked && revocationApplies && nowMs >= expiresMs && nowMs < hardStopMs) {
+  // 24h TTL cache, ~3s ceiling. The probe deliberately has NO hard_stop
+  // upper bound: past hard_stop the license blocks either way, but a
+  // cancelled customer with no cached verdict used to get the hard_stop
+  // copy's "ghost --activate <your key>" hint, which cannot work for a
+  // revoked key, instead of the resubscribe path (Audit 9, finding 2.2).
+  // On any network fault the verdict stays 'unknown' and the hard_stop
+  // behavior is unchanged.
+  if (!knownRevoked && revocationApplies && nowMs >= expiresMs) {
     knownRevoked = (await checkRevocation(payload.lid)) === 'revoked';
   }
   if (knownRevoked && nowMs >= expiresMs) {

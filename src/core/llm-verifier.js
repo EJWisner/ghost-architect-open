@@ -31,6 +31,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveApiKey, getConfig } from '../config.js';
 import { recordUsage } from './usage-tracker.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 
 // Keep source snippets under this size to control cost. Most findings reference
 // a single file; if the file is huge, we truncate with context markers.
@@ -123,7 +124,7 @@ Respond with a single JSON object: { "verdict": "...", "reason": "..." }`;
     const stream = anthropic.messages.stream({
       model: getModel(),
       max_tokens: 300,
-      temperature: 0,
+      ...getSamplingParams(0, getModel()),
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMsg }],
     });

@@ -54,6 +54,7 @@ import { showFriendlyError } from '../src/utils/errors.js';
 // MUST NOT receive this code. Team and Enterprise inherit when those
 // branches sync forward from main.
 import { validateLicense, isBlocking, isWarning } from '../src/license/validator.js';
+import { checkRevocation } from '../src/license/revocation.js';
 import { decodeAndVerifyToken } from '../src/license/token.js';
 import { tryParseKey, looksLikeHumanKey } from '../src/license/format.js';
 import { currentFingerprintHashes } from '../src/license/fingerprint.js';
@@ -192,8 +193,8 @@ function parseArgs(argv) {
     revokeKey: null,
     revokeReason: null,
     cleanCache: false,
+    reconfigure: false,
     skipRedaction: false,
-    watcherCommit: false,
     stream: false,
     batch: false,
     help: false,
@@ -243,7 +244,6 @@ function parseArgs(argv) {
     if (a === '--set-default-profile')          { out.setDefaultProfile = argv[++i] || ''; continue; }
     if (a.startsWith('--set-default-profile=')) { out.setDefaultProfile = a.slice('--set-default-profile='.length); continue; }
     if (a === '--clear-default-profile')        { out.clearDefaultProfile = true; continue; }
-    if (a === '--watcher-commit')                 { out.watcherCommit = true; continue; }
     // Transport selection — skip the streaming-vs-batch menu and force a choice.
     if (a === '--stream')           { out.stream = true; continue; }
     if (a === '--batch')            { out.batch = true; continue; }
@@ -273,6 +273,7 @@ function parseArgs(argv) {
     if (a === '--reason')            { out.revokeReason = argv[++i] || ''; continue; }
     if (a.startsWith('--reason='))   { out.revokeReason = a.slice('--reason='.length); continue; }
     if (a === '--clean-cache')      { out.cleanCache = true; continue; }
+    if (a === '--reconfigure')      { out.reconfigure = true; continue; }
     // Pro+ escape hatch: bypass the fail-closed redaction abort. Honored only
     // on paid tiers by the loader; Open always fails closed regardless.
     if (a === '--skip-redaction')   { out.skipRedaction = true; continue; }
@@ -401,6 +402,9 @@ Session recovery:
                            when the default location is read-only or unsuitable.
 
 Misc:
+  --reconfigure            Open the Reconfigure menu (API key, GitHub token,
+                           license, scan model) without entering the main
+                           interactive menu. Then exit.
   --clean-cache            Delete the profile extraction cache and exit.
   --skip-redaction         Pro+ only. If secret redaction fails on a file, continue
                            the scan instead of aborting. WARNING: secrets in the
@@ -1431,20 +1435,47 @@ async function runExportCiTokenFlow() {
     process.exit(1);
   }
 
-  // Validate before exporting. A revoked or hard-stopped token exported
-  // cleanly here configured a CI runner that printed "license is not valid"
-  // on every run and never scanned, with no hint at export time that the
-  // token was already dead (Audit 8, finding 2.9). All output stays on
-  // stderr so stdout carries either the token or nothing.
-  const validity = await validateLicense({ skipNetworkClock: true });
-  if (isBlocking(validity.state)) {
-    console.error(`This license currently validates as "${validity.state}" and cannot run CI scans.`);
-    if (validity.message) console.error(validity.message);
+  // Validate the STORED token before exporting. A revoked or hard-stopped
+  // token exported cleanly here configured a CI runner that printed "license
+  // is not valid" on every run and never scanned, with no hint at export time
+  // that the token was already dead (Audit 8, finding 2.9).
+  //
+  // validateLicense() is deliberately NOT used here: it resolves its token via
+  // getToken(), which prefers the GHOST_LICENSE_KEY env var, so on a machine
+  // with the env var set it validated a DIFFERENT token than the one this flow
+  // exports (Audit 9, finding 1.2). Decode and check the record token itself.
+  // All output stays on stderr so stdout carries either the token or nothing.
+  let payload;
+  try {
+    ({ payload } = decodeAndVerifyToken(record.token));
+  } catch (err) {
+    console.error(`The stored license token failed verification (${err.message}) and cannot run CI scans.`);
+    console.error('Nothing was exported. Re-activate with ghost --activate <your GA- license key>, then re-run: ghost --export-ci-token');
+    process.exit(1);
+  }
+  const exportNowMs   = Date.now();
+  const exportExpires = Date.parse(payload.expires);
+  const exportHardMs  = Date.parse(payload.hard_stop);
+  if (exportNowMs >= exportHardMs) {
+    console.error(`This license expired on ${payload.expires.slice(0, 10)} and cannot run CI scans.`);
     console.error('Nothing was exported. Renew or re-activate, then re-run: ghost --export-ci-token');
     process.exit(1);
   }
-  if (isWarning(validity.state)) {
-    console.error(`Note: this license currently validates as "${validity.state}". ` +
+  if (payload.lid && payload.tier !== 'trial') {
+    // Fail-open by contract (network faults return 'unknown'), same as every
+    // other revocation consult. A cached or fresh revoked verdict blocks.
+    const verdict = await checkRevocation(payload.lid);
+    if (verdict === 'revoked') {
+      console.error('This license has been revoked, usually because the subscription was cancelled, and cannot run CI scans.');
+      console.error('Nothing was exported. Resubscribe at ghostarchitect.dev/pricing, re-activate, then re-run: ghost --export-ci-token');
+      process.exit(1);
+    }
+  }
+  if (exportNowMs >= exportExpires) {
+    console.error(`Note: this license is past its expiry date (${payload.expires.slice(0, 10)}) and inside its grace window. ` +
+      'CI runs will stop scanning once it fully expires. Renew soon.');
+  } else if (exportExpires - exportNowMs <= 3 * 24 * 60 * 60 * 1000) {
+    console.error(`Note: this license expires on ${payload.expires.slice(0, 10)}. ` +
       'CI runs will stop scanning once it fully expires. Renew soon.');
   }
 
@@ -2553,9 +2584,11 @@ async function main() {
 
   // Contradictory transport flags: resolveTransport checks stream first, so
   // stream wins. Say so instead of silently billing streaming rates to a user
-  // who expected half-price batch (Audit 7, Q9).
+  // who expected half-price batch (Audit 7, Q9). stderr, not stdout: this
+  // runs before the --export-ci-token dispatch, and that flag guarantees
+  // stdout carries only the token (Audit 9, finding 2.6).
   if (cliOpts.stream && cliOpts.batch) {
-    console.log(chalk.yellow('Both --stream and --batch were passed. Running streaming.'));
+    console.error(chalk.yellow('Both --stream and --batch were passed. Running streaming.'));
   }
 
   // --recover-session <label>: force session recovery from the checkpoint sidecar
@@ -2578,16 +2611,29 @@ async function main() {
   // validateLicense({ skipNetworkClock: true }) skips the worldtimeapi roundtrip
   // so documentation flags stay fast. The main-flow validateLicense() later still
   // runs the full clock check; both calls are idempotent (updateLastSeenUtc is a
-  // monotonic ratchet, setActiveLicense is last-write-wins). Blocking states are
-  // NOT enforced here — display surfaces must always work; enforcement happens
-  // at the main-flow gate.
+  // monotonic ratchet, setActiveLicense is last-write-wins). Display surfaces
+  // always work, but a BLOCKING result degrades the session to Open here too:
+  // the profile flag handlers below exit before the main-flow gate ever runs,
+  // so a hard-stopped, tampered, or revoked license kept its paid tier on
+  // --list-profiles / --set-default-profile / --create-profile indefinitely
+  // (Audit 9, finding 3.6). Mirrors refreshSessionAndTier's degrade.
   try {
     // skipRevocationCheck: this runs ahead of --help/--version/profile flags,
-    // which must stay fast and offline-safe. Enforcement happens at the main
-    // flow gate below, which does check revocation.
+    // which must stay fast and offline-safe. The main flow gate below does
+    // check revocation; here only already-cached/offline-detectable blocking
+    // states (hard_stop, tampered, invalid) degrade.
     const earlyLicenseResult = await validateLicense({ skipNetworkClock: true, skipRevocationCheck: true });
-    setActiveLicense(earlyLicenseResult);
-    TIER = getActiveTier() || 'open';
+    if (isBlocking(earlyLicenseResult.state)) {
+      setActiveLicense(null);
+      TIER = 'open';
+      SESSION_DEGRADE_REASON =
+        earlyLicenseResult.state === 'revoked' ? 'revoked' :
+        (earlyLicenseResult.state === 'hard_stop' && earlyLicenseResult.payload?.tier === 'trial') ? 'trial-ended' :
+        null;
+    } else {
+      setActiveLicense(earlyLicenseResult);
+      TIER = getActiveTier() || 'open';
+    }
   } catch (err) {
     // Reaching here means validateLicense() THREW — a transient fault, not the
     // expected "no license" path (that returns { state: 'missing' } cleanly).
@@ -2705,6 +2751,17 @@ async function main() {
     const { removed, bytesFreed } = cleanCache();
     const freedKb = (bytesFreed / 1024).toFixed(1);
     console.log(chalk.green(`\n${SYM.check} Cleared profile cache: ${removed} file(s) removed, ${freedKb} KB freed.\n`));
+    process.exit(0);
+  }
+
+  // --reconfigure routes straight into the same Reconfigure menu the
+  // interactive main menu offers. Recovery copy across the CLI points here
+  // (cap clamping, pending-batch API key advisories), so the flag must exist:
+  // it used to print "Unknown flag: --reconfigure (ignored)" to the exact
+  // customer following printed instructions (Audit 9, finding 2.1).
+  if (cliOpts.reconfigure) {
+    await runSelectiveReconfigure();
+    console.log('');
     process.exit(0);
   }
 
@@ -3629,7 +3686,6 @@ async function main() {
         const { token } = await inquirer.prompt([{
           type: 'password', name: 'token',
           message: chalk.cyan("GitHub Personal Access Token (repo write scope, blank or 'back' to cancel):"),
-          validate: v => (v.trim() === '' || isBackKeyword(v) || v.trim().length > 0) ? true : 'Token is required',
         }]);
         if (token.trim() === '' || isBackKeyword(token)) { console.log(chalk.gray('\nCancelled.\n')); break; }
 

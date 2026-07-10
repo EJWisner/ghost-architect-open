@@ -9,6 +9,9 @@
  * source of truth — this test exercises it directly.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { getSamplingParams, modelRejectsTemperature } from '../src/utils/sampling-params.js';
 
 let failures = 0;
@@ -58,6 +61,46 @@ console.log('Test 3: modelRejectsTemperature predicate');
   check('null → false',                            modelRejectsTemperature(null),                      false);
   check('undefined → false',                       modelRejectsTemperature(undefined),                 false);
   check('empty string → false',                    modelRejectsTemperature(''),                        false);
+}
+console.log('');
+
+// ── Test 4: no bare temperature literal outside sampling-params.js ──────────
+// Audit 9 finding 1.1: seven call sites passed a hardcoded temperature with a
+// user-selected model, so choosing Sonnet 5 / Opus 4.8 / Fable 5 returned
+// HTTP 400 on Conflict Detection, multi-pass synthesis, Recon planning,
+// Executive Brief, and the verifier. Every API call must route sampling
+// params through getSamplingParams so the omission is model-aware. This sweep
+// fails the suite if a bare `temperature: <number>` literal reappears.
+// Exclusions: sampling-params.js itself, and src/prompt-pack/ (Prompt Triage
+// audits OTHER people's prompt files for temperature directives; its strings
+// and regexes mention the literal but never call the API with it).
+console.log('Test 4: no bare temperature literal in API-calling source');
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const BARE_TEMPERATURE = /temperature\s*[:=]\s*[\d.]/;
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'prompt-pack') continue;
+        walk(full);
+      } else if (entry.name.endsWith('.js') && entry.name !== 'sampling-params.js') {
+        const lines = fs.readFileSync(full, 'utf8').split('\n');
+        lines.forEach((line, i) => {
+          if (BARE_TEMPERATURE.test(line)) {
+            offenders.push(`${path.relative(repoRoot, full)}:${i + 1}: ${line.trim()}`);
+          }
+        });
+      }
+    }
+  };
+  for (const top of ['src', 'bin', 'lib']) {
+    const dir = path.join(repoRoot, top);
+    if (fs.existsSync(dir)) walk(dir);
+  }
+  check('bare temperature literals outside sampling-params.js', offenders, []);
+  if (offenders.length) offenders.forEach(o => console.log('       ' + o));
 }
 console.log('');
 

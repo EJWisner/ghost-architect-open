@@ -141,7 +141,13 @@ export async function runReconMode(codebaseContext, options = {}) {
     const meta = {
       filesAnalyzed:  `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
       totalFiles:     codebaseContext.totalFiles,
-      cost:           reconCost > 0 ? reconCost.toFixed(4) : '0.0500',  // real planner spend; fixed estimate only when usage was unobservable
+      // Real planner spend. When the planner API call failed (structural
+      // fallback plan, plannerFailed set), the run billed nothing: stamp
+      // 0.0000 instead of the old hardcoded 0.0500 guess, which claimed
+      // spend on a sales-facing artifact for a call that never succeeded
+      // (Audit 9, finding 2.4). The 0.0500 estimate remains only for the
+      // succeeded-but-usage-unobservable case.
+      cost:           plan.plannerFailed ? '0.0000' : (reconCost > 0 ? reconCost.toFixed(4) : '0.0500'),
       version:        GHOST_VERSION,   // was a hardcoded '4.7.0' — a sales-facing scoping artifact claimed a 4.x Ghost produced it
       findingCount:   0,         // recon doesn't produce findings
       critical:       0,
@@ -200,6 +206,12 @@ function renderReconMarkdown(plan, projectLabel, profile) {
     || `This recon report sizes the ${plan.totalFiles}-file codebase and identifies the areas a full pre-engagement scan would prioritize.`;
   lines.push(exec.trim());
   lines.push('');
+  // Disclose degraded output: the planner call failed and this plan is the
+  // structural fallback, not a live analysis (Audit 9, finding 2.4).
+  if (plan.plannerFailed) {
+    lines.push('*Note: the live sizing analysis was unavailable for this run; this report uses Ghost Architect™ structural sizing heuristics. Re-run recon to attempt a live analysis.*');
+    lines.push('');
+  }
 
   // Sizing block — concrete numbers consultants will hand to a prospect.
   lines.push('## Codebase Sizing');

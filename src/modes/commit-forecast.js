@@ -294,6 +294,10 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
 
   let blastBuffer    = '';
   let conflictBuffer = '';
+  // Total billed spend across both scans, stamped into meta.cost so the saved
+  // artifact records what the COST BREAKDOWN boxes just showed on screen
+  // (Audit 9, finding 2.3). Failed scans still add their partial spend.
+  let forecastRunCost = 0;
 
   // ── Blast ─────────────────────────────────────────────────────────────
   if (analysisMode === 'blast' || analysisMode === 'both') {
@@ -325,6 +329,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
         showFriendlyError(err);
       }
     }
+    forecastRunCost += blastTracker.totalCost;
   }
 
   // ── Conflict ──────────────────────────────────────────────────────────
@@ -361,6 +366,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
         console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
         showConflictCost(result.tracker);
       }
+      forecastRunCost += result?.tracker?.totalCost || 0;
     } catch (err) {
       console.error(chalk.red(`  ${SYM.cross} Conflict Detection failed: ${err.message}`));
       console.error(chalk.yellow('  Continuing with the completed output.'));
@@ -390,6 +396,8 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     profile,
     findings:      parsedFindings,
     findingCount:  parsedFindings.length,
+    // Omitted when zero, matching the blast batch-retrieve convention.
+    ...(forecastRunCost > 0 ? { cost: forecastRunCost.toFixed(4) } : {}),
   };
 
   // null label is intentional parity with interactive's "Enter to skip" path —
@@ -620,6 +628,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   let blastBuffer = '';
   const blastTracker = new SessionCostTracker();
   const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m);
+  // Hoisted: the conflict scan's tracker is scoped to its try block below, but
+  // the save meta needs the spend so the artifact records what the COST
+  // BREAKDOWN boxes showed on screen (Audit 9, finding 2.3).
+  let conflictRunCost = 0;
 
   if (analysisMode === 'blast' || analysisMode === 'both') {
     // For Commit Forecast, the "target" is the changed file set — we pass
@@ -865,6 +877,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           }
 
           showConflictCost(result.tracker);
+          conflictRunCost = result.tracker?.totalCost || 0;
           console.log('');
         } else {
           if (conflictSpinner) conflictSpinner.stop();
@@ -929,6 +942,10 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       medium:        mediumCount,
       low:           lowCount,
       totalHours,
+      // Omitted when zero, matching the blast batch-retrieve convention.
+      ...(blastTracker.totalCost + conflictRunCost > 0
+        ? { cost: (blastTracker.totalCost + conflictRunCost).toFixed(4) }
+        : {}),
     };
 
     // label is null for Open (no portal side effects) or when user skipped

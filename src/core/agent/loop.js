@@ -10,6 +10,7 @@
 import Anthropic        from '@anthropic-ai/sdk';
 import { getConfig, resolveApiKey } from '../../config.js';
 import { buildToolDescriptions }    from './tools.js';
+import { getSamplingParams }        from '../../utils/sampling-params.js';
 
 // Client factory is overridable so tests can inject a fake client (e.g. one
 // whose messages.create() throws) without making real API calls.
@@ -191,7 +192,7 @@ export async function runAgentLoop(task, tools, memory, maxSteps = 10, callbacks
             const createParams = {
               model:      getModel(),
               max_tokens: 1024,
-              temperature: 0,
+              ...getSamplingParams(0, getModel()),
               system:     systemPrompt,
               messages:   [{ role: 'user', content: prompt }],
             };

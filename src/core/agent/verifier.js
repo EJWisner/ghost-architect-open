@@ -14,6 +14,7 @@ import { AgentMemory }              from './memory.js';
 import { buildTools }               from './tools.js';
 import { runMiniLoop }              from './loop.js';
 import { requireTier }              from '../../license/tier-gates.js';
+import { getSamplingParams }        from '../../utils/sampling-params.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
@@ -432,7 +433,7 @@ Respond with JSON only:
     const response = await anthropic.messages.create({
       model:      getModel(),
       max_tokens: 256,
-      temperature: 0,
+      ...getSamplingParams(0, getModel()),
       messages:   [{ role: 'user', content: prompt }],
     });
 

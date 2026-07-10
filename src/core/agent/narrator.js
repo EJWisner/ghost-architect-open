@@ -1071,7 +1071,7 @@ function buildRenderingPrompt(plan, memoryResult, context = {}) {
     // emits one in the rendered output drawn from the finding detail.
     ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
-    'Confidence: ' + (f.confidence || 90) + '%'
+    'Confidence: ' + (Number.isFinite(f.confidence) ? f.confidence : 90) + '%'
   ).join('\n\n');
 
   const rawSection = context.rawSynthesis
@@ -1188,7 +1188,7 @@ function buildBlastRenderingPrompt(plan, memoryResult, context = {}) {
     // false-positive.
     ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
-    'Confidence: ' + (f.confidence || 90) + '%'
+    'Confidence: ' + (Number.isFinite(f.confidence) ? f.confidence : 90) + '%'
   ).join('\n\n');
 
   const rawSection = context.rawSynthesis
@@ -1712,7 +1712,7 @@ function buildBlastLegacyPrompt(memoryResult, context = {}) {
     // placeholder bold that breaks downstream finding extraction.
     ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
-    'Confidence: ' + (f.confidence || 90) + '%'
+    'Confidence: ' + (Number.isFinite(f.confidence) ? f.confidence : 90) + '%'
   ).join('\n\n');
 
   const rawSection = context.rawSynthesis
@@ -1790,7 +1790,7 @@ function buildLegacyPrompt(memoryResult, context = {}) {
     // placeholder bold that breaks downstream finding extraction.
     ((f.files && f.files.length) ? 'Files: ' + f.files.join(', ') + '\n' : '') +
     'Detail: ' + f.detail + '\n' +
-    'Confidence: ' + (f.confidence || 90) + '%'
+    'Confidence: ' + (Number.isFinite(f.confidence) ? f.confidence : 90) + '%'
   ).join('\n\n');
 
   const rawSection = context.rawSynthesis

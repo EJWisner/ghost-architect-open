@@ -15,6 +15,8 @@ import { prioritizeFileMap } from '../prioritizer.js';
 import { runBlastRadius }   from '../analyst/index.js';
 import { getConfig, resolveApiKey } from '../config.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
+import { buildUnverifiedSidecar } from './sidecar-pipeline.js';
+import { extractFindings }  from '../utils/finding-parser.js';
 
 // Blast uses max_tokens: 8096 for output. Leave 20% headroom on top of that
 // for system prompt and framing. Mirrors getPassTokenLimit() in conflict.js.
@@ -247,12 +249,34 @@ ${combinedResults}`;
     // Synthesis failed for some reason (errored/canceled/expired/empty). Do not
     // discard the paid per-pass reports: return them concatenated, with a visible
     // note explaining the synthesis pass did not complete, instead of ''.
+    // No sidecar callback fires on this path: the concatenation carries
+    // cross-pass duplicates, and there is no merged finding set to hand over.
     console.warn(`[Ghost] Blast synthesis did not complete: ${err.message} Falling back to the ${total} unmerged per-pass reports.`);
     return (
       `> Note: automated synthesis of the ${total} Blast Radius passes did not complete. ` +
       `${err.message} The unmerged per-pass reports are included below; review them individually.\n\n` +
       combinedResults
     );
+  }
+
+  // Multi-pass parity with single-pass: extract findings from the SYNTHESIS
+  // output (the real deliverable) and hand callers the sidecar set. Per-pass
+  // callbacks are suppressed in the loop above, so without this every
+  // multipass Commit Forecast shipped with no findings sidecar at all while
+  // single-pass runs had one (Audit 9, finding 3.10). Unverified by design:
+  // the synthesis merge is not re-verified.
+  if (onSidecarFindings) {
+    try {
+      const mergedFindings = extractFindings(synthesisOutput);
+      if (mergedFindings.length > 0) {
+        const sidecar = buildUnverifiedSidecar({
+          allFindings: mergedFindings,
+          reportText:  synthesisOutput,
+        });
+        synthesisOutput = sidecar.reportText;
+        onSidecarFindings(sidecar.sidecarFindings);
+      }
+    } catch { /* best-effort — the synthesized report itself is unaffected */ }
   }
 
   return synthesisOutput;

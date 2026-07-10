@@ -14,6 +14,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveApiKey, getConfig } from '../config.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 
 // ── Health score ─────────────────────────────────────────────────────────────
 // Start at 100, deduct per severity with per-band caps, floor at 5.
@@ -106,7 +107,10 @@ export function buildBriefData(findings, seniorRate = 200) {
     totalEffortHours: Math.round(totalEffortHours * 10) / 10,
     estimatedManualCost: Math.round(totalEffortHours * seniorRate),
     estimatedAiCost: Math.round(totalEffortHours * AI_COST_PER_MANUAL_HOUR * 100) / 100,
-    estimatedAiHours: Math.max(1, Math.ceil(totalEffortHours * AI_HOURS_PER_MANUAL_HOUR)),
+    // Floor of 1 hour only when there is actual work: a zero-findings brief
+    // showed "~1 hrs" AI-assisted effort beside 0 manual hours and $0 cost,
+    // contradicting its own clean-bill narrative (Audit 9, finding 2.5).
+    estimatedAiHours: totalEffortHours === 0 ? 0 : Math.max(1, Math.ceil(totalEffortHours * AI_HOURS_PER_MANUAL_HOUR)),
     blastProfile,
   };
 }
@@ -161,7 +165,7 @@ async function generateNarrative(client, { data, healthScore, label, project }) 
   const resp = await client.messages.create({
     model: briefModel,
     max_tokens: 1000,
-    temperature: 0,
+    ...getSamplingParams(0, briefModel),
     system: NARRATIVE_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
   });

@@ -746,7 +746,7 @@ function enrichBlastFindingFiles(findings, sectionFiles) {
  * findings so a narrator hiccup never drops the run.
  */
 async function blastFindingsFromRaw(rawBlastOutput, { profile, changedFiles, codebaseContext }) {
-  const rawFindings = extractFindings(rawBlastOutput, 'blast');
+  const rawFindings = extractFindings(rawBlastOutput);
   if (rawFindings.length === 0) return [];
 
   // Recover per-section file paths from the raw bullet lines once, then enrich
@@ -1520,18 +1520,39 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             // action-only counts.
             const existingState = await fetchWatchCommitState(
               octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash);
+            // Invariant: a prompts-only resume must never upgrade a run's
+            // completeness verdict. Step 8b writes 'incomplete' when a scan
+            // failed (and the cancel handler writes 'cancelled'); delivering
+            // detailed prompts later does not change that outcome. Stamping
+            // 'complete' over an 'incomplete' state flipped the developer's
+            // merge signal to a false green (Audit 9, finding 3.2). Only a
+            // state that was 'pending' or already 'complete' may read
+            // 'complete' here; anything else keeps its status and message.
+            const promptsResumeUpgradeOk = !existingState?.status
+              || ['pending', 'complete'].includes(existingState.status);
             await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
               ...(existingState || {
-                commitHash: pending.commitHash, branch, developer: developer.name,
+                commitHash: pending.commitHash,
+                branch: pending.branch || branch,
+                developer: pending.developer || developer.name,
                 batchId: null,
                 findings: [], findingCount: pending.findingCount ?? (pending.findings || []).length,
                 severity: pending.severity || { critical: 0, high: 0, medium: 0, low: 0 },
               }),
               timestamp: new Date().toISOString(),
-              status: 'complete',
-              message: 'Ghost Watcher™ detailed remediation prompts ready.',
+              status: promptsResumeUpgradeOk ? 'complete' : existingState.status,
+              message: promptsResumeUpgradeOk
+                ? 'Ghost Watcher™ detailed remediation prompts ready.'
+                : existingState.message,
               prompts: promptCount,
-              tokenUsage: buildTokenUsage(promptUsage.inputTokens, promptUsage.outputTokens),
+              // ADD the prompts-batch usage to what the main run recorded.
+              // Overwriting dropped the blast + conflict tokens from the
+              // portal's per-commit figure after every prompts resume
+              // (Audit 9, finding 3.7).
+              tokenUsage: buildTokenUsage(
+                (existingState?.tokenUsage?.inputTokens  || 0) + promptUsage.inputTokens,
+                (existingState?.tokenUsage?.outputTokens || 0) + promptUsage.outputTokens,
+              ),
             });
 
             if (pending.prNumber) {
@@ -1617,8 +1638,13 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           // Push resumed results to Ghost Portal under the ORIGINAL commit hash.
           await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
             commitHash: pending.commitHash,
-            branch,
-            developer: developer.name,
+            // Original run identity from the pending record. The resuming run
+            // may be on a different branch/developer; stamping the CURRENT
+            // values mislabeled the original commit's state and could corrupt
+            // the branch-filtered lifecycle delta (Audit 9, quick win 7).
+            // Legacy records without these fields fall back to current values.
+            branch: pending.branch || branch,
+            developer: pending.developer || developer.name,
             timestamp: new Date().toISOString(),
             status: 'complete',
             batchId: pending.batchId,
@@ -1695,7 +1721,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       commitMessage = execSync('git log -1 --format=%B', { cwd: repoRoot, encoding: 'utf8' }).trim();
     } catch { /* git unavailable — leave empty, no skip */ }
   }
-  const blastSkipPatterns = watchConfig.scans?.blast_radius?.skip_if_message_contains || [];
+  // Tolerate customer YAML shape mistakes: a scalar value (skip_if_message_contains:
+  // release) or a non-string list entry must not throw. An escaped throw here
+  // exits nonzero and BLOCKS the commit, violating the never-block contract in
+  // this file's header (Audit 9, finding 3.1).
+  const blastSkipPatterns = [].concat(watchConfig.scans?.blast_radius?.skip_if_message_contains ?? [])
+    .filter(p => typeof p === 'string');
   const skipBlast = blastSkipPatterns.some(p => commitMessage.toLowerCase().includes(p.toLowerCase()));
   if (skipBlast) {
     console.log('Ghost Watcher: skipping Blast Radius, commit message matches a configured skip pattern.');
@@ -1844,6 +1875,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       await storePendingBatch(octokitPortal, portalRepoPath, blastBatchId, {
         type: 'blast', changedFiles,
         commitHash: commitHashFull, repo: repoPath, repoOwner,
+        // Original run identity. Resume runs on whatever branch triggered
+        // them; without these, the resume stamped ITS branch/developer onto
+        // the original commit's portal state, and the lifecycle delta
+        // (which filters prior states by branch) could go wrong
+        // (Audit 9, quick win 7).
+        branch, developer: developer.name,
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
       });
@@ -1915,6 +1952,24 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       conflictBatchId = conflictBatchIds[0];
     } catch (err) {
       console.error(`Ghost Watcher: Conflict Detection submission failed (non-fatal) — ${err.message}`);
+      // Chunks submitted before the failure are live and billed on the
+      // Batches API. Losing their IDs orphaned them: never stored, never
+      // polled, never resumed — the customer paid for silently discarded
+      // work (Audit 9, finding 3.1). Persist the partial set so the next
+      // run's resume retrieves what completed. conflictBatchId stays null
+      // on purpose: this run still counts conflict as not-run, so Step 8
+      // writes the honest 'incomplete' state instead of presenting partial
+      // chunk coverage as a finished scan.
+      if (conflictBatchIds.length > 0) {
+        console.error(`Ghost Watcher: ${conflictBatchIds.length} conflict chunk(s) were already submitted. Storing them for resume so the billed work is not lost.`);
+        await storePendingBatch(octokitPortal, portalRepoPath, conflictBatchIds[0], {
+          type: 'conflict', batchIds: conflictBatchIds,
+          commitHash: commitHashFull, repo: repoPath, repoOwner,
+          branch, developer: developer.name,
+          timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
+          pollIntervalMs, timeoutMs,
+        });
+      }
     }
 
     if (conflictBatchId) {
@@ -1926,6 +1981,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       await storePendingBatch(octokitPortal, portalRepoPath, conflictBatchId, {
         type: 'conflict', batchIds: conflictBatchIds,
         commitHash: commitHashFull, repo: repoPath, repoOwner,
+        branch, developer: developer.name,
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
       });
@@ -2259,6 +2315,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     if (promptBatchId) {
       await storePendingBatch(octokitPortal, portalRepoPath, promptBatchId, {
         type: 'prompts', commitHash: commitHashFull, repo: repoPath, repoOwner,
+        branch, developer: developer.name,
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
         findings:       adaptedFindings,
@@ -2437,7 +2494,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         // (Audit 8, finding 3.12).
         blast:    blastWillRun,
         conflict: conflictWillRun,
-        brief:    watchConfig.scans?.ghost_brief     !== false,
+        // Same intent semantics as blastWillRun/conflictWillRun: config flag
+        // AND the gates Step 8 actually applies (Max tier, non-empty finding
+        // set). The bare config check reported brief: true on runs where the
+        // brief was tier-skipped or had nothing to summarize, overstating
+        // Ghost Brief™ usage in Pulse (Audit 9, quick win 6).
+        brief:    briefRequested && briefTierAllowed,
       },
       commit: process.env.GITHUB_SHA || '',
       repo:   process.env.GITHUB_REPOSITORY || '',

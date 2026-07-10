@@ -21,6 +21,7 @@ import { isContextOverflow } from '../utils/errors.js';
 import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
 import { recordUsage } from './usage-tracker.js';
+import { getSamplingParams } from '../utils/sampling-params.js';
 import { mergeRates } from '../profile/index.js';
 
 const PASS_TOKEN_LIMIT = 45000;
@@ -235,9 +236,13 @@ export function loadSession(label) {
       ));
       return forced;
     }
+    // Do not claim "previous progress is lost": forced recovery deliberately
+    // bypasses the main session file, which may still be intact on disk
+    // (Audit 9, quick win 4).
     console.log(chalk.yellow(
-      'Ghost could not recover the previous session for this project (forced recovery). ' +
-      'Starting fresh. Previous progress is lost.'
+      'Previous progress from the interrupted scan could not be recovered from the checkpoint. ' +
+      'Starting fresh. Your most recent completed session (if any) is still available; ' +
+      'rerun without --recover-session to use it.'
     ));
     return null;
   }
@@ -529,7 +534,7 @@ async function callClaudeRaw(prompt, system, maxTokens = 8096) {
 
   try {
     activeStream = anthropic.messages.stream({
-      model: getModel(), max_tokens: maxTokens, temperature: 0.3, system,
+      model: getModel(), max_tokens: maxTokens, ...getSamplingParams(0.3, getModel()), system,
       messages: [{ role: 'user', content: prompt }]
     });
     for await (const chunk of activeStream) {
@@ -630,7 +635,14 @@ export function writeCheckpoint(projectLabel, passNum, totalPasses, passResults)
       passResults: (passResults || []).map(normalizeCheckpointEntry),
       timestamp: Date.now(),
     };
-    fs.writeFileSync(cpPath, JSON.stringify(data, null, 2), 'utf8');
+    // Atomic write: tmp file then rename, mirroring persistSession. A crash
+    // mid-write left truncated JSON in the one artifact whose job is
+    // surviving crashes; readCheckpoint's catch then reported "no usable
+    // checkpoint" and the whole scan's progress was lost (Audit 9,
+    // finding 3.4).
+    const tmpPath = cpPath + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmpPath, cpPath);
     return true;
   } catch (e) {
     // Finding 6: log checkpoint failures instead of silently swallowing them
@@ -649,7 +661,11 @@ export function readCheckpoint(projectLabel) {
     const cpPath = getCheckpointPath(projectLabel);
     if (!fs.existsSync(cpPath)) return null;
     const data = JSON.parse(fs.readFileSync(cpPath, 'utf8'));
-    // Only valid if < 24 hours old and has at least one completed pass
+    // Only valid if < 24 hours old and has at least one completed pass.
+    // A missing/non-numeric timestamp must fail the gate, not pass it:
+    // NaN compares false against 24, so a timestamp-less checkpoint was
+    // treated as fresh forever (Audit 9, finding 3.4).
+    if (!Number.isFinite(data.timestamp)) return null;
     const ageHours = (Date.now() - data.timestamp) / (1000 * 60 * 60);
     if (ageHours > 24 || !data.passResults?.length) return null;
     return data;
@@ -1006,10 +1022,21 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // in verifier.js). Omitting it meant a scan whose only verifier action was
   // dropping disputed findings kept a stale executive summary still describing
   // findings that are no longer anywhere in the body.
+  //
+  // The capped arm: a report whose sidecar carries more findings than the body
+  // details must regenerate even when the verifier changed nothing, or the
+  // planner-drafted summary (written against the capped set) disagrees with
+  // the cap disclosure two lines below it (Audit 9, finding 3.8). Mirrors the
+  // isCapped opener logic inside regenerateExecutiveSummary.
+  const detailedBodyCount = Number.isFinite(sidecarTotalCount)
+    ? extractFindingsFromReport(finalOutput).length
+    : null;
+  const reportIsCapped = detailedBodyCount !== null && sidecarTotalCount > detailedBodyCount;
   if (verifierCard && (
     (verifierCard.falsePositives ?? 0) > 0 ||
     (verifierCard.disputed ?? 0) > 0 ||
-    (verifierCard.unverified ?? 0) > 0
+    (verifierCard.unverified ?? 0) > 0 ||
+    reportIsCapped
   )) {
     try {
       finalOutput = await regenerateExecutiveSummary(

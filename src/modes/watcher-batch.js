@@ -529,6 +529,11 @@ export async function retrievePendingBatches(octokit, portalRepo) {
         repo:            b.repo,
         repoOwner:       b.repoOwner,
         timestamp:       b.timestamp,
+        // Original run identity, so a resume from another branch does not
+        // stamp its own branch/developer onto the original commit's state
+        // (Audit 9, quick win 7). Absent on legacy records.
+        branch:          b.branch ?? undefined,
+        developer:       b.developer ?? undefined,
         emailRecipients: Array.isArray(b.emailRecipients) ? b.emailRecipients : [],
         prNumber:        b.prNumber ?? null,
         portalSlug:      b.portalSlug ?? null,

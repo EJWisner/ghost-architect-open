@@ -5,6 +5,39 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v11.0.1 -- July 10, 2026
+
+### Audit 9 Remediation: Model-Aware Sampling Sweep, CI Token Integrity, Ghost Watcher™ Contract Fixes, Cost Accuracy
+
+**Ship blockers**
+- Sonnet 5, Opus 4.8, and Fable 5 no longer fail Conflict Detection, multi-pass synthesis, Recon planning, Executive Brief, the agent loop, quick verification, and the LLM verifier. Seven call sites passed a hardcoded temperature these models reject with HTTP 400 (conflict.js, multipass.js, planner.js, loop.js, llm-verifier.js, executive-brief.js, verifier.js); all seven now route through getSamplingParams, the same model-aware guard the other six call sites already used. The sampling-params smoke suite gains a source sweep that fails the build if a bare temperature literal reappears outside sampling-params.js.
+- ghost --export-ci-token validates the exact stored token it exports. It previously validated via validateLicense(), which prefers the GHOST_LICENSE_KEY env var, so on a machine with the env var set (the documented supported scenario) a revoked stored token could pass validation and export a dead token to CI, and a stale env token could block a healthy export. The flow now decodes and verifies the record token directly, checks its hard stop and revocation (fail-open), and keeps stdout token-only with all guidance on stderr.
+- A malformed skip_if_message_contains value in ghost-watcher.yaml (a scalar instead of a list, or non-string entries) no longer throws and exits nonzero, which blocked the customer's commit in violation of the watcher's never-block contract. The value is normalized to a string list before use.
+- The prompts-batch resume no longer upgrades an 'incomplete' or 'cancelled' commit state to 'complete'. Only a state that was 'pending' or already 'complete' may read 'complete' after detailed prompts arrive; anything else keeps its status and message, so a run whose conflict scan failed can no longer flip to a false green when its prompts batch resumes.
+
+**Revenue and trust**
+- ghost --reconfigure is a real flag: it opens the Reconfigure menu (API key, GitHub token, license, scan model) directly and is documented in ghost --help. Three customer-facing recovery messages (pending-batch API key advisory, both context-cap clamp notices) pointed at the flag while parseArgs rejected it with "Unknown flag: --reconfigure (ignored)".
+- A cancelled customer whose first run after cancelling comes after hard stop now gets the resubscribe copy instead of expiry copy with a re-activation hint that cannot work for a revoked key: the grace/expired revocation probe no longer stops at the hard-stop boundary. Same fail-open contract, 24-hour TTL cache; on any network fault the hard-stop behavior is unchanged.
+- Commit Forecast saves stamp the run's real tracked spend into meta.cost on both the interactive and non-interactive surfaces, so the saved artifact records what the on-screen COST BREAKDOWN boxes showed instead of carrying no cost at all. Omitted when zero, matching the batch-retrieve convention.
+- Recon stamps $0.0000 instead of the $0.0500 estimate when the planner call failed and nothing was billed, and the saved report discloses that the sizing used structural heuristics rather than a live analysis.
+- A zero-findings Executive Brief shows 0 AI-assisted hours instead of "~1 hrs" beside 0 manual hours and $0 estimated cost.
+- The "Both --stream and --batch were passed" notice moved to stderr so it can never prefix the token in a piped ghost --export-ci-token invocation.
+
+**Technical**
+- Conflict chunks submitted before a mid-loop submission failure are persisted as a pending record for the next run's resume instead of being orphaned: they were live and billed on the Batches API but never stored, never polled, never resumed. The failing run still reports incomplete rather than presenting partial chunk coverage as a finished scan.
+- Checkpoint writes are atomic (tmp file plus rename, mirroring session persistence), so a crash mid-write can no longer corrupt the salvage artifact whose sole purpose is surviving crashes. A checkpoint missing its timestamp now fails the 24-hour staleness gate instead of passing it forever (NaN compared false against the age limit).
+- Re-activating or clearing a license also deletes the standalone (env-var/CI) revocation cache entry, extending the "re-activation must not inherit the old verdict" guarantee to both storage paths. A customer whose revocation was reversed by support could previously stay sticky-blocked on the machine that had cached the verdict.
+- Blocking-state licenses (hard-stopped, tampered, invalid) degrade to Open at the early tier resolve, mirroring the session-refresh degrade. The profile-management flags (--list-profiles, --set-default-profile, --create-profile) exit before the main enforcement gate and previously kept paid-tier access on such licenses indefinitely.
+- The prompts-batch resume adds its usage to the commit's recorded token totals instead of overwriting them, so the portal's per-commit cost keeps the blast and conflict spend after a prompts resume.
+- The executive-summary regeneration gate also fires on capped-but-clean scans (the sidecar carries more findings than the body details), so the page-one summary agrees with the cap disclosure even when the verifier changed nothing.
+- Exact-title sidecar dedupe requires file overlap, matching the v11.0.0 containment fix: identical generic titles in different modules are distinct findings and no longer collapse silently. Findings with no file info on either side still collapse (the narrator-polish case).
+- Four narrator prompt builders guard confidence with Number.isFinite, so a legitimate confidence of 0 no longer renders as "Confidence: 90%" in the prompts fed to the model.
+- Multi-pass Blast fires onSidecarFindings with the finding set extracted from the synthesis output and reconciles its cap disclosure, so multipass Commit Forecast reports carry the same findings sidecar single-pass runs get. The synthesis-failure fallback path deliberately fires no callback (the concatenation carries cross-pass duplicates).
+- The Blast planner preview call is recorded in the session cost tracker under a 'plan' stage; it was a real billed API call that appeared in no COST BREAKDOWN and no meta.cost.
+- Pending watcher batch records persist the original run's branch and developer, and resumes stamp those onto the original commit's portal state instead of the resuming run's identity, protecting the branch-filtered finding-lifecycle delta. Legacy records fall back to current values.
+- Ghost Brief™ telemetry reports intent with the same gates Step 8 applies (Max tier and a non-empty finding set) instead of the bare config flag, which overstated brief usage in Pulse.
+- Dead code removed: the unused --watcher-commit parseArgs branch (the module-level dispatch reads process.argv directly and always exits), a vacuous always-true PAT prompt validator in Enable Watch, and a dead 'blast' argument to extractFindings in the watcher. The forced-recovery failure message no longer claims previous progress is lost when an intact main session file may still exist on disk.
+
 ## v11.0.0 -- July 10, 2026
 
 ### Major: Audit 7 + Audit 8 Remediation. Checkpoint Salvage Integrity, Watch Paywall Honesty, Cancel-Coast Closure, Input Parity, CI Token Export, Session Refresh

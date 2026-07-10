@@ -8,6 +8,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import path      from 'path';
 import { getConfig, resolveApiKey } from '../../config.js';
+import { getSamplingParams } from '../../utils/sampling-params.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
@@ -191,7 +192,7 @@ Respond with JSON only. No preamble.`;
     const response = await anthropic.messages.create({
       model:      getModel(),
       max_tokens: 1024,
-      temperature: 0,
+      ...getSamplingParams(0, getModel()),
       messages:   [{ role: 'user', content: prompt }],
     });
 

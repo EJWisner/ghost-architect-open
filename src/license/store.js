@@ -116,6 +116,13 @@ export function saveActivation({ token, fingerprintHashes }) {
     activated_at: nowIso,
     fingerprint_at_activation: fingerprintHashes,
   });
+  // The record rewrite above drops the record-attached revocation verdict by
+  // design ("re-activating must not inherit the old verdict"). The standalone
+  // key must honor the same guarantee: a stale standalone 'revoked' entry for
+  // the SAME license_id (cached during env-var use) survived re-activation
+  // and the sticky short-circuit blocked a resubscribed customer without
+  // ever probing the worker again (Audit 9, finding 3.5).
+  getConfig().delete(REVOCATION_STANDALONE_KEY);
 }
 
 // Strict ISO-8601 UTC instant, matching what saveActivation/the validator emit:
@@ -202,6 +209,10 @@ export function updateLastSeenUtc(newIso) {
 // Wipe the license. Used by tests and by `ghost license clear`.
 export function clearLicense() {
   write(null);
+  // Same guarantee as saveActivation: clearing the license must not leave a
+  // stale standalone revocation verdict behind to block a future activation
+  // of the same key (Audit 9, finding 3.5).
+  getConfig().delete(REVOCATION_STANDALONE_KEY);
 }
 
 // ── Admin token ─────────────────────────────────────────────────────────────
