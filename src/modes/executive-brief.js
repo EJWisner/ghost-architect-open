@@ -277,10 +277,14 @@ story.append(header_tbl)
 story.append(Spacer(1, 14))
 
 story.append(Paragraph('Executive Summary', s_section))
+# ReportLab's Paragraph parses its input as XML-ish markup. Escape all three
+# metacharacters, & first. Escaping only & meant any '<' in the LLM narrative
+# (e.g. "< 30 days") raised a paragraph parse error and failed the whole
+# brief with "PDF generation failed" (Audit 8, finding 3.9).
 for para in payload['narrative'].split('\n'):
     para = para.strip()
     if para:
-        story.append(Paragraph(para.replace('&', '&amp;'), s_body))
+        story.append(Paragraph(para.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'), s_body))
 
 story.append(Paragraph('Remediation Cost Comparison', s_section))
 cost_rows = [
@@ -338,7 +342,9 @@ doc.addPageTemplates([PageTemplate(id='dark', frames=[frame],
 doc.build(story)
 `;
 
-function renderPdf(payload) {
+// Exported for tests/executive-brief-pdf.smoke.mjs, which pins the narrative
+// escaping contract (Audit 8, finding 3.9) against the real python3 renderer.
+export function renderPdf(payload) {
   const reportsDir = path.join(os.homedir(), 'Ghost Architect Reports');
   fs.mkdirSync(reportsDir, { recursive: true });
 

@@ -288,7 +288,6 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
   const allChanged = [...changedFiles.modified, ...changedFiles.added];
   console.log(chalk.cyan(`  Found ${allChanged.length} changed file(s): ${allChanged.map(f => path.basename(f)).join(', ')}\n`));
 
-  const model    = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
   const fileMap  = patchedContext.fileMap || {};
   const blastInfo = (analysisMode === 'blast' || analysisMode === 'both')
     ? getBlastPassInfo(fileMap, tier) : null;
@@ -343,17 +342,28 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
         if (evt === 'passComplete') console.log(chalk.green(`  ${SYM.check} Conflict pass ${data.passNum} complete`));
       },
     };
-    const result = await runConflictScan(fileMap, callbacks, {
-      tier,
-      profile,
-      forecastContext:
-        `Changed files: ${allChanged.map(f => path.basename(f)).join(', ')}\n` +
-        `Frame every conflict as "if you push now, X conflicts with Y."`,
-    });
-    if (result?.finalReport) {
-      conflictBuffer = result.finalReport;
-      console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
-      showConflictCost(result.tracker);
+    // Wrapped so a conflict-scan failure (API error, rate limit) cannot
+    // destroy the blast output above. This is the scripted/CI surface:
+    // before v11.0.0 an unwrapped throw here propagated out and the
+    // completed, already-billed blast analysis was never saved, while the
+    // interactive path caught the same error and saved what completed
+    // (Audit 8, finding 3.7).
+    try {
+      const result = await runConflictScan(fileMap, callbacks, {
+        tier,
+        profile,
+        forecastContext:
+          `Changed files: ${allChanged.map(f => path.basename(f)).join(', ')}\n` +
+          `Frame every conflict as "if you push now, X conflicts with Y."`,
+      });
+      if (result?.finalReport) {
+        conflictBuffer = result.finalReport;
+        console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
+        showConflictCost(result.tracker);
+      }
+    } catch (err) {
+      console.error(chalk.red(`  ${SYM.cross} Conflict Detection failed: ${err.message}`));
+      console.error(chalk.yellow('  Continuing with the completed output.'));
     }
   }
 
@@ -904,7 +914,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       totalFiles:    patchedContext.totalFiles,
       mode:          'commit-forecast',
       forecastSurface: surface,
-      proposedDir,
+      // On the pre-commit surface, proposedDir is a ghost-precommit-* staging
+      // temp dir that is deleted before this save prompt ever fires, so the
+      // saved meta referenced a path that no longer existed — broken
+      // provenance to anyone auditing the findings JSON (Audit 8, quick
+      // win 14). Record the real working tree root instead.
+      proposedDir: surface === 'precommit' ? baseRoot : proposedDir,
       changedFiles,
       profile,
       findings:      parsedFindings,

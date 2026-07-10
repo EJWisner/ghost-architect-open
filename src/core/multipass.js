@@ -166,38 +166,41 @@ function logSessionCorruption(label, results, salvaged) {
 // or null when no usable checkpoint exists.
 function salvageSessionFromCheckpoints(label) {
   try {
-    const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-    const dir  = path.join(home, 'Ghost Architect Reports', '.checkpoints');
-    if (!fs.existsSync(dir)) return null;
-
-    const safe = (label || 'unnamed').replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
-    // Match ONLY this project's checkpoint. A bare startsWith(safe) prefix match
-    // mixes projects: label "app" would match "app-backend.checkpoint.json" and
-    // could salvage an unrelated project's session. Checkpoints are written as
-    // exactly `<safe>.checkpoint.json` (getCheckpointPath), so require the exact
-    // filename. If no checkpoint for THIS label exists, return null rather than
-    // picking the freshest unrelated one.
-    const target = safe + '.checkpoint.json';
-    const candidates = fs.readdirSync(dir).filter(f =>
-      f.toLowerCase() === target
-    );
-    if (candidates.length === 0) return null;
-
-    let best = null;
-    for (const f of candidates) {
+    // readCheckpoint owns BOTH the exact-filename match (a prefix match could
+    // salvage an unrelated project's session) and the 24-hour staleness gate.
+    // Before v11.0.0, salvage did its own raw read with no age check, so a
+    // weeks-old checkpoint from an abandoned scan of the same label could be
+    // "recovered" while readCheckpoint's staleness rule sat unused as dead
+    // code (Audit 8, quick win 7).
+    const best = readCheckpoint(label);
+    if (!best) {
+      // Distinguish "no checkpoint" (stay silent) from "checkpoint exists but
+      // is stale/empty" (say so, or the user wonders why recovery skipped a
+      // file they can see on disk).
       try {
-        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-        if (!Array.isArray(data.passResults) || data.passResults.length === 0) continue;
-        if (!best || (data.timestamp || 0) > (best.timestamp || 0)) best = data;
-      } catch { /* skip an unreadable checkpoint — keep scanning the rest */ }
+        const cpPath = getCheckpointPath(label);
+        if (fs.existsSync(cpPath)) {
+          const raw = JSON.parse(fs.readFileSync(cpPath, 'utf8'));
+          const ageHours = (Date.now() - (raw.timestamp || 0)) / (1000 * 60 * 60);
+          if (ageHours > 24) {
+            console.log(chalk.yellow(
+              `  Found a checkpoint for "${label}" but it is ${Math.round(ageHours)}h old. ` +
+              'Checkpoints expire after 24h; starting fresh instead of recovering stale work.'
+            ));
+          }
+        }
+      } catch { /* diagnostics only — never block the fresh-start path */ }
+      return null;
     }
-    if (!best) return null;
 
     // Rebuild a session shaped like the runner's own. We place every recovered
     // pass into pendingPassResults (not mergedGroups): the checkpoint only
     // stores a flat passResults array, so we can't reconstruct the original
-    // merged/pending split — but synthesis merges pendingPassResults anyway,
-    // so funneling everything there is lossless for the final report.
+    // merged/pending split — but synthesis merges pendingPassResults anyway
+    // (formatPassResultsForMerge handles both pass objects and merged-group
+    // wrappers), so funneling everything there is lossless for the final
+    // report. Checkpoints written before v11.0.0 stored merged groups as raw
+    // strings; normalize them here so old checkpoints salvage correctly too.
     const completedPassCount = best.completedPass || best.passResults.length;
     return {
       projectLabel:       label,
@@ -206,7 +209,7 @@ function salvageSessionFromCheckpoints(label) {
       totalPassCount:     best.totalPasses || completedPassCount,
       completedPassCount,
       mergedGroups:       [],
-      pendingPassResults: best.passResults,
+      pendingPassResults: best.passResults.map(normalizeCheckpointEntry),
       passSkeletons:      [],
       salvagedFromCheckpoint: true,
     };
@@ -603,6 +606,20 @@ function getCheckpointPath(projectLabel) {
   return path.join(dir, `${safe}.checkpoint.json`);
 }
 
+// Checkpoint entries must always be structured objects. The pass loop hands
+// this function [...mergedGroups, ...pendingPassResults], where mergedGroups
+// entries are plain strings (the return of mergePassResults). Persisting the
+// raw strings corrupted every salvage of a MERGE_BATCH_SIZE+ scan: the merge
+// template read .fileCount/.findings off them and rendered "undefined"
+// (Audit 8, finding 3.1). Wrap strings here so salvage always rehydrates a
+// shape formatPassResultsForMerge understands.
+function normalizeCheckpointEntry(entry) {
+  if (typeof entry === 'string') {
+    return { type: 'merged', content: entry, fileCount: 0, findings: [] };
+  }
+  return entry;
+}
+
 export function writeCheckpoint(projectLabel, passNum, totalPasses, passResults) {
   try {
     const cpPath = getCheckpointPath(projectLabel);
@@ -610,7 +627,7 @@ export function writeCheckpoint(projectLabel, passNum, totalPasses, passResults)
       projectLabel,
       completedPass: passNum,
       totalPasses,
-      passResults,
+      passResults: (passResults || []).map(normalizeCheckpointEntry),
       timestamp: Date.now(),
     };
     fs.writeFileSync(cpPath, JSON.stringify(data, null, 2), 'utf8');
@@ -676,10 +693,31 @@ async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons, p
 
 // ── Intermediate merge ────────────────────────────────────────────────────────
 
+// Render a heterogeneous pass-result list into the merge prompt's BATCHES
+// block. Entries come in three shapes: normal pass objects
+// ({ passNum, fileCount, findings }), checkpoint-salvaged merged groups
+// ({ type: 'merged', content }), and — from checkpoints written before
+// v11.0.0 — raw strings (a merged group persisted without a wrapper).
+// Before v11.0.0 the template read r.fileCount / r.findings off every
+// entry unconditionally, so any salvaged scan of MERGE_BATCH_SIZE+ passes
+// rendered its already-merged groups as
+// "=== FINDINGS BATCH n (undefined files) ===\nundefined", silently
+// destroying the recovered findings (Audit 8, finding 3.1). Exported for
+// direct unit testing (tests/checkpoint-salvage.smoke.mjs).
+export function formatPassResultsForMerge(results) {
+  return results.map((r, i) => {
+    if (typeof r === 'string') {
+      return `=== PREVIOUSLY MERGED FINDINGS (group ${i + 1}) ===\n${r}`;
+    }
+    if (r && r.type === 'merged') {
+      return `=== PREVIOUSLY MERGED FINDINGS (group ${i + 1}) ===\n${r.content}`;
+    }
+    return `=== FINDINGS BATCH ${i + 1} (${r.fileCount} files) ===\n${r.findings}`;
+  }).join('\n\n');
+}
+
 async function mergePassResults(results, label, profile = null) {
-  const combined = results.map((r, i) =>
-    `=== FINDINGS BATCH ${i + 1} (${r.fileCount} files) ===\n${r.findings}`
-  ).join('\n\n');
+  const combined = formatPassResultsForMerge(results);
 
   return callClaude(
     `Intermediate merge for project: ${label}\n\n` +
@@ -876,6 +914,11 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   //   Pass 2: LLM check (semantic correctness against the actual source)
   // Both drop false positives entirely; single-flaw findings are annotated UNVERIFIED.
   let verifierCard = null;
+  // Total finding count in the sidecar (detailed + undetailed remainder).
+  // Passed to the exec-summary regeneration so a capped scan's opener counts
+  // the FULL set the disclosure promises, not just the rendered top-N
+  // (Audit 8, finding 2.5).
+  let sidecarTotalCount = null;
   if (options.fileMap) {
     try {
       if (options.onVerifierStart) options.onVerifierStart();
@@ -908,6 +951,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
         reportText:      finalOutput,
       });
       finalOutput = sidecar.reportText;
+      sidecarTotalCount = sidecar.sidecarFindings.length;
       if (options.onSidecarFindings) options.onSidecarFindings(sidecar.sidecarFindings);
     } catch (err) {
       // Verifier failure must never block the report — surface a note and
@@ -926,6 +970,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
           reportText:  finalOutput,
         });
         finalOutput = fallback.reportText;
+        sidecarTotalCount = fallback.sidecarFindings.length;
         if (options.onSidecarFindings) options.onSidecarFindings(fallback.sidecarFindings);
       } catch { /* sidecar fallback is best-effort — the report still ships */ }
     }
@@ -971,7 +1016,8 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
         finalOutput,
         verifierCard,
         options.profile,
-        options.projectLabel
+        options.projectLabel,
+        sidecarTotalCount
       );
     } catch (err) {
       // Regen failure is non-fatal — the original summary still describes
@@ -1042,7 +1088,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
  * it untouched. If the LLM call fails, we return the original report
  * untouched. Both cases are non-fatal.
  */
-async function regenerateExecutiveSummary(report, verifierCard, profile, projectLabel) {
+async function regenerateExecutiveSummary(report, verifierCard, profile, projectLabel, sidecarTotalCount = null) {
   // Locate the existing exec summary section. Pattern: `## Executive Summary`
   // (optionally with emoji prefix), followed by content, ending at the next
   // `## ` header.
@@ -1116,8 +1162,19 @@ async function regenerateExecutiveSummary(report, verifierCard, profile, project
     breakdownClause = `: ${allButLast}, and ${last}`;
   }
 
+  // On a capped scan the rendered body holds only the top-N findings while
+  // the sidecar (and the cap disclosure two lines below this summary) carry
+  // the full set. Counting only the rendered findings made page one read
+  // "identified 28 findings" directly above "All 65 findings ... are listed
+  // in the accompanying .findings.json file" (Audit 8, finding 2.5). When
+  // the sidecar total exceeds the rendered count, the opener counts the full
+  // set and says how many are detailed below; the severity breakdown still
+  // describes the detailed set, matching the disclosure's framing.
+  const isCapped = Number.isFinite(sidecarTotalCount) && sidecarTotalCount > surviving.length;
   const totalNoun = surviving.length === 1 ? 'finding' : 'findings';
-  const openerSentence = `${subjectClause} identified ${surviving.length} ${totalNoun}${breakdownClause}.`;
+  const openerSentence = isCapped
+    ? `${subjectClause} identified ${sidecarTotalCount} findings; the top ${surviving.length} by severity are detailed below${breakdownClause}.`
+    : `${subjectClause} identified ${surviving.length} ${totalNoun}${breakdownClause}.`;
 
   // Profile-aware persona — match the narrator's white-label conventions.
   // When a profile is loaded, we do NOT identify as Ghost Architect.
@@ -1493,6 +1550,9 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     // progress is lost" despite the code promising recovery (Audit 7,
     // finding 3.3). Flat array by design: salvage funnels everything into
     // pendingPassResults and synthesis merges from there losslessly.
+    // writeCheckpoint wraps the plain-string merged groups in structured
+    // {type:'merged'} entries so salvage never rehydrates a shape the merge
+    // template cannot render (Audit 8, finding 3.1).
     writeCheckpoint(projectLabel, passNum, allPasses.length,
       [...session.mergedGroups, ...session.pendingPassResults]);
 

@@ -38,20 +38,37 @@ export function normalizeTitleForDedupe(title) {
 // only counts when the shorter title is longer than 10 characters, mirroring
 // the verifier's fuzzy matcher, so short generic titles ("Dead code") cannot
 // swallow unrelated findings.
+//
+// Containment ADDITIONALLY requires file overlap. Title text alone let a
+// generic detailed title ("missing error handling", 21 normalized chars)
+// absorb every undetailed finding whose title contained it — "Missing error
+// handling in payment webhook", "Missing error handling in export job" —
+// even when they cited different files and were genuinely distinct. The
+// disclosure count self-consistently shrank, so verified findings vanished
+// invisibly (Audit 8, finding 3.8). Two findings now collapse by containment
+// only when they share at least one file path, or when neither carries any
+// file info (the narrator-polish case where the raw twin has no files yet).
+function filesOverlap(filesA, filesB) {
+  const a = Array.isArray(filesA) ? filesA.filter(Boolean) : [];
+  const b = Array.isArray(filesB) ? filesB.filter(Boolean) : [];
+  if (a.length === 0 && b.length === 0) return true;
+  return a.some((f) => b.includes(f));
+}
+
 export function dedupeFindingsByTitle(findings) {
-  const seenKeys = [];
+  const seen = [];
   const out = [];
   for (const f of findings) {
     const key = normalizeTitleForDedupe(f.title);
     if (!key) continue;
-    const isDupe = seenKeys.some((seen) => {
-      if (seen === key) return true;
-      const shorter = seen.length <= key.length ? seen : key;
-      const longer  = seen.length <= key.length ? key : seen;
-      return shorter.length > 10 && longer.includes(shorter);
+    const isDupe = seen.some((s) => {
+      if (s.key === key) return true;
+      const shorter = s.key.length <= key.length ? s.key : key;
+      const longer  = s.key.length <= key.length ? key : s.key;
+      return shorter.length > 10 && longer.includes(shorter) && filesOverlap(s.files, f.files);
     });
     if (isDupe) continue;
-    seenKeys.push(key);
+    seen.push({ key, files: f.files });
     out.push(f);
   }
   return out;

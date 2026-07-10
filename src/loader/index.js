@@ -136,7 +136,8 @@ const IGNORED_FILES = [
   // Build/CI artifacts
   '.DS_Store', 'Thumbs.db',
 ];
-const MAX_FILE_TOKENS = 50000; // ~200KB — skip files larger than this
+// Per-file size handling lives in applyFileSizePolicy (one shared policy for
+// the directory walk, ZIP, and GitHub paths) — see MAX_FILE_CHARS below.
 
 // CODE_EXTENSIONS is shared with src/core/verifier.js, which scrubs fabricated
 // "File.ext:42" line citations for exactly these extensions. Keeping one list
@@ -180,14 +181,19 @@ const IGNORED_EXTENSIONS = new Set([
 // dot-glob. ZIP archives and GitHub trees enumerate dot paths, so without
 // this predicate the same repo produced different file sets, findings, and
 // costs depending on how it was fed to Ghost. One contract, three inputs:
-// dotted segments are excluded everywhere, .env.example is always allowed.
+// dotted segments are excluded everywhere, .env.example is always allowed —
+// including under a dotted parent (.docker/.env.example). The directory
+// walk's .env.example glob runs with dot:true, so it traverses dotted
+// parents; this predicate must match that, or the same nested .env.example
+// loaded by a directory scan vanished from ZIP/GitHub scans (Audit 8,
+// quick win 12).
 // (Scanning a dotted directory DIRECTLY, e.g. pointing Ghost at .git/hooks,
 // still works on the directory path: the dotted segment is in the scan root
 // there, not in the relative path this predicate sees.)
 function isDotExcluded(relPath) {
   const segments = String(relPath || '').split('/').filter(Boolean);
-  return segments.some((seg, i) =>
-    seg.startsWith('.') && !(i === segments.length - 1 && seg === '.env.example'));
+  if (segments.length > 0 && segments[segments.length - 1] === '.env.example') return false;
+  return segments.some((seg) => seg.startsWith('.'));
 }
 
 export function isScannablePath(filePath) {
@@ -412,21 +418,21 @@ export async function loadFromZipPath(zipPath) {
     }
 
     try {
-      const content = entry.getData().toString('utf8');
-      const estTokens = Math.ceil(content.length / 4);
-      if (estTokens > MAX_FILE_TOKENS) {
-        console.log(chalk.gray(`  ${SYM.warn} Skipped ${filename}: too large (${Math.round(estTokens/1000)}k tokens)`));
-        continue;
-      }
+      const rawContent = entry.getData().toString('utf8');
       // Same minified-bundle filter the directory walk applies. Without it, a
       // ZIP scan of the same repo loaded jquery.min.js and friends straight
       // into paid context, so cost and noise differed by input method
       // (Audit 7, finding 3.12).
-      if (isMinified(entry.entryName, content)) {
+      if (isMinified(entry.entryName, rawContent)) {
         console.log(chalk.gray(`  ${SYM.warn} Skipped ${filename}: minified/bundled file`));
         continue;
       }
-      fileMap[entry.entryName] = content;
+      // Shared per-file size policy (truncate, never drop) — Audit 8, 3.4.
+      const sized = applyFileSizePolicy(rawContent);
+      if (sized.truncated) {
+        console.log(chalk.gray(`  ${SYM.warn} Truncated ${filename}: oversized file`));
+      }
+      fileMap[entry.entryName] = sized.content;
       count++;
     } catch {}
   }
@@ -715,15 +721,17 @@ async function loadFromGitHub() {
           const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: file.sha });
           if (data.content) {
             const content = Buffer.from(data.content, 'base64').toString('utf8');
-            const estTokens = Math.ceil(content.length / 4);
-            if (estTokens > MAX_FILE_TOKENS) {
-              console.log(chalk.gray(`  ${SYM.warn} Skipped ${file.path}: too large (${Math.round(estTokens/1000)}k tokens)`));
-            } else if (isMinified(file.path, content)) {
+            if (isMinified(file.path, content)) {
               // Same minified-bundle filter as the directory walk and ZIP path
               // (Audit 7, finding 3.12).
               console.log(chalk.gray(`  ${SYM.warn} Skipped ${file.path}: minified/bundled file`));
             } else {
-              fileMap[file.path] = content;
+              // Shared per-file size policy (truncate, never drop) — Audit 8, 3.4.
+              const sized = applyFileSizePolicy(content);
+              if (sized.truncated) {
+                console.log(chalk.gray(`  ${SYM.warn} Truncated ${file.path}: oversized file`));
+              }
+              fileMap[file.path] = sized.content;
               fetched++;
             }
           }
@@ -814,8 +822,29 @@ async function loadFromGitHub() {
   }
 }
 
-// Max per-file size — files larger than this are truncated to prevent context overflow
+// ── Per-file size policy: ONE policy, three input paths ─────────────────────
+// Files larger than MAX_FILE_CHARS are TRUNCATED with a visible marker, never
+// silently dropped. This single policy applies to the directory walk (readFiles),
+// the ZIP path, and the GitHub path. Before v11.0.0 the three diverged: the
+// directory walk truncated at 120K chars (~30K tokens) while ZIP and GitHub
+// silently SKIPPED files over ~200KB, so the same repo produced different file
+// sets, findings, and costs depending on how it was fed to Ghost — the same
+// input-parity defect class as the dot-path (3.13) and minified (3.12) fixes
+// (Audit 8, finding 3.4). Truncation is the honest behavior: the buyer sees
+// the file was there and where it was cut.
 const MAX_FILE_CHARS = 120000; // ~30K tokens — safe headroom under 200K limit
+
+// Returns { content, truncated }. Truncated content ends in a visible marker.
+function applyFileSizePolicy(content) {
+  if (content.length > MAX_FILE_CHARS) {
+    return {
+      content: content.slice(0, MAX_FILE_CHARS) +
+        '\n\n// [TRUNCATED: file exceeded ' + MAX_FILE_CHARS + ' char limit]',
+      truncated: true,
+    };
+  }
+  return { content, truncated: false };
+}
 
 const MINIFIED_PATTERNS = [
   /\.min\.(js|css)$/i,
@@ -848,13 +877,10 @@ async function readFiles(filePaths, basePath) {
         continue;
       }
 
-      if (content.length > MAX_FILE_CHARS) {
-        fileMap[relativePath] = content.slice(0, MAX_FILE_CHARS) +
-          '\n\n// [TRUNCATED: file exceeded ' + MAX_FILE_CHARS + ' char limit]';
-        truncated++;
-      } else {
-        fileMap[relativePath] = content;
-      }
+      // Shared per-file size policy (truncate, never drop) — Audit 8, 3.4.
+      const sized = applyFileSizePolicy(content);
+      fileMap[relativePath] = sized.content;
+      if (sized.truncated) truncated++;
     } catch {}
   }
 

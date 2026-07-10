@@ -122,7 +122,7 @@ export const Verdict = {
 // ── Single conflict verification ──────────────────────────────────────────────
 
 async function verifyOne(candidate, fileMap, callbacks = {}) {
-  const { onVerifying, onVerified } = callbacks;
+  const { onVerifying } = callbacks;
 
   if (onVerifying) onVerifying({ candidate });
 
@@ -290,8 +290,10 @@ Use your verification budget efficiently — you have a limited number of steps 
     auditTrail:  result.auditTrail,
   };
 
-  if (onVerified) onVerified({ verified });
-
+  // onVerified is deliberately NOT emitted here. verifyConflicts (the only
+  // caller) emits it once per candidate after normalization, for both quick
+  // and full modes; emitting here too printed every full-mode verdict line
+  // twice in the CLI (Audit 8, finding 2.6).
   return verified;
 }
 

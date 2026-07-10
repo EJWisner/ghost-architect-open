@@ -1144,6 +1144,26 @@ async function pushWatchCommitState(octokit, portalOwner, portalRepoName, repoPa
   }
 }
 
+// Read an existing commit-state file so a later update can MERGE into it
+// instead of overwriting. pushWatchCommitState writes the whole file, so a
+// partial update (the prompts-resume path, which only has prompt counts in
+// hand) must start from the state Step 8b wrote or it destroys the detailed
+// findings, observations, verified set, and lifecycle fields (Audit 8,
+// finding 3.2). Returns null when the file does not exist or the portal is
+// unreachable; callers degrade to writing a fresh entry.
+async function fetchWatchCommitState(octokit, portalOwner, portalRepoName, repoPath, commitHash) {
+  if (!octokit || !portalOwner || !portalRepoName || !commitHash) return null;
+  try {
+    const filePath = `projects/${repoSlugFor(repoPath)}/scans/watch/commits/${commitHash}.json`;
+    const { data } = await octokit.rest.repos.getContent({
+      owner: portalOwner, repo: portalRepoName, path: filePath,
+    });
+    return JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
  * Entry point for `ghost --watcher-cancelled`. Fired by the GitHub Actions
  * cancel handler (if: cancelled()). Marks the commit's portal state 'cancelled'
@@ -1239,6 +1259,42 @@ async function postCommentToPR(repoPath, prNumber, body) {
   } catch (err) {
     console.error(`Ghost Watcher: PR comment failed (non-fatal): ${err.message}`);
   }
+}
+
+// ── Conflict-candidate finishing (shared: fresh + resume) ────────────────────
+//
+// Drop self-refuting conflict findings: if the model flagged a conflict and
+// then said "no actual conflict" / "no runtime conflict" / "consistent" in
+// its own detail text, the finding is noise. Remove before surfacing. The
+// `values match` clause carries a negative lookahead so it only fires for a
+// bare self-refutation ("values match") and NOT for a real finding that
+// hedges ("values match in current impl but will conflict if X changes") —
+// the trailing `conflict` assertion keeps it.
+const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+(\w+\s+){0,3}conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|no\s+concrete\s+(runtime\s+)?(conflict|failure|impact)|no\s+active\s+\S+(\s+\S+){0,4}\s+(call\s+)?path|no\s+\S+(\s+\S+){0,3}\s+failure\s+path|(?<!in)consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different|not\s+a\s+runtime\s+failure|performance\s+issue[,\s]+not\s+a\s+correctness/i;
+
+// Turn raw conflict candidates into surfaced findings: optional quick
+// verifier pass, then the self-refuting filter, then normalization. ONE
+// helper for both the fresh path and the batch-resume path — before v11.0.0
+// the resume path skipped both the verifier and the filter, so the same
+// commit produced MORE findings (including model-admitted noise) purely
+// because the CI job timed out (Audit 8, finding 3.6). The verifier needs
+// codebase context; resume runs before the codebase loads, so it passes
+// fileMap: null and gets the filter without the verifier.
+async function finishConflictCandidates(candidates, { verify = false, fileMap = null, tier = 'open' } = {}) {
+  let kept = candidates;
+  if (verify && kept.length > 0) {
+    if (fileMap && Object.keys(fileMap).length > 0) {
+      console.log(`Ghost Watcher: verifying ${kept.length} conflict candidates...`);
+      const vr = await verifyConflicts(kept, fileMap, {}, 'quick', tier);
+      kept = [...vr.confirmed, ...vr.possible];
+      console.log(`Ghost Watcher: ${vr.stats.eliminated} low-signal findings filtered, ${kept.length} kept\n`);
+    } else {
+      console.log('Ghost Watcher: conflict_verify is on, but no codebase context is loaded on this path; self-refuting filter still applies.');
+    }
+  }
+  return kept
+    .filter(c => !SELF_REFUTING_RE.test(c.description || ''))
+    .map(normalizeCandidateToFinding);
 }
 
 // ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -1454,14 +1510,26 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
               }
             }
 
-            // Refresh commit-state prompt count, reusing the stored severity so
-            // the Watch tab's counts are not clobbered.
+            // Refresh the commit state's prompt count by MERGING into the
+            // state Step 8b wrote. This push used to rewrite the whole file
+            // with findings: [] and the pending record's counts, replacing
+            // the portal Watch tab's detailed action findings, observations,
+            // verified set, and lifecycle fields with an empty shell
+            // (Audit 8, finding 3.2). The fallback shape (portal fetch
+            // failed or the state file is gone) uses the pending record's
+            // action-only counts.
+            const existingState = await fetchWatchCommitState(
+              octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash);
             await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
-              commitHash: pending.commitHash, branch, developer: developer.name,
-              timestamp: new Date().toISOString(), status: 'complete', batchId: null,
+              ...(existingState || {
+                commitHash: pending.commitHash, branch, developer: developer.name,
+                batchId: null,
+                findings: [], findingCount: pending.findingCount ?? (pending.findings || []).length,
+                severity: pending.severity || { critical: 0, high: 0, medium: 0, low: 0 },
+              }),
+              timestamp: new Date().toISOString(),
+              status: 'complete',
               message: 'Ghost Watcher™ detailed remediation prompts ready.',
-              findings: [], findingCount: pending.findingCount ?? (pending.findings || []).length,
-              severity: pending.severity || { critical: 0, high: 0, medium: 0, low: 0 },
               prompts: promptCount,
               tokenUsage: buildTokenUsage(promptUsage.inputTokens, promptUsage.outputTokens),
             });
@@ -1526,10 +1594,25 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
               codebaseContext: null,
             })).map(f => ({ ...f, source_mode: 'blast' }));
           } else if (pending.type === 'conflict') {
-            pendingFindings = extractCandidates(rawTexts).map(normalizeCandidateToFinding).map(f => ({ ...f, source_mode: 'conflict' }));
+            // Same finishing pipeline as the fresh path (verifier when
+            // possible, self-refuting filter always) — Audit 8, finding 3.6.
+            pendingFindings = (await finishConflictCandidates(extractCandidates(rawTexts), {
+              verify: watchConfig.scans?.conflict_verify === true,
+              fileMap: null,
+              tier,
+            })).map(f => ({ ...f, source_mode: 'conflict' }));
           }
 
-          const sev = buildSeverityCounts(pendingFindings);
+          // Action/observation split, identical to the fresh path (Step 8b and
+          // the Step 9 sidecar): Blast Radius impact observations are
+          // "exposed", not "broken", and must not inflate finding counts,
+          // severity rollups, the PR comment, or the resume-complete email.
+          // Before v11.0.0 the resume path skipped this split, so a customer
+          // whose CI run timed out got "N findings require your attention"
+          // for pure observations (Audit 8, finding 2.3).
+          const resumeActionFindings    = pendingFindings.filter(f => f.source_mode !== 'blast');
+          const resumeBlastObservations = pendingFindings.filter(f => f.source_mode === 'blast');
+          const sev = buildSeverityCounts(resumeActionFindings);
 
           // Push resumed results to Ghost Portal under the ORIGINAL commit hash.
           await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
@@ -1540,8 +1623,9 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             status: 'complete',
             batchId: pending.batchId,
             message: `Ghost Watcher™ ${pending.type} results retrieved.`,
-            findings: pendingFindings,
-            findingCount: pendingFindings.length,
+            findings: resumeActionFindings,
+            findingCount: resumeActionFindings.length,
+            blastRadiusObservations: resumeBlastObservations,
             severity: sev,
             prompts: 0,
             tokenUsage: buildTokenUsage(resumeUsage.inputTokens, resumeUsage.outputTokens),
@@ -1549,11 +1633,15 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
           // Update the PR comment on the ORIGINAL PR with the real findings.
           if (pending.prNumber) {
-            const summary = `${pendingFindings.length} finding${pendingFindings.length === 1 ? '' : 's'} (${sev.critical} critical, ${sev.high} high, ${sev.medium} medium, ${sev.low} low)`;
+            const summary = `${resumeActionFindings.length} finding${resumeActionFindings.length === 1 ? '' : 's'} (${sev.critical} critical, ${sev.high} high, ${sev.medium} medium, ${sev.low} low)`;
+            const observationLine = resumeBlastObservations.length > 0
+              ? `**Blast Radius observations:** ${resumeBlastObservations.length} (impact context, no action required)\n\n`
+              : '';
             const body =
               `## 👻 Ghost Watcher™ -- Results delivered\n\n` +
               `The batched ${pending.type} analysis for commit \`${(pending.commitHash || '').slice(0, 7)}\` has completed.\n\n` +
               `**Findings:** ${summary}\n\n` +
+              observationLine +
               (portalSlug ? `[Open Ghost Portal to copy prompts into your AI coding tool.](https://ghostarchitect.dev/portal-${portalSlug}.html)\n` : '');
             await postCommentToPR(pending.repo || repoPath, pending.prNumber, body);
           }
@@ -1563,7 +1651,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             const e3 = emailResumeComplete({
               repo: pending.repo || repoPath,
               shortSha: (pending.commitHash || '').slice(0, 7),
-              findingsCount: pendingFindings.length,
+              findingsCount: resumeActionFindings.length,
               criticalCount: sev.critical, highCount: sev.high, mediumCount: sev.medium, lowCount: sev.low,
               portalSlug: pending.portalSlug || portalSlug || repoOwner,
             });
@@ -1587,14 +1675,58 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
     }
   }
 
+  // ── Scan enablement — the single source of truth ─────────────────────────
+  // Computed ONCE, before the preflight, and reused by the preflight, Step 4b
+  // (pending state), Step 5 (blast), Step 6 (conflict), Step 8 completeness
+  // accounting, and the Step 10 telemetry ping. These sites used to re-derive
+  // enablement independently: the preflight ignored skip-patterns (burning a
+  // preflight batch for a run that would submit nothing) and telemetry
+  // reported skip-patterned blasts as run (Audit 8, findings 2.2 and 3.12).
+  //
+  // Release commits (version bumps, changelog/badge updates) don't need a
+  // Blast Radius pass. Skip it when the commit message matches a configured
+  // pattern. Prefer a workflow-exported env var; fall back to git, mirroring
+  // the [ghost-skip] check in Step 1b (GitHub Actions does not export the
+  // commit message as an env var by default).
+  let commitMessage = process.env.GITHUB_COMMIT_MESSAGE || process.env.COMMIT_MESSAGE || '';
+  if (!commitMessage) {
+    try {
+      const { execSync } = await import('child_process');
+      commitMessage = execSync('git log -1 --format=%B', { cwd: repoRoot, encoding: 'utf8' }).trim();
+    } catch { /* git unavailable — leave empty, no skip */ }
+  }
+  const blastSkipPatterns = watchConfig.scans?.blast_radius?.skip_if_message_contains || [];
+  const skipBlast = blastSkipPatterns.some(p => commitMessage.toLowerCase().includes(p.toLowerCase()));
+  if (skipBlast) {
+    console.log('Ghost Watcher: skipping Blast Radius, commit message matches a configured skip pattern.');
+  }
+  const blastWillRun    = watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast;
+  const conflictWillRun = watchConfig.scans?.conflict_detection !== false;
+
+  // Nothing to scan for this commit: every scan is disabled in
+  // ghost-watcher.yaml or suppressed by a skip pattern. This is a configured
+  // outcome, not a failure — before v11.0.0 it fell through to Step 10's
+  // "could not complete this scan" error comment and a permanent 'incomplete'
+  // portal state, training customers to ignore the real failure signal
+  // (Audit 8, finding 2.2). Exit cleanly before the preflight, the codebase
+  // load, and the Step 4b pending push.
+  if (!blastWillRun && !conflictWillRun) {
+    console.log('Ghost Watcher: no scans configured to run for this commit ' +
+      '(all scans disabled or skip-patterned). Nothing to do.');
+    console.log('👻 Ghost Watcher™: nothing to scan for this commit. Exit: 0\n');
+    process.exit(0);
+  }
+
   // ── Batches API preflight ────────────────────────────────────────────────
   // Submit a tiny 1-token batch to confirm the POST path (network + auth +
   // endpoint) works BEFORE we attempt to upload the full ~600KB codebase
   // context. This distinguishes a network/auth failure (tiny POST also fails →
   // nothing we can submit, exit cleanly) from a payload-size failure (tiny POST
   // succeeds but the full submit drops). Resume above already ran — it only
-  // does GETs, so it is unaffected by a broken submit path.
-  if ((watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false) || watchConfig.scans?.conflict_detection !== false) {
+  // does GETs, so it is unaffected by a broken submit path. At least one scan
+  // will run (the nothing-to-scan case exited above), so no enablement guard
+  // is needed here.
+  {
     const preflight = await preflightBatchCheck(anthropic, getWatcherModel());
     if (!preflight.ok) {
       console.error(`Ghost Watcher: Batches API preflight failed — ${preflight.error}`);
@@ -1654,29 +1786,11 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
   let totalInputTokens  = 0;
   let totalOutputTokens = 0;
 
-  // Release commits (version bumps, changelog/badge updates) don't need a
-  // Blast Radius pass. Skip it when the commit message matches a configured
-  // pattern. Prefer a workflow-exported env var; fall back to git, mirroring
-  // the [ghost-skip] check in Step 1b (GitHub Actions does not export the
-  // commit message as an env var by default).
-  let commitMessage = process.env.GITHUB_COMMIT_MESSAGE || process.env.COMMIT_MESSAGE || '';
-  if (!commitMessage) {
-    try {
-      const { execSync } = await import('child_process');
-      commitMessage = execSync('git log -1 --format=%B', { cwd: repoRoot, encoding: 'utf8' }).trim();
-    } catch { /* git unavailable — leave empty, no skip */ }
-  }
-  const blastSkipPatterns = watchConfig.scans?.blast_radius?.skip_if_message_contains || [];
-  const skipBlast = blastSkipPatterns.some(p => commitMessage.toLowerCase().includes(p.toLowerCase()));
-  if (skipBlast) {
-    console.log('Ghost Watcher: skipping Blast Radius — commit message matches a configured skip pattern.');
-  }
-
-  // Single source of truth for "which scans will this run submit". Reused by
-  // Step 5 (blast), Step 6 (conflict), and the Step 8 completeness accounting
-  // so the three can never drift.
-  const blastWillRun    = watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false && !skipBlast;
-  const conflictWillRun = watchConfig.scans?.conflict_detection !== false;
+  // blastWillRun / conflictWillRun (and the skip-pattern check feeding them)
+  // are computed once, above the Batches preflight. See the "Scan enablement"
+  // block there: it is the single source of truth for which scans this run
+  // submits, shared by the preflight, Step 4b, Steps 5 and 6, the Step 8
+  // completeness accounting, and the Step 10 telemetry ping.
 
   // ── Step 4b: pending state, before any submission ─────────────────────────
   // Fires for EVERY config that will run at least one scan. This used to live
@@ -1834,30 +1948,16 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         // Collect output from all chunks — extractCandidates accepts an array
         // and joins them, so conflicts from every chunk are parsed and merged.
         const conflictOutputs = conflictResults.map(r => r.text || '');
-        let conflictCandidates = extractCandidates(conflictOutputs);
-
-        // Optional verifier pass (opt-in via scans.conflict_verify). Runs the
-        // same agent verifier the interactive Conflict mode uses, in 'quick'
-        // mode (single-call per candidate, headless-safe). Keep CONFIRMED +
-        // POSSIBLE; drop FALSE_POSITIVE + INSUFFICIENT.
-        if (watchConfig.scans?.conflict_verify === true && conflictCandidates.length > 0) {
-          console.log(`Ghost Watcher: verifying ${conflictCandidates.length} conflict candidates...`);
-          const vr = await verifyConflicts(conflictCandidates, codebaseContext.fileMap || {}, {}, 'quick', tier);
-          conflictCandidates = [...vr.confirmed, ...vr.possible];
-          console.log(`Ghost Watcher: ${vr.stats.eliminated} low-signal findings filtered, ${conflictCandidates.length} kept\n`);
-        }
-
-        // Drop self-refuting conflict findings: if the model flagged a conflict
-        // and then said "no actual conflict" / "no runtime conflict" / "consistent"
-        // in its own detail text, the finding is noise. Remove before surfacing.
-        // The `values match` clause carries a negative lookahead so it only
-        // fires for a bare self-refutation ("values match") and NOT for a real
-        // finding that hedges ("values match in current impl but will conflict
-        // if X changes") — the trailing `conflict` assertion keeps it.
-        const SELF_REFUTING_RE = /no\s+(actual|real|runtime)\s+conflict|not\s+a\s+(\w+\s+){0,3}conflict|rather\s+than\s+a\s+(real|runtime)\s+conflict|no\s+issue|runtime\s+impact:\s*none|no\s+concrete\s+(runtime\s+)?(conflict|failure|impact)|no\s+active\s+\S+(\s+\S+){0,4}\s+(call\s+)?path|no\s+\S+(\s+\S+){0,3}\s+failure\s+path|(?<!in)consistent\b|values\s+match(?![^.]*\bconflict)|intentionally\s+different|not\s+a\s+runtime\s+failure|performance\s+issue[,\s]+not\s+a\s+correctness/i;
-        conflictFindings = conflictCandidates
-          .filter(c => !SELF_REFUTING_RE.test(c.description || ''))
-          .map(normalizeCandidateToFinding);
+        // Shared finishing pipeline: optional quick verifier (opt-in via
+        // scans.conflict_verify — same agent verifier the interactive
+        // Conflict mode uses, keep CONFIRMED + POSSIBLE) followed by the
+        // self-refuting filter. See finishConflictCandidates, which the
+        // batch-resume path also calls (Audit 8, finding 3.6).
+        conflictFindings = await finishConflictCandidates(extractCandidates(conflictOutputs), {
+          verify: watchConfig.scans?.conflict_verify === true,
+          fileMap: codebaseContext.fileMap || {},
+          tier,
+        });
         const conflictUsage = sumBatchUsage(conflictResults);
         totalInputTokens  += conflictUsage.inputTokens;
         totalOutputTokens += conflictUsage.outputTokens;
@@ -2162,8 +2262,11 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
         findings:       adaptedFindings,
-        severity:       buildSeverityCounts(allFindings),
-        findingCount:   allFindings.length,
+        // Action-only counts, matching the Step 8b completed state. Counting
+        // allFindings here inflated the resume fallback with Blast Radius
+        // observations (Audit 8, finding 3.2).
+        severity:       buildSeverityCounts(stateActionFindings),
+        findingCount:   stateActionFindings.length,
         developerEmail: developer.email,
         projectSlug:    (process.env.GITHUB_REPOSITORY || 'unknown-project').replace('/', '-').toLowerCase(),
         version, tier,
@@ -2328,8 +2431,12 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       },
       prompts:   briefPromptCount,
       scans: {
-        blast:    watchConfig.scans?.blast_radius !== false && watchConfig.scans?.blast_radius?.enabled !== false,
-        conflict: watchConfig.scans?.conflict_detection !== false,
+        // Shared enablement flags (see the "Scan enablement" block above the
+        // preflight). This site used to re-derive enablement WITHOUT the
+        // skip-pattern check, so Pulse reported skip-patterned blasts as run
+        // (Audit 8, finding 3.12).
+        blast:    blastWillRun,
+        conflict: conflictWillRun,
         brief:    watchConfig.scans?.ghost_brief     !== false,
       },
       commit: process.env.GITHUB_SHA || '',

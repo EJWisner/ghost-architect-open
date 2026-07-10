@@ -561,18 +561,12 @@ function convertToMarkdown(content, prefix, label, meta, timestamp = null, brand
   return md;
 }
 
-export function listReports() {
-  const dir = ensureReportsDir();
-  const files = fs.readdirSync(dir)
-    .filter(f => f.endsWith('.txt') || f.endsWith('.md'))
-    .map(f => ({
-      name: f,
-      path: path.join(dir, f),
-      modified: fs.statSync(path.join(dir, f)).mtime
-    }))
-    .sort((a, b) => b.modified - a.modified);
-  return files;
-}
+// listReports() was removed in v11.0.0 (Audit 8, quick win 13): it was an
+// exported API with zero callers anywhere in the tree, and if ever wired
+// as-is it would have listed every report twice (both .txt and .md pass the
+// filter) plus the -unsaved- recovery files. Dead code describing a behavior
+// contract misleads the next reader; rebuild deliberately if a "View saved
+// reports" feature lands.
 
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*m/g, '');

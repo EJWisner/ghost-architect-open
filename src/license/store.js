@@ -72,22 +72,39 @@ export function getFingerprintAtActivation() {
 // Lives inside the `license` record so that saveActivation() (which rewrites
 // the whole record) drops it. That is deliberate: re-activating with a fresh
 // key must not inherit the old key's revoked verdict.
+//
+// STANDALONE FALLBACK (Audit 8, finding 3.10): an env-var license
+// (GHOST_LICENSE_KEY on a CI runner) has no installed record, so the
+// record-attached write silently no-oped. That meant the 24h TTL never
+// applied on CI (a network probe on every gated run) and a revoked verdict
+// never became sticky on the exact surface the revocation check targets.
+// When no record exists, the cache persists under its own configstore key.
+// Safety is preserved: the cache is keyed by license_id and every reader
+// checks `cached.license_id === licenseId`, so a different key never
+// inherits a stale verdict, mirroring what saveActivation's record rewrite
+// guarantees on the installed path.
+const REVOCATION_STANDALONE_KEY = 'revocationCacheStandalone';
+
 export function getRevocationCache() {
   const r = read();
-  return r && r.revocation && typeof r.revocation === 'object' ? r.revocation : null;
+  if (r && r.revocation && typeof r.revocation === 'object') return r.revocation;
+  const standalone = getConfig().get(REVOCATION_STANDALONE_KEY);
+  return standalone && typeof standalone === 'object' ? standalone : null;
 }
 
 export function saveRevocationCache({ licenseId, status }) {
+  const entry = {
+    license_id: licenseId,
+    status,
+    checked_at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+  };
   const r = read();
-  if (!r) return;   // no license installed; nothing to attach the cache to
-  write({
-    ...r,
-    revocation: {
-      license_id: licenseId,
-      status,
-      checked_at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
-    },
-  });
+  if (!r) {
+    // Env-var (CI) license: persist standalone so TTL + sticky-revoked hold.
+    getConfig().set(REVOCATION_STANDALONE_KEY, entry);
+    return;
+  }
+  write({ ...r, revocation: entry });
 }
 
 // Persist a freshly activated license. Used by `ghost activate`.
@@ -144,9 +161,22 @@ export function updateLastSeenUtc(newIso) {
   // to prevent ratchet rollback attacks. The window defaults to 5 minutes so a
   // benign NTP correction or minor clock skew does not lock a valid user out;
   // GHOST_CLOCK_TOLERANCE (seconds) overrides it for tighter or looser policy.
-  const MAX_PAST_MS = process.env.GHOST_CLOCK_TOLERANCE
-    ? parseInt(process.env.GHOST_CLOCK_TOLERANCE) * 1000
-    : 300000; // 5 minutes default
+  // Guarded parse (Audit 8, quick win 6): a non-numeric value used to yield
+  // NaN, and `newMs < storedMs - NaN` is always false, so the rollback
+  // rejection silently became a no-op with zero feedback. Fall back to the
+  // default and say so.
+  let MAX_PAST_MS = 300000; // 5 minutes default
+  if (process.env.GHOST_CLOCK_TOLERANCE) {
+    const parsedTolerance = Number.parseInt(process.env.GHOST_CLOCK_TOLERANCE, 10);
+    if (Number.isFinite(parsedTolerance) && parsedTolerance >= 0) {
+      MAX_PAST_MS = parsedTolerance * 1000;
+    } else {
+      process.stderr.write(
+        `[Ghost] GHOST_CLOCK_TOLERANCE is not a valid number of seconds ` +
+        `("${process.env.GHOST_CLOCK_TOLERANCE}"); using the 300s default.\n`
+      );
+    }
+  }
   const stored = getLastSeenUtc();
   if (stored) {
     const storedMs = new Date(stored).getTime();

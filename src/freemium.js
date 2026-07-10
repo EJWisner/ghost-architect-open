@@ -146,16 +146,16 @@ export function getScanCount() {
   return safeGetCount(COUNT_KEY);
 }
 
+// safeIncrementCount's thrown error is already customer-ready (one sentence
+// ending in the support CTA), and its stderr line already carries the
+// disk-space guidance. Re-wrapping it here composed "Scan quota update
+// failed: Quota counter update failed. Please contact
+// support@ghostarchitect.dev if this persists.. Check disk space..." with a
+// double period, shown to Open users right after a successful forecast
+// (Audit 8, finding 2.7). Let the original error propagate untouched.
 export function incrementScanCount(prefix) {
   if (!COUNTED_PREFIXES.has(prefix)) return;
-  try {
-    safeIncrementCount(COUNT_KEY);
-  } catch (err) {
-    throw new Error(
-      'Scan quota update failed: ' + err.message +
-      '. Check disk space and config file permissions.'
-    );
-  }
+  safeIncrementCount(COUNT_KEY);
 }
 
 // Test helper. Not exposed in CLI flags — only callable from code or by
@@ -172,14 +172,8 @@ export function getForecastCount() {
 }
 
 export function incrementForecastCount() {
-  try {
-    safeIncrementCount(FORECAST_COUNT_KEY);
-  } catch (err) {
-    throw new Error(
-      'Scan quota update failed: ' + err.message +
-      '. Check disk space and config file permissions.'
-    );
-  }
+  // No re-wrap: see the incrementScanCount comment (Audit 8, finding 2.7).
+  safeIncrementCount(FORECAST_COUNT_KEY);
 }
 
 // Test helper.
@@ -200,14 +194,8 @@ export function getFixForecastCount() {
 }
 
 export function incrementFixForecastCount() {
-  try {
-    safeIncrementCount(FIX_FORECAST_COUNT_KEY);
-  } catch (err) {
-    throw new Error(
-      'Scan quota update failed: ' + err.message +
-      '. Check disk space and config file permissions.'
-    );
-  }
+  // No re-wrap: see the incrementScanCount comment (Audit 8, finding 2.7).
+  safeIncrementCount(FIX_FORECAST_COUNT_KEY);
 }
 
 // Test helper.
@@ -412,6 +400,15 @@ export function renderUpgradePaywall(paywall = {}, paywallPromo = '') {
   // requiredExact means requiredTier is a self-contained phrase (e.g. a Max-plan
   // list) that must not get " or higher" appended.
   const tierSuffix = paywall.requiredExact ? '' : ' or higher';
+  // The trial CTA is shown only when it is honest and relevant:
+  //   - trialUnlocks false means the free Pro Max trial does NOT unlock this
+  //     gate (mode:watch), so the CTA would send the user into a trial that
+  //     hits the identical paywall again (Audit 8, finding 1.1).
+  //   - A user already on a paid tier (or on the trial itself) hitting a
+  //     higher-tier gate should see the upgrade path, not a free-trial pitch
+  //     that reads as a downgrade.
+  const PAID_OR_TRIAL_TIERS = ['trial', 'pro', 'pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max'];
+  const showTrialCta = paywall.trialUnlocks !== false && !PAID_OR_TRIAL_TIERS.includes(paywall.tier);
   const lines = [
     chalk.yellow.bold(`${modeName} requires ${requiredTier}${tierSuffix}.`),
   ];
@@ -420,9 +417,13 @@ export function renderUpgradePaywall(paywall = {}, paywallPromo = '') {
     lines.push(chalk.cyan.bold(paywallPromo));
   }
   lines.push('');
-  lines.push(...trialCtaLines());
-  lines.push('');
-  lines.push(chalk.white('Or upgrade at: ') + chalk.cyan('ghostarchitect.dev/pricing'));
+  if (showTrialCta) {
+    lines.push(...trialCtaLines());
+    lines.push('');
+  }
+  // "Or upgrade" only reads correctly when the trial CTA above offers the
+  // first option; without it, the upgrade link IS the pitch.
+  lines.push(chalk.white(showTrialCta ? 'Or upgrade at: ' : 'Upgrade at: ') + chalk.cyan('ghostarchitect.dev/pricing'));
   lines.push('');
   lines.push(chalk.white('Have a license? Activate it:'));
   lines.push(chalk.cyan('  ghost --activate <your key here>'));

@@ -590,8 +590,12 @@ function getCapDisclosure(total, cap) {
 // disclosure it decorated to "**_This report ..._**" used to slip past this
 // anchor while the patcher's presence check still matched — so the canonical
 // line was never spliced and the stale pre-verification count shipped
-// (Audit 7, finding 3.18).
-const CAP_DISCLOSURE_LINE = /^[*_]*This report (?:details|shows) the top \d+ findings by severity[^\n]*[*_]$/m;
+// (Audit 7, finding 3.18). The TRAILING anchor is [*_]* as well: requiring
+// at least one closing emphasis char meant a fully de-italicized copy
+// (plain "This report details the top 30 ... file.") escaped the rewrite
+// while the patcher's presence regex still matched it, so the stale count
+// shipped by the same mechanism in reverse (Audit 8, quick win 6).
+const CAP_DISCLOSURE_LINE = /^[*_]*This report (?:details|shows) the top \d+ findings by severity[^\n]*[*_]*$/m;
 
 /**
  * Replace the rendered cap disclosure with one stating the true sidecar count.

@@ -82,7 +82,7 @@ export function getBlastPassInfo(fileMap, tier = 'open') {
 //
 export async function runMultipassBlast(patchedContext, forecastTarget, options = {}) {
   // @ghost-verified: onUsage=null default is safe -- every call site guards with if (onUsage) before invoking
-  const { tier = 'open', profile, forecastMode, onPassStart, onPassComplete, onSynthesisStart, onUsage = null } = options;
+  const { tier = 'open', profile, forecastMode, onPassStart, onPassComplete, onSynthesisStart, onUsage = null, onSidecarFindings = null } = options;
 
   const fileMap = patchedContext.fileMap || {};
   const passes  = buildBlastPasses(fileMap, tier);
@@ -97,7 +97,7 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
     if (onPassStart) onPassStart(passNum, total);
 
     let passOutput = '';
-    await runBlastRadius(
+    const finishedPass = await runBlastRadius(
       chunkCtx,
       forecastTarget,
       (chunk) => { passOutput += chunk; },
@@ -106,10 +106,20 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
         forecastMode,
         onNarratorStart: () => {},
         onUsage,
+        // Per-pass sidecar findings are only meaningful when the pass output
+        // IS the final report (single pass). On multi-pass runs the synthesis
+        // below produces the real deliverable, so per-pass callbacks would
+        // hand callers the wrong finding set.
+        onSidecarFindings: total === 1 ? onSidecarFindings : undefined,
       }
     );
-
-    perPassResults.push(passOutput);
+    // Prefer the return value over the streamed accumulation: runBlastRadius
+    // returns the POST-PROCESSED report (completeness-patcher splices, which
+    // are never streamed, plus the reconciled cap disclosure). Collecting
+    // only the streamed chunks silently dropped every patcher-restored
+    // finding from multipass Commit Forecast reports and shipped stale
+    // disclosure counts (Audit 8, finding 3.5).
+    perPassResults.push(finishedPass || passOutput);
     if (onPassComplete) onPassComplete(passNum, total);
   }
 
@@ -119,7 +129,6 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
   // the synthesis path returns below (the report string). onSynthesisStart is
   // intentionally NOT fired here, since no synthesis happens.
   if (passes.length === 1) {
-    console.log('Single-pass scan, skipping batch synthesis');
     return perPassResults[0];
   }
 

@@ -325,6 +325,12 @@ export function paywallFor(gateId, tier) {
       // the renderer must NOT append " or higher", which would misrepresent the
       // gate (there is nothing "higher" than the Max tiers to upgrade to).
       requiredExact: isMaxOnlyGate(gateId),
+      // Whether the free Pro Max trial actually unlocks this gate. The
+      // renderer suppresses the trial CTA when false: pitching a trial that
+      // re-blocks the user at the identical paywall (mode:watch is
+      // trial:false) burns the highest-intent conversion touch and reads as
+      // bait (Audit 8, finding 1.1).
+      trialUnlocks: (TIER_POLICY[gateId] || {}).trial === true,
     };
   }
   // Feature gates listed in FEATURE_DISPLAY render the standard upgrade
@@ -342,6 +348,7 @@ export function paywallFor(gateId, tier) {
       modeName: FEATURE_DISPLAY[gateId],
       requiredTier: minRequiredTierLabel(gateId),
       requiredExact: isMaxOnlyGate(gateId),
+      trialUnlocks: (TIER_POLICY[gateId] || {}).trial === true,
     };
   }
   return { kind: 'unknown', gateId, tier };

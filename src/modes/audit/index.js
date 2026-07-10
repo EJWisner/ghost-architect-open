@@ -365,6 +365,13 @@ export async function runAuditMode(codebaseContext, options = {}) {
       saveSpinner.succeed(chalk.green(`  ${SYM.check} Reports saved`));
     } catch (err) {
       saveSpinner.fail(chalk.red(`  Save failed: ${err.message}`));
+      // The deal-grade deliverable is still in hand; do not let a save
+      // failure (full disk, permissions) silently drop the paid roadmap
+      // synthesis with no recovery path (Audit 8, quick win 4).
+      try {
+        const { offerUnsavedReport } = await import('../../cli/unsaved-report.js');
+        await offerUnsavedReport(reportContent, { prefix: 'ghost-audit' });
+      } catch { /* recovery is best-effort — never mask the original error */ }
     }
   }
 

@@ -53,7 +53,7 @@ import { showFriendlyError } from '../src/utils/errors.js';
 // v1 ships on the Pro umbrella main branch only. Ghost Open (MIT, public)
 // MUST NOT receive this code. Team and Enterprise inherit when those
 // branches sync forward from main.
-import { validateLicense, isBlocking } from '../src/license/validator.js';
+import { validateLicense, isBlocking, isWarning } from '../src/license/validator.js';
 import { decodeAndVerifyToken } from '../src/license/token.js';
 import { tryParseKey, looksLikeHumanKey } from '../src/license/format.js';
 import { currentFingerprintHashes } from '../src/license/fingerprint.js';
@@ -68,7 +68,7 @@ import {
 import { setActiveLicense, getActiveLicense, getActiveTier, trialDaysRemaining } from '../src/license/session.js';
 import { refreshLicenseSession } from '../src/license/session-refresh.js';
 import { requireTier, allowedTiers } from '../src/license/tier-gates.js';
-import { getScanCount, renderAuditPaywall, renderQuotaPaywall, renderUpgradePaywall, getForecastCount, renderForecastPaywall } from '../src/freemium.js';
+import { getScanCount, renderAuditPaywall, renderQuotaPaywall, renderUpgradePaywall, getForecastCount, renderForecastPaywall, getFixForecastCount, renderFixForecastPaywall } from '../src/freemium.js';
 import { PRICING } from '../src/constants/pricing.js';
 
 // Activation server endpoint. Hardcoded so customers can't be tricked into
@@ -126,16 +126,24 @@ async function refreshSessionAndTier() {
   const { result, tier } = await refreshLicenseSession(CLI_SCAN_OVERRIDES);
   TIER = tier;
   // A refresh that lands a usable license clears any earlier degrade note; a
-  // refresh that lands a revoked one records it (mirrors the startup blocks).
+  // refresh that lands a revoked or trial-ended one records it (mirrors the
+  // startup blocks). Every OTHER blocking state clears the note too: keeping
+  // the previous value meant a refresh landing 'missing' (license removed
+  // mid-session) left the reconfigure menu's license row claiming "revoked:
+  // run ghost --activate" on a machine with no license installed at all
+  // (Audit 8, quick win 7).
   if (isBlocking(result.state)) {
-    SESSION_DEGRADE_REASON = result.state === 'revoked' ? 'revoked' : SESSION_DEGRADE_REASON;
+    SESSION_DEGRADE_REASON =
+      result.state === 'revoked' ? 'revoked' :
+      (result.state === 'hard_stop' && result.payload?.tier === 'trial') ? 'trial-ended' :
+      null;
   } else {
     SESSION_DEGRADE_REASON = null;
   }
   return tier;
 }
 
-const COPYRIGHT = 'Copyright © 2026 Ghost Architect. All rights reserved.';
+const COPYRIGHT = 'Copyright © 2026 Ghost Architect™. All rights reserved.';
 
 // The Max tiers, derived directly from the 'mode:ghost-brief' policy in
 // src/license/tier-gates.js so there is exactly ONE source of truth. Previously
@@ -335,6 +343,12 @@ Licensing:
   --license-clear          Remove the installed license from local storage.
                            Then exit. Useful for migrating to a new license.
   --deactivate             Alias for --license-clear.
+  --export-ci-token        Print the installed signed license token to stdout
+                           for CI setup (only the token goes to stdout, so it
+                           is pipe-safe):
+                             ghost --export-ci-token | gh secret set GHOST_LICENSE_KEY
+                           Set it as the GHOST_LICENSE_KEY secret for
+                           Ghost Watcher™ runners. Then exit.
   --license-debug          Print the full error (with stack) if license
                            validation hits an unexpected fault. Use this when
                            contacting support@ghostarchitect.dev so we can see
@@ -467,9 +481,13 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
     { name: (IS_WINDOWS ? '[DSH] Project Dashboard  ' : '📊  Project Dashboard  ') + (IS_WINDOWS ? '' : chalk.gray('- Remediation progress across all projects')), value: 'dashboard' },
     { name: (IS_WINDOWS ? '[CMP] Compare Reports  ' : '🔍  Compare Reports  ') + (IS_WINDOWS ? '' : chalk.gray('- Before/after diff of two saved reports')), value: 'compare' },
     {
-      name: IS_WINDOWS
-        ? '[PRF] Ghost Partner Profile  - create or manage white-label consultant profiles'
-        : '👤  Ghost Partner Profile  ' + (profilesAllowed ? chalk.gray('- create or manage white-label consultant profiles') : chalk.gray('- Pro or higher · ghostarchitect.dev/pricing')),
+      // Windows gets the same tier-aware suffix as everywhere else: the old
+      // literal always showed the manage copy, so Windows Open users had no
+      // pre-click signal the row is Pro-gated (Audit 8, quick win 10).
+      name: (IS_WINDOWS ? '[PRF] Ghost Partner Profile  ' : '👤  Ghost Partner Profile  ') +
+        (profilesAllowed
+          ? chalk.gray('- create or manage white-label consultant profiles')
+          : chalk.gray(IS_WINDOWS ? '- Pro or higher - ghostarchitect.dev/pricing' : '- Pro or higher · ghostarchitect.dev/pricing')),
       value: 'profiles-topLevel',
     },
   ];
@@ -478,7 +496,7 @@ async function selectInputMethod(activeProfileLabel, tier = 'open') {
   // this menu still manages the GitHub reports token and license key, which an
   // env-key user needs. The API-key row itself is disabled inside the submenu
   // when usingEnvKey() is true.
-  choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect' : '⚙   Reconfigure Ghost Architect', value: 'reconfigure' });
+  choices.push({ name: IS_WINDOWS ? '[CFG] Reconfigure Ghost Architect™' : '⚙   Reconfigure Ghost Architect™', value: 'reconfigure' });
   // Universal escape: top-level menu uses a single "← Exit Ghost" choice
   // (no separate Back vs Exit). Returning BACK_VALUE here means the same
   // thing as selecting Exit at the top level — there is no higher level
@@ -744,20 +762,22 @@ async function runProfilesMenu() {
       { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
     ));
 
+    // IS_WINDOWS-gated like every other menu (Audit 8, quick win 10): the raw
+    // emoji/Unicode literals rendered as mojibake in classic Windows consoles.
     const choices = [
-      { name: '➕  Create new profile', value: 'create' },
+      { name: IS_WINDOWS ? '[+] Create new profile' : '➕  Create new profile', value: 'create' },
     ];
     if (profiles.length) {
-      choices.push({ name: '✎  Edit existing profile', value: 'edit' });
-      choices.push({ name: '★  Set default profile', value: 'set-default' });
+      choices.push({ name: IS_WINDOWS ? '[E] Edit existing profile' : '✎  Edit existing profile', value: 'edit' });
+      choices.push({ name: IS_WINDOWS ? '[*] Set default profile' : '★  Set default profile', value: 'set-default' });
       if (defaultSlug) {
-        choices.push({ name: '☆  Clear default profile', value: 'clear-default' });
+        choices.push({ name: IS_WINDOWS ? '[ ] Clear default profile' : '☆  Clear default profile', value: 'clear-default' });
       }
-      choices.push({ name: '📄  Open profile in editor', value: 'open' });
-      choices.push({ name: '🗑   Delete profile', value: 'delete' });
+      choices.push({ name: IS_WINDOWS ? '[O] Open profile in editor' : '📄  Open profile in editor', value: 'open' });
+      choices.push({ name: IS_WINDOWS ? '[D] Delete profile' : '🗑   Delete profile', value: 'delete' });
     }
     choices.push(new inquirer.Separator());
-    choices.push({ name: '←  Back to main menu', value: 'back' });
+    choices.push({ name: IS_WINDOWS ? '[<] Back to main menu' : '←  Back to main menu', value: 'back' });
 
     const { action } = await inquirer.prompt([{
       type: 'list',
@@ -1292,6 +1312,30 @@ async function runActivateViaSignedToken(tokenString) {
   saveActivation({ token: tokenString, fingerprintHashes: fpHashes });
   reconcileSudoOwnership();
 
+  // A signed token activates on signature and fingerprint alone, so an
+  // expired or revoked one saves "successfully". Printing the green box for
+  // a token that then validates as blocked showed the customer a success
+  // screen while every subsequent scan paywalled them as Open with no
+  // explanation (Audit 8, finding 1.3). Validate before celebrating; the
+  // token stays saved either way so a renewal can pick it up.
+  const postSave = await validateLicense({ skipNetworkClock: true });
+  if (isBlocking(postSave.state)) {
+    console.log('\n' + boxen(
+      chalk.yellow.bold(`${SYM.warn} License saved, but it is not currently usable`) + '\n\n' +
+      chalk.white('Customer: ') + chalk.cyan(payload.customer) + '\n' +
+      chalk.white('Tier:     ') + chalk.cyan(payload.tier) + '\n' +
+      chalk.white('State:    ') + chalk.yellow(postSave.state) + '\n\n' +
+      (postSave.message
+        ? chalk.white(postSave.message)
+        : chalk.white('Your license activated but appears to be expired.\nRenew at ') +
+          chalk.cyan('ghostarchitect.dev/pricing') + chalk.white(' or run ') +
+          chalk.cyan('ghost --activate') + chalk.white(' with a valid key.')),
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+    ));
+    console.log('');
+    return;
+  }
+
   console.log('\n' + boxen(
     chalk.green.bold(`${SYM.check} License activated`) + '\n\n' +
     chalk.white('Customer: ') + chalk.cyan(payload.customer) + '\n' +
@@ -1386,6 +1430,24 @@ async function runExportCiTokenFlow() {
     console.error('Then re-run: ghost --export-ci-token');
     process.exit(1);
   }
+
+  // Validate before exporting. A revoked or hard-stopped token exported
+  // cleanly here configured a CI runner that printed "license is not valid"
+  // on every run and never scanned, with no hint at export time that the
+  // token was already dead (Audit 8, finding 2.9). All output stays on
+  // stderr so stdout carries either the token or nothing.
+  const validity = await validateLicense({ skipNetworkClock: true });
+  if (isBlocking(validity.state)) {
+    console.error(`This license currently validates as "${validity.state}" and cannot run CI scans.`);
+    if (validity.message) console.error(validity.message);
+    console.error('Nothing was exported. Renew or re-activate, then re-run: ghost --export-ci-token');
+    process.exit(1);
+  }
+  if (isWarning(validity.state)) {
+    console.error(`Note: this license currently validates as "${validity.state}". ` +
+      'CI runs will stop scanning once it fully expires. Renew soon.');
+  }
+
   console.error('Signed Ghost Architect™ license token (set this as the GHOST_LICENSE_KEY secret in CI):');
   console.error('');
   process.stdout.write(record.token + '\n');
@@ -1759,7 +1821,7 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
       // The tierBeforeGate re-seed in main() covers the startup path; this
       // covers any other (or future) caller. Last-write-wins, so the double
       // seed on the startup path is harmless.
-      setScanOptions({ tier: 'open', ...CLI_SCAN_OVERRIDES });
+      setScanOptions({ ...CLI_SCAN_OVERRIDES, tier: 'open' });
       console.log('\n' + boxen(
         chalk.yellow.bold(`Your ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial has ended.`) + '\n\n' +
         chalk.white('You still have access to Ghost Open.') + '\n' +
@@ -1780,7 +1842,7 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
       setActiveLicense(null);
       SESSION_DEGRADE_REASON = 'revoked';
       // Same degrade-site re-seed as the lapsed-trial block above.
-      setScanOptions({ tier: 'open', ...CLI_SCAN_OVERRIDES });
+      setScanOptions({ ...CLI_SCAN_OVERRIDES, tier: 'open' });
       console.log('\n' + boxen(
         chalk.yellow.bold('This license has been revoked.') + '\n\n' +
         chalk.white('This usually means the subscription was cancelled.') + '\n' +
@@ -1846,10 +1908,32 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
 // commands run interactively on a developer machine.
 
 async function runBatchStatusCommand() {
-  const pending = getPendingBatches();
+  let pending = getPendingBatches();
   if (!pending.length) {
     console.log(chalk.gray('\nNo pending batches.\n'));
     return;
+  }
+
+  // Same retention prune the menu path applies (Audit 8, quick win 8): an
+  // aged-out batch is no longer retrievable server-side, so listing it as
+  // "error: Not Found" forever, with a closing line telling the user to
+  // check again in a few minutes, was false on both counts.
+  const expiredCutoff = Date.now() - BATCH_RETENTION_DAYS * 86400 * 1000;
+  const expired = pending.filter(b => {
+    const t = Date.parse(b.submittedAt || '');
+    return Number.isFinite(t) && t < expiredCutoff;
+  });
+  for (const b of expired) removePendingBatch(b.id);
+  if (expired.length > 0) {
+    console.log(chalk.gray(
+      `\nRemoved ${expired.length} expired batch${expired.length === 1 ? '' : 'es'} ` +
+      `(older than ${BATCH_RETENTION_DAYS} days, no longer retrievable).`
+    ));
+    pending = getPendingBatches();
+    if (!pending.length) {
+      console.log(chalk.gray('No pending batches.\n'));
+      return;
+    }
   }
 
   const apiKey = resolveApiKey();
@@ -1861,6 +1945,7 @@ async function runBatchStatusCommand() {
 
   const rows = [];
   let anyReady = false;
+  let anyGone = false;
   for (const b of pending) {
     let status = 'unknown';
     let ready = false;
@@ -1870,7 +1955,16 @@ async function runBatchStatusCommand() {
       ready = status === 'ended';
       if (ready && b.status !== 'ended') updatePendingBatch(b.id, { status: 'ended' });
     } catch (err) {
-      status = 'error: ' + String(err && err.message ? err.message : err).slice(0, 30);
+      // A 404 means the batch is gone server-side and never coming back:
+      // remove it, same as the menu path, instead of keeping a permanent
+      // "error: Not Found" row (Audit 8, quick win 8).
+      if (err && err.status === 404) {
+        removePendingBatch(b.id);
+        anyGone = true;
+        status = 'gone (removed from your pending list)';
+      } else {
+        status = 'error: ' + String(err && err.message ? err.message : err).slice(0, 30);
+      }
     }
     if (ready) anyReady = true;
     rows.push({
@@ -1904,6 +1998,8 @@ async function runBatchStatusCommand() {
     const readyOne = rows.find(r => r.ready === 'yes');
     console.log(chalk.cyan('One or more batches are ready. Retrieve with:'));
     console.log(chalk.gray('  ghost batch-retrieve ') + chalk.cyan(readyOne.id) + '\n');
+  } else if (anyGone && rows.every(r => r.status.startsWith('gone'))) {
+    console.log(chalk.gray('Those batches ended without retrievable results and were removed. Re-run the scan to try again.\n'));
   } else {
     console.log(chalk.gray('No batches ready yet: check again in a few minutes.\n'));
   }
@@ -1947,12 +2043,16 @@ async function runBatchRetrieveCommand(id) {
   // Pull the result text for this batch's request.
   console.log(chalk.gray(`\n  Retrieving results for ${id}...`));
   let text = null;
+  let batchUsage = null;
   try {
     const results = await client.messages.batches.results(id);
     for await (const item of results) {
       const matches = !entry.customId || item.custom_id === entry.customId;
       if (matches && item.result && item.result.type === 'succeeded') {
         text = item.result.message?.content?.[0]?.text ?? '';
+        // Real batch usage, so the retrieve path can stamp the billed cost
+        // into the saved report's meta (Audit 8, finding 2.4).
+        batchUsage = item.result.message?.usage || null;
         break;
       }
     }
@@ -1978,7 +2078,7 @@ async function runBatchRetrieveCommand(id) {
   // metadata differs).
   try {
     if (entry.mode === 'blast-radius') {
-      const { saved } = await retrieveBlastBatchResult(text, entry);
+      const { saved } = await retrieveBlastBatchResult(text, entry, { batchUsage });
       removePendingBatch(id);
       console.log(chalk.green(`\n${SYM.check} Reports saved to ~/Ghost Architect Reports/`));
       console.log(chalk.gray(`  📄 ${saved.txtFile}`));
@@ -1995,7 +2095,7 @@ async function runBatchRetrieveCommand(id) {
       console.log('');
     } else {
       console.log(chalk.yellow(`\n  Batch retrieve for mode "${entry.mode}" is not wired up in this build yet.`));
-      console.log(chalk.gray('  The reference implementation currently covers Blast Radius.\n'));
+      console.log(chalk.gray('  Batch retrieve currently covers Blast Radius and Question.\n'));
     }
   } catch (err) {
     console.log(chalk.red(`\n${SYM.cross} Failed to process batch results: ${err.message}\n`));
@@ -2012,6 +2112,9 @@ function friendlyBatchModeLabel(mode) {
     case 'conflict':     return 'Conflict Detection';
     case 'audit':        return 'Inheritance Audit';
     case 'chat':         return 'Chat';
+    case 'commit-forecast': return 'Commit Forecast';
+    case 'fix-forecast':    return 'Fix Forecast';
+    case 'executive-brief': return 'Executive Brief';
     default:             return mode || 'Scan';
   }
 }
@@ -2060,6 +2163,17 @@ async function buildPendingBatchChoices() {
     try { client = new Anthropic({ apiKey }); } catch { client = null; }
   }
 
+  // Without an API key no status can ever resolve, so the rows rendered a
+  // perpetual "checking..." on every menu draw with no hint that the missing
+  // key was the cause (Audit 8, quick win 9). Say so once and render nothing.
+  if (!client) {
+    console.log(chalk.gray(
+      `  ${pending.length} pending batch${pending.length === 1 ? '' : 'es'} cannot be checked: ` +
+      'no Anthropic API key configured. Run ghost --reconfigure to add one.'
+    ));
+    return [];
+  }
+
   console.log(chalk.gray(`  Checking ${pending.length} pending batch${pending.length === 1 ? '' : 'es'}...`));
 
   // Check all statuses concurrently. A failed/uncheckable status renders the
@@ -2090,14 +2204,17 @@ async function buildPendingBatchChoices() {
     const modeLabel = friendlyBatchModeLabel(entry.mode);
     const time = formatClockTime(entry.submittedAt) || entry.submittedAt || 'unknown';
     if (status === 'gone') continue;   // already pruned above, render nothing
+    // IS_WINDOWS-gated icon, same convention as the rest of the menu
+    // (Audit 8, quick win 10).
+    const batchIcon = IS_WINDOWS ? '[BAT]' : '📬';
     if (status === 'ended') {
       rows.push({
-        name: `📬 ${modeLabel} batch (submitted ${time}) - ` + chalk.green.bold('READY'),
+        name: `${batchIcon} ${modeLabel} batch (submitted ${time}) - ` + chalk.green.bold('READY'),
         value: `batch:${entry.id}`,
       });
     } else {
       rows.push({
-        name: chalk.gray(`📬 ${modeLabel} batch (submitted ${time})`),
+        name: chalk.gray(`${batchIcon} ${modeLabel} batch (submitted ${time})`),
         disabled: 'checking...',
       });
     }
@@ -2299,6 +2416,13 @@ async function reconfigureLicense() {
       if (tier !== 'open') {
         const tierLabel = tier.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
         console.log(chalk.green(`  ${SYM.check} This session is now running as Ghost Architect™ ${tierLabel}. No restart needed.\n`));
+      } else {
+        // The activation flow already printed WHY the license is unusable
+        // (yellow "saved, but not currently usable" box for a blocked token).
+        // Without this line, a customer who just watched activation finish
+        // saw nothing and got paywalled on their next scan (Audit 8,
+        // finding 1.3).
+        console.log(chalk.yellow(`  ${SYM.warn} This session remains on the Open tier. If your license is expired or revoked, renew at ghostarchitect.dev/pricing or run ghost --activate with a valid key.\n`));
       }
     } catch (e) {
       if (!(e instanceof ActivationAborted)) throw e;
@@ -2358,7 +2482,7 @@ async function runSelectiveReconfigure() {
     try {
       ({ action } = await inquirer.prompt([{
         type: 'list', name: 'action', theme: inquirerTheme,
-        message: chalk.cyan('Reconfigure Ghost Architect:'),
+        message: chalk.cyan('Reconfigure Ghost Architect™:'),
         choices: reconfigureChoices,
       }]));
     } catch (_) {
@@ -2748,8 +2872,11 @@ async function main() {
   // Worker-driven promo strings. Declared at function scope so the mode
   // loop below (which fires after license enforcement) has access to
   // paywallPromo when renderPaywall is invoked on a quota or audit gate.
-  // Populated only when state is missing (no license = Open tier); other
-  // license states never reach the paywall renderers.
+  // Populated when state is missing (no license = Open tier) AND for the
+  // degrade-to-open states (revoked, lapsed trial): those sessions continue
+  // as Open and DO hit the paywall renderers, and a cancelled or lapsed
+  // customer is the highest-intent re-conversion audience, so they must see
+  // the server-driven promo too (Audit 8, finding 2.11).
   let promos = { promo: '', paywallPromo: '' };
   try {
     let licenseResult = await validateLicense();
@@ -2775,7 +2902,7 @@ async function main() {
     printBanner({ skipClear: firstRun });
     if (firstRun) {
       if (TIER === 'open') {
-        console.log(chalk.yellow('ℹ Running as Ghost Open. Activate a license with: ghost --activate <key>'));
+        console.log(chalk.yellow(`${SYM.info} Running as Ghost Open™. Activate a license with: ghost --activate <key>`));
       } else {
         const tierLabel = TIER.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
         console.log(chalk.green(`${SYM.check} License active: Ghost Architect™ ${tierLabel}. Ready to scan.`));
@@ -2798,12 +2925,17 @@ async function main() {
       skipRedaction: cliOpts.skipRedaction,
     });
 
-    // Fire promo fetch only when we'll actually render the no-license banner.
-    // For any other state, skip the network call; it adds nothing. The full
-    // result (welcome banner promo + paywall promo) is stashed in the
-    // function-scoped `promos` so the mode loop below can use paywallPromo
-    // when a gate fires.
-    if (licenseResult.state === 'missing') {
+    // Fire promo fetch only for states that will actually reach a promo
+    // surface: the no-license banner, and the degrade-to-open states
+    // (revoked, lapsed trial) whose sessions continue as Open and hit the
+    // paywall renderers. For any other state, skip the network call; it
+    // adds nothing. The full result (welcome banner promo + paywall promo)
+    // is stashed in the function-scoped `promos` so the mode loop below can
+    // use paywallPromo when a gate fires.
+    const willDegradeToOpen =
+      licenseResult.state === 'revoked' ||
+      (licenseResult.state === 'hard_stop' && licenseResult.payload?.tier === 'trial');
+    if (licenseResult.state === 'missing' || willDegradeToOpen) {
       promos = await fetchPromoText();
     }
     const tierBeforeGate = TIER;
@@ -2931,11 +3063,13 @@ async function main() {
       }
 
       if (method === 'profiles-topLevel') {
-        const profilesAllowedTopLevel = requireTier('feature:profiles', { tier: TIER }).allowed;
-        if (!profilesAllowedTopLevel) {
-          console.log(chalk.yellow('\n  Ghost Partner Profile requires Ghost Pro or higher.'));
-          console.log(chalk.gray('  You are currently on Ghost ' + TIER + '.'));
-          console.log(chalk.cyan('  Upgrade at ghostarchitect.dev/pricing\n'));
+        // Same renderer as the mode-menu Profile gate: the previous ad-hoc
+        // three-line pitch here had no trial CTA and printed the raw
+        // lowercase tier ("You are currently on Ghost open") — two different
+        // conversion surfaces for the same feature (Audit 8, quick win 18).
+        const profilesVerdict = requireTier('feature:profiles', { tier: TIER });
+        if (!profilesVerdict.allowed) {
+          renderPaywall(profilesVerdict.paywall, promos.paywallPromo);
           continue;
         }
         // runProfilesMenu() is the single source of truth for profile
@@ -3138,6 +3272,20 @@ async function main() {
       }
     }
 
+    // Fix Forecast quota gate — same dispatch-level pattern as Commit
+    // Forecast. The mode's own writer re-checks (its "run another" tail
+    // re-enters directly), but without a dispatch gate the telemetry ping
+    // below fired for every paywalled Open selection, inflating Pulse's
+    // mode-usage numbers exactly where Open users bounce (Audit 8,
+    // finding 3.11).
+    if (mode === 'fix-forecast') {
+      const verdict = requireTier('mode:fix-forecast', { fixForecastsUsed: getFixForecastCount() });
+      if (!verdict.allowed) {
+        renderFixForecastPaywall(promos.paywallPromo);
+        continue;
+      }
+    }
+
     // --batch is only implemented by the two single-call modes. The multipass
     // modes (POI, Conflict, Audit) have no batch transport path, so the flag was
     // silently doing nothing and the user paid streaming prices believing they
@@ -3146,7 +3294,12 @@ async function main() {
     // at all, so "Running streaming at standard rates" there was false and
     // cost-alarming, and menu utility picks (watch-status, dashboards) printed
     // nonsense like "--batch is not supported for watch-status" (Audit 7, Q7).
-    const BATCH_NOTICE_MODES = ['poi', 'conflict', 'audit', 'chat'];
+    // Every mode that is not batch-capable must tell a user who passed
+    // --batch that they are streaming at standard rates. Commit Forecast,
+    // Fix Forecast, and Executive Brief were missing from this list, so a
+    // user expecting half-price batch on those modes paid full price with
+    // zero notice (Audit 8, finding 2.1).
+    const BATCH_NOTICE_MODES = ['poi', 'conflict', 'audit', 'chat', 'commit-forecast', 'fix-forecast', 'executive-brief'];
     if (cliOpts.batch && BATCH_NOTICE_MODES.includes(mode) && !BATCH_CAPABLE_MODES.includes(mode)) {
       console.log(chalk.yellow(
         `\n  Note: --batch is not supported for ${friendlyBatchModeLabel(mode)}. ` +

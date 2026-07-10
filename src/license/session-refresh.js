@@ -40,14 +40,19 @@ export async function refreshLicenseSession(scanOptionOverrides = {}) {
   // blocking validation result (revoked, hard_stop, tampered, invalid) must
   // degrade the session to Open, mirroring the startup degrade convention in
   // renderLicenseStateAndMaybeBlock, instead of granting the payload tier.
+  // tier is spread LAST so no overrides object can ever defeat the freshly
+  // validated tier. With overrides last, a stray `tier` key sneaking into
+  // the CLI overrides would silently resurrect the exact
+  // stale-tier-after-activation bug this module exists to kill
+  // (Audit 8, quick win 5).
   if (isBlocking(result.state)) {
     setActiveLicense(null);
-    setScanOptions({ tier: 'open', ...scanOptionOverrides });
+    setScanOptions({ ...scanOptionOverrides, tier: 'open' });
     return { result, tier: 'open' };
   }
 
   setActiveLicense(result);
   const tier = getActiveTier() || 'open';
-  setScanOptions({ tier, ...scanOptionOverrides });
+  setScanOptions({ ...scanOptionOverrides, tier });
   return { result, tier };
 }

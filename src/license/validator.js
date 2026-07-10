@@ -215,13 +215,29 @@ export async function validateLicense({ skipNetworkClock = false, skipRevocation
   // CACHED verdict, so cancel-then-coast kept full paid access for the ~6-day
   // grace window (Audit 7, finding 3.16). Consult the sticky cache only —
   // offline-cheap, no TTL, no network — and let the standard revoked state
-  // (with its resubscribe copy) win over grace/expired. skipRevocationCheck
-  // callers keep their fully-revocation-free contract.
-  const cachedRevoked = !skipRevocationCheck
+  // (with its resubscribe copy) win over grace/expired AND hard_stop: both
+  // block, but the hard_stop copy's "run ghost --activate <your key>" hint
+  // cannot work for a revoked key, so a cancelled customer past hard stop
+  // was sent into a failing activation loop instead of the resubscribe path
+  // (Audit 8, finding 2.8). skipRevocationCheck callers keep their
+  // fully-revocation-free contract.
+  const revocationApplies = !skipRevocationCheck
     && payload.lid
-    && payload.tier !== 'trial'
-    && hasCachedRevokedVerdict(payload.lid);
-  if (cachedRevoked && nowMs >= expiresMs && nowMs < hardStopMs) {
+    && payload.tier !== 'trial';
+  let knownRevoked = revocationApplies && hasCachedRevokedVerdict(payload.lid);
+  // The cache only closes cancel-then-coast for customers who ran Ghost
+  // between cancellation and expiry (that run cached the verdict). A customer
+  // who cancelled and did NOT run Ghost until after expiry had no cached
+  // verdict and coasted through the entire grace window at full paid tier
+  // (Audit 8, finding 3.3). Probe the worker for that window, under
+  // checkRevocation's existing contract: fail-open on every network fault,
+  // 24h TTL cache, ~3s ceiling. Past hard_stop no probe is needed; the
+  // license blocks either way and the cached verdict already selects the
+  // resubscribe copy.
+  if (!knownRevoked && revocationApplies && nowMs >= expiresMs && nowMs < hardStopMs) {
+    knownRevoked = (await checkRevocation(payload.lid)) === 'revoked';
+  }
+  if (knownRevoked && nowMs >= expiresMs) {
     return {
       ...baseResult,
       state: 'revoked',

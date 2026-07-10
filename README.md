@@ -10,8 +10,8 @@ The most expensive moments in any engagement are not writing new code. They are 
 
 ## What's New
 
-### v10.0.18
-- Patch: full Audit 7 remediation. Ghost Watcher™ CI licensing fixed with the new `ghost --export-ci-token` command (a GA- license key in GHOST_LICENSE_KEY now gets clear guidance instead of a silent skip). Activating a license mid-session now takes effect immediately: tier, gates, and context cap update without a restart, and the first-run wizard no longer persists the Open 50K cap for freshly activated paying customers. Enterprise usage totals now migrate correctly from pre-10.0.17 audit files. The full-findings sidecar and honest cap disclosure now apply to single-pass POI and Blast, not just multipass, and single-pass POI reports now carry the verifier's annotations. Resumed multi-chunk conflict scans retrieve every chunk. Session checkpoint recovery actually writes checkpoints. Locked menu rows are selectable so paywalls can render. Roughly forty-five further correctness, cost-accuracy, and copy fixes.
+### v11.0.0
+- Major: full Audit 7 and Audit 8 remediation in one release. Session checkpoint recovery is now trustworthy end to end: checkpoints are written on every pass, salvage rehydrates every finding intact (a recovered long scan previously lost its earliest merged findings), and stale checkpoints are skipped with a clear message. Ghost Watcher™ CI licensing works via the new `ghost --export-ci-token` command, which validates the token before exporting and is documented in `ghost --help`. Activating a license mid-session takes effect immediately, and activating an expired token now says so plainly instead of showing success and then running as the free tier. Paywalls are honest: the free-trial CTA only appears where the trial actually unlocks the feature. Cost accuracy extends to batch-retrieved Blast Radius reports, Recon, and Inheritance Audit meta. The same repo now loads identically whether fed as a directory, a ZIP, or a GitHub repo (one shared per-file size and dot-path policy). Resumed CI scans apply the same filters, verification, and finding framing as fresh runs. Roughly eighty further correctness, cost-accuracy, conversion, and copy fixes across both audits, with six new test suites wired into npm test.
 
 Full version history: [CHANGELOG.md](CHANGELOG.md)
 
@@ -39,7 +39,7 @@ That's it. On first run, Ghost walks you through a one-time setup wizard (API ke
 
 ## Ghost Triple Crown™ -- Three Passes. One Complete Picture.
 
-Every Ghost Watcher™ commit triggers three passes automatically.
+Every Ghost Watcher™ commit triggers up to three passes automatically. Legs 1 and 2 run on every Ghost Watcher™ plan; leg 3, Ghost Brief™, runs automatically on Team Max and Enterprise Max.
 
 **Leg 1 -- Blast Radius™**
 Maps every file that breaks if you change something. Know the impact before you touch the code.
@@ -168,7 +168,7 @@ Consultants and agencies can run scans on behalf of their client engagements wit
 A **Ghost Partner™ profile** is a YAML file describing the consultant: their priorities, anti-patterns, red flags, billing rates, brand color, and contact info. When a profile is loaded with `--profile`, Ghost:
 
 - Applies the consultant's lens to the analysis (findings reflect their methodology)
-- Renders the report in the consultant's voice (no Ghost Architect branding in the output)
+- Renders the report in the consultant's voice (no Ghost Architect™ branding in the output)
 - Uses the consultant's billing rates for cost estimates (per-tier overrides supported)
 - Produces a fully white-labeled PDF with the consultant's logo, accent color, and footer
 
@@ -294,7 +294,7 @@ Ghost Architect™ works like a filter: your codebase goes in, the analysis come
 - **No third-party sharing of your code:** Ghost sends your codebase only to Anthropic's API for analysis (and optionally GitHub for repo loading). Your code and your findings are never sent anywhere else.
 - **Anonymous usage telemetry (opt out any time):** when you run a mode, Ghost sends one small, anonymous ping so we can see which features are used across the install base. It carries only a randomly generated install ID (a UUID created and kept locally on your machine), the Ghost version, your license tier, and the mode name. It never includes your code, your findings, your file paths, your API key, or any personal data. To turn it off completely, set GHOST_NO_PING=1 in your environment.
 - **Reports stay local:** saved reports are written to your machine only.
-- **Source-available:** you can read every line of Ghost Architect's code and verify these claims yourself.
+- **Source-available:** you can read every line of Ghost Architect™ code and verify these claims yourself.
 
 This makes Ghost safe to use on proprietary enterprise codebases, client work, and confidential systems.
 
@@ -418,7 +418,7 @@ Ghost shows a cost estimate **before** every scan and the actual cost **after**.
 
 A typical full session (one POI scan, two blast radius analyses, and several questions on a medium enterprise codebase) runs roughly **$1.50 to $3.00 total.**
 
-Ghost uses **Claude Sonnet 4.6** by default. The model picker in settings also offers **Claude Sonnet 5** (the least expensive option), **Claude Opus 4.8**, and **Claude Fable 5** (the deepest synthesis) for the most complex codebases, with real per-million-token rates shown next to each choice.
+Ghost uses **Claude Sonnet 4.6** by default. The model picker in settings also offers **Claude Sonnet 5** (introductory pricing through Aug 31, 2026), **Claude Opus 4.8**, and **Claude Fable 5** (the deepest synthesis) for the most complex codebases, with real per-million-token rates shown next to each choice.
 
 At the end of every session, Ghost displays a summary of every operation run and the total session cost.
 
@@ -605,7 +605,7 @@ Ghost supports private GitHub repositories via a Personal Access Token.
 2. Click **Generate new token (classic)**
 3. Select the **repo** scope
 4. Copy the token (starts with `ghp_`)
-5. Run Ghost → **Reconfigure Ghost Architect**, enter your token
+5. Run Ghost → **Reconfigure Ghost Architect™**, enter your token
 
 Your token is stored locally and never transmitted anywhere except GitHub's API.
 
@@ -670,24 +670,6 @@ Ghost Portal™ is available on Ghost Pro, Team, and Enterprise tiers. Ghost Ope
 *"The best architects don't write all the code. They help you understand what you have."*
 
 ---
-
-## License
-
-Ghost Architect™ is licensed under the Business Source License 1.1 (BUSL-1.1).
-
-Free for personal, non-commercial, and small team use (up to 5 users).
-Commercial use beyond these limits requires a paid license: see [ghostarchitect.dev](https://ghostarchitect.dev).
-After 4 years from each version's release date, the code converts to GPL v3.
-
-See [LICENSE](./LICENSE) for full terms.
-
----
-
-**Copyright © 2026 Ghost Architect. All rights reserved.**
-
-Ghost Architect™ is source-available under the Business Source License 1.1. Use outside the license terms above requires a commercial license from Ghost Platform LLC.
-
-*Not a code generator. A thinking accelerator.*
 
 ## 🔭 Ghost Watcher™
 
@@ -788,8 +770,8 @@ Ghost Watcher™ uses your own Anthropic API key and runs every scan through the
 
 | Scans enabled | Est. cost per commit |
 |---------------|---------------------|
-| Blast Radius only | $0.08 – $0.15 |
-| Blast Radius + Conflict Detection | $0.48 – $0.90 |
+| Blast Radius only | $0.08 -- $0.15 |
+| Blast Radius + Conflict Detection | $0.48 -- $0.90 |
 
 The Enable Watch wizard shows a cost estimate before you confirm setup.
 
@@ -835,3 +817,24 @@ ghost_watcher:
 ### Ghost Watcher™ never blocks a commit
 
 Ghost Watcher™ is advisory only. Findings are surfaced for remediation. They never prevent a commit from going through. Exit code is always 0.
+
+---
+
+## License
+
+Ghost Architect™ is licensed under the Business Source License 1.1 (BUSL-1.1).
+
+Free for personal, non-commercial, and small team use (up to 5 users).
+Commercial use beyond these limits requires a paid license: see [ghostarchitect.dev](https://ghostarchitect.dev).
+After 4 years from each version's release date, the code converts to GPL v3.
+
+See [LICENSE](./LICENSE) for full terms.
+
+---
+
+**Copyright © 2026 Ghost Architect™. All rights reserved.**
+
+Ghost Architect™ is source-available under the Business Source License 1.1. Use outside the license terms above requires a commercial license from Ghost Platform LLC.
+
+*Not a code generator. A thinking accelerator.*
+

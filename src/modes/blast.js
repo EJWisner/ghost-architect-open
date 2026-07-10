@@ -9,7 +9,8 @@ import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { runBlastRadius, buildBlastRequest, processBlastRawOutput } from '../analyst/index.js';
-import { showCostEstimate, showActualCost, showConflictCost, SessionCostTracker } from '../estimator.js';
+import { showCostEstimate, showActualCost, showConflictCost, SessionCostTracker, calcActualCost } from '../estimator.js';
+import { BATCH_DISCOUNT } from '../lib/cost-estimator.js';
 import { getConfig, resolveApiKey } from '../config.js';
 import { saveReport } from '../reports.js';
 import { resolveTransport } from '../lib/transport-menu.js';
@@ -550,6 +551,9 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
         profile:      profile || null,
         loadedFiles:  codebaseContext.loadedFiles || 0,
         totalFiles:   codebaseContext.totalFiles  || 0,
+        // Model the batch was submitted with, so retrieve can price the
+        // scan portion of the real cost (Audit 8, finding 2.4).
+        model:        req.model,
         saveLabel,
         changeSet,
         targetCount,
@@ -579,8 +583,25 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
 // transport metadata block (method: 'batch'). Called by `ghost batch-retrieve`.
 //
 // Returns { saved, buffer }.
-export async function retrieveBlastBatchResult(rawOutput, entry) {
+export async function retrieveBlastBatchResult(rawOutput, entry, opts = {}) {
   const ctx = (entry && entry.context) || {};
+
+  // Real billed cost for the batch artifact (Audit 8, finding 2.4): the
+  // streaming path stamps meta.cost from its tracker, but the retrieve path
+  // built meta with no cost, so every batch-transport report rendered a
+  // blank "Analysis Cost" row, and the retrieve-time narrator call (a live
+  // streaming LLM call) was billed with no line item anywhere.
+  //   scan portion  = batch usage from the retrieved result, at batch rates
+  //   narrator part = usage reported by processBlastRawOutput, at full rates
+  let retrieveCost = 0;
+  const batchUsage = opts.batchUsage || null;
+  if (batchUsage && (batchUsage.input_tokens || batchUsage.output_tokens)) {
+    retrieveCost += calcActualCost(
+      batchUsage.input_tokens || 0,
+      batchUsage.output_tokens || 0,
+      ctx.model,
+    ).totalCost * BATCH_DISCOUNT;
+  }
 
   // Reproduce the streamed report into a buffer (no stdout streaming on
   // retrieve — the report is read from the saved files, same as a live run).
@@ -593,6 +614,9 @@ export async function retrieveBlastBatchResult(rawOutput, entry) {
     profile:      ctx.profile || null,
     loadedFiles:  ctx.loadedFiles || 0,
     onChunk:      (chunk) => { buffer += chunk; },
+    onUsage:      (inputTokens, outputTokens, usedModel) => {
+      retrieveCost += calcActualCost(inputTokens || 0, outputTokens || 0, usedModel).totalCost;
+    },
     onSidecarFindings: (found) => {
       if (Array.isArray(found) && found.length > 0) batchSidecarFindings = found;
     },
@@ -627,6 +651,10 @@ export async function retrieveBlastBatchResult(rawOutput, entry) {
     low:          lowCount,
     totalHours,
     version:      GHOST_VERSION,
+    // Real billed spend (batch-rate scan + full-rate retrieve narration).
+    // Omitted only when no usage was observable (legacy pending entries
+    // retrieved by an older caller that passed no batchUsage).
+    ...(retrieveCost > 0 ? { cost: retrieveCost.toFixed(4) } : {}),
     // Transport metadata — this scan ran via the Message Batches API.
     transport:    buildBatchTransport({ submittedAt: entry && entry.submittedAt }),
   };

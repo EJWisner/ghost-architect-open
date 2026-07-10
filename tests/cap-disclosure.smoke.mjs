@@ -239,6 +239,20 @@ check('rewrite is a no-op on a report with no disclosure', () => {
   assert.strictEqual(rewriteCapDisclosure(plain, 71, cap), plain);
 });
 
+check('a fully de-italicized disclosure still rewrites (Audit 8, quick win 6)', () => {
+  // Pass 2 may strip the emphasis entirely. The old trailing anchor required
+  // at least one closing */_, so this variant escaped the rewrite and the
+  // stale count shipped.
+  const unstyled =
+    '# Report\n\n' +
+    `This report details the top ${cap} findings by severity. ` +
+    `All 71 findings, including the ${71 - cap} not detailed here, are listed in the accompanying .findings.json file.\n\n` +
+    '## Findings\n';
+  const rewritten = rewriteCapDisclosure(unstyled, 60, cap);
+  assert.ok(rewritten.includes('All 60 findings'), 'unstyled disclosure was not rewritten');
+  assert.ok(!rewritten.includes('All 71 findings'), 'stale count survived on the unstyled variant');
+});
+
 try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch {}
 
 if (failures > 0) {

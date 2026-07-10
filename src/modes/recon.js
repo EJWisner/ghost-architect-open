@@ -29,6 +29,8 @@ const _reconRequire = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _reconRequire('../../package.json');
 import { runRecon } from '../core/agent/planner.js';
 import { saveReport } from '../reports.js';
+import { offerUnsavedReport } from '../cli/unsaved-report.js';
+import { calcActualCost } from '../estimator.js';
 import { promptProjectLabel } from '../projects.js';
 import { requireTier } from '../license/tier-gates.js';
 import { showFriendlyError } from '../utils/errors.js';
@@ -80,7 +82,14 @@ export async function runReconMode(codebaseContext, options = {}) {
   try {
     spinner = ora({ text: chalk.cyan('Ghost is sizing up your codebase...'), color: 'cyan' }).start();
 
-    const plan = await runRecon(fileMap, 'recon', { profile });
+    // Real planner spend, so the saved artifact's Analysis Cost row shows the
+    // billed figure instead of a hardcoded $0.0500 guess (Audit 8, quick
+    // win 3). Falls back to the fixed estimate when the tracker reports zero.
+    let reconCost = 0;
+    const plan = await runRecon(fileMap, 'recon', {
+      profile,
+      onUsage: (i, o, m) => { reconCost += calcActualCost(i || 0, o || 0, m).totalCost; },
+    });
 
     spinner.succeed(chalk.green('  Recon complete'));
     spinner = null;
@@ -119,7 +128,10 @@ export async function runReconMode(codebaseContext, options = {}) {
     }]);
 
     if (!doSave) {
-      console.log(chalk.gray('\n  Recon report not saved.\n'));
+      // Every sibling mode routes a declined save through offerUnsavedReport;
+      // Recon silently dropped the full engagement-plan prose (the terminal
+      // box only shows headline numbers) — Audit 8, quick win 2.
+      await offerUnsavedReport(markdown, { prefix: 'ghost-recon' });
       return;
     }
 
@@ -129,7 +141,7 @@ export async function runReconMode(codebaseContext, options = {}) {
     const meta = {
       filesAnalyzed:  `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
       totalFiles:     codebaseContext.totalFiles,
-      cost:           '0.0500',  // single planner call, fixed estimate
+      cost:           reconCost > 0 ? reconCost.toFixed(4) : '0.0500',  // real planner spend; fixed estimate only when usage was unobservable
       version:        GHOST_VERSION,   // was a hardcoded '4.7.0' — a sales-facing scoping artifact claimed a 4.x Ghost produced it
       findingCount:   0,         // recon doesn't produce findings
       critical:       0,
