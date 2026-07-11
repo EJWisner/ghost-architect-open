@@ -356,7 +356,10 @@ export async function processBlastRawOutput(rawOutput, {
   onUsage,
   onSidecarFindings,
 } = {}) {
-  const findings = extractFindings(rawOutput, 'blast');
+  // extractFindings takes an options object as its second parameter; the old
+  // 'blast' string argument was silently ignored (same dead-argument pattern
+  // removed from the watcher in v11.0.1).
+  const findings = extractFindings(rawOutput);
 
   if (findings.length === 0) {
     for (const char of rawOutput) onChunk(char);

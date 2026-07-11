@@ -529,11 +529,31 @@ export async function retrievePendingBatches(octokit, portalRepo) {
         repo:            b.repo,
         repoOwner:       b.repoOwner,
         timestamp:       b.timestamp,
+        // Every chunk of a multi-chunk conflict scan. This field was stored
+        // (Audit 7, finding 3.2) but never mapped through here, so the
+        // resume path's Array.isArray(pending.batchIds) check always failed
+        // and only chunk 1 was ever polled on resume: chunks 2..N were
+        // silently dropped, and the v11.0.1 partial-chunk record was stored
+        // but never read back (Audit 10, session finding). Every field a
+        // storePendingBatch call site writes MUST be mapped here;
+        // tests/pending-batch-roundtrip.smoke.mjs enforces the round-trip.
+        batchIds:        Array.isArray(b.batchIds) ? b.batchIds : undefined,
+        // Blast resume narration/file-enrichment payload; stored since
+        // Audit 7 finding 3.8 but stripped here, so every resume narrated
+        // with an empty changed-file list, not just legacy records.
+        changedFiles:    Array.isArray(b.changedFiles) ? b.changedFiles : undefined,
         // Original run identity, so a resume from another branch does not
         // stamp its own branch/developer onto the original commit's state
         // (Audit 9, quick win 7). Absent on legacy records.
         branch:          b.branch ?? undefined,
         developer:       b.developer ?? undefined,
+        // Coverage honesty markers (Audit 10, findings 3.2 and 3.3): partial
+        // marks a record holding only the chunks that survived a submission
+        // failure; expectedScans snapshots which scans the original run was
+        // going to perform. The resume path writes 'incomplete' instead of
+        // 'complete' when a record covers less than the expected set.
+        partial:         b.partial === true ? true : undefined,
+        expectedScans:   (b.expectedScans && typeof b.expectedScans === 'object') ? b.expectedScans : undefined,
         emailRecipients: Array.isArray(b.emailRecipients) ? b.emailRecipients : [],
         prNumber:        b.prNumber ?? null,
         portalSlug:      b.portalSlug ?? null,

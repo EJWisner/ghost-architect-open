@@ -237,7 +237,11 @@ export async function runBlastMode(codebaseContext, options = {}) {
     const reconSpinner = ora({ text: chalk.gray('Ghost is sizing up your codebase...'), color: 'cyan' }).start();
     const reconPlan    = await runRecon(codebaseContext.fileMap || {}, 'blast', {
       focusAreas,
-      onUsage: (i, o, m) => blastTracker.record('blast', i, o, m, 'plan'),
+      // Stage as the FIRST arg: showConflictCost groups its COST BREAKDOWN
+      // rows by record()'s first field, so passing 'blast' for every stage
+      // collapsed plan/scan/narrate into one row while Conflict itemized
+      // (Audit 10, quick win 4).
+      onUsage: (i, o, m) => blastTracker.record('plan', i, o, m, 'plan'),
     });
     reconSpinner.stop();
     const display = formatPlanForDisplay(reconPlan);
@@ -340,7 +344,9 @@ export async function runBlastMode(codebaseContext, options = {}) {
     // The spinner stays on screen the whole time and gives a clear
     // "still working" signal. The full report lives in `buffer` and
     // is what we save to disk; the user reads it from the saved files.
-    const blastUsage   = (i, o, m, stage) => blastTracker.record('blast', i, o, m, stage || 'scan');
+    // Stage as the first arg so the COST BREAKDOWN itemizes plan/scan/narrate
+    // the way Conflict does (Audit 10, quick win 4).
+    const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m, stage || 'scan');
 
     // The FULL finding set (including any ranked past the narrator's cap),
     // delivered by the shared sidecar pipeline. Preferred over re-parsing the

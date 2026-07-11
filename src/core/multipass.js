@@ -224,6 +224,13 @@ export function loadSession(label) {
   // and salvage straight from the checkpoint sidecar, even if a main file
   // exists. Same user-visible reporting as the corruption-recovery path.
   if (_forceRecoverLabel && _forceRecoverLabel === label) {
+    // One-shot: clear the flag before either branch returns. Leaving it set
+    // made every LATER loadSession for the same label in this process bypass
+    // perfectly valid session files too — a scan-complete-then-rescan in one
+    // interactive session found nothing to salvage and reported "could not
+    // be recovered ... Starting fresh", defeating the "rerun without
+    // --recover-session" advice printed below (Audit 10, finding 2.5).
+    _forceRecoverLabel = null;
     const forced = salvageSessionFromCheckpoints(label);
     if (forced) {
       const done  = forced.completedPassCount || 0;
@@ -428,12 +435,26 @@ export function deleteSession(label) {
 
 export function listSessions() {
   ensureSessionsDir();
-  return fs.readdirSync(SESSIONS_DIR)
-    .filter(f => f.startsWith('ghost-session-') && f.endsWith('.json'))
-    .map(f => {
-      try { return JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf8')); } catch { return null; }
-    })
-    .filter(Boolean)
+  // Enumerate BOTH session locations. persistSession's last-resort strategy
+  // writes to ALT_SESSIONS_DIR and loadSession reads it back, but listSessions
+  // only showed the primary directory, so a scan that could only checkpoint
+  // to the fallback was resumable by label yet invisible to any session
+  // listing, reading as "my scan is gone" (Audit 10, finding 2.4). Primary
+  // wins on duplicate labels.
+  const readDir = (dir) => {
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { return []; }
+    return files
+      .filter(f => f.startsWith('ghost-session-') && f.endsWith('.json'))
+      .map(f => {
+        try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { return null; }
+      })
+      .filter(Boolean);
+  };
+  const primary   = readDir(SESSIONS_DIR);
+  const seen      = new Set(primary.map(s => s.projectLabel || 'default'));
+  const alternate = readDir(ALT_SESSIONS_DIR).filter(s => !seen.has(s.projectLabel || 'default'));
+  return [...primary, ...alternate]
     .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
 }
 
@@ -533,6 +554,12 @@ async function callClaudeRaw(prompt, system, maxTokens = 8096) {
   }, PASS_TIMEOUT_MS);
 
   try {
+    // 0.3 is deliberate and is the ONLY non-zero temperature in the product:
+    // multipass passes write long-form narrative synthesis, where a small
+    // amount of sampling variety reads better than the fully deterministic
+    // output the analysis/verification surfaces require. This is the
+    // pre-sweep historical value, preserved when v11.0.1 routed every call
+    // site through getSamplingParams (Audit 10, quick win 5).
     activeStream = anthropic.messages.stream({
       model: getModel(), max_tokens: maxTokens, ...getSamplingParams(0.3, getModel()), system,
       messages: [{ role: 'user', content: prompt }]
@@ -1032,12 +1059,20 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     ? extractFindingsFromReport(finalOutput).length
     : null;
   const reportIsCapped = detailedBodyCount !== null && sidecarTotalCount > detailedBodyCount;
-  if (verifierCard && (
+  // The capped arm fires with or without a verifier card. On the
+  // verifier-failure path verifierCard stays null while the catch still
+  // builds the unverified sidecar and reconciles the disclosure to the full
+  // count, so gating the capped regen on verifierCard shipped the planner's
+  // stale "identified 28 findings" opener directly above an "All 65
+  // findings" disclosure on exactly the runs that most need self-consistency
+  // (Audit 10, finding 2.1). regenerateExecutiveSummary never reads the
+  // card, so null passes through safely, and the call already has its own
+  // non-fatal try/catch.
+  if (reportIsCapped || (verifierCard && (
     (verifierCard.falsePositives ?? 0) > 0 ||
     (verifierCard.disputed ?? 0) > 0 ||
-    (verifierCard.unverified ?? 0) > 0 ||
-    reportIsCapped
-  )) {
+    (verifierCard.unverified ?? 0) > 0
+  ))) {
     try {
       finalOutput = await regenerateExecutiveSummary(
         finalOutput,

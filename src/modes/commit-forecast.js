@@ -353,10 +353,20 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     // completed, already-billed blast analysis was never saved, while the
     // interactive path caught the same error and saved what completed
     // (Audit 8, finding 3.7).
+    // Caller-owned tracker, same pattern as blast above: runConflictScan
+    // records into it stage by stage, so when the scan throws mid-run (rate
+    // limit between passes, API error during verification) the already-billed
+    // passes still land in forecastRunCost and meta.cost. The old
+    // result.tracker read only existed on success, so a failed conflict scan
+    // silently dropped its partial spend from the saved artifact,
+    // contradicting the comment above forecastRunCost (Audit 10,
+    // finding 3.7).
+    const conflictTracker = new SessionCostTracker();
     try {
       const result = await runConflictScan(fileMap, callbacks, {
         tier,
         profile,
+        tracker: conflictTracker,
         forecastContext:
           `Changed files: ${allChanged.map(f => path.basename(f)).join(', ')}\n` +
           `Frame every conflict as "if you push now, X conflicts with Y."`,
@@ -366,11 +376,12 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
         console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
         showConflictCost(result.tracker);
       }
-      forecastRunCost += result?.tracker?.totalCost || 0;
     } catch (err) {
       console.error(chalk.red(`  ${SYM.cross} Conflict Detection failed: ${err.message}`));
       console.error(chalk.yellow('  Continuing with the completed output.'));
+      if (conflictTracker.totalCost > 0) showConflictCost(conflictTracker);
     }
+    forecastRunCost += conflictTracker.totalCost;
   }
 
   // ── Save ──────────────────────────────────────────────────────────────
@@ -388,6 +399,17 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
   ].filter(Boolean).join('\n\n---\n\n');
 
   const parsedFindings = extractFindings(forecastReport);
+  // Severity counts + totalHours, exactly as the interactive save block
+  // computes them. The mobile-publish scanRecord reads meta.critical/high/
+  // medium/low/totalHours directly (src/reports.js), so omitting them here
+  // published zeroed severity data to Ghost Mobile™ for every scripted
+  // Team-tier forecast while the findings.json sidecar beside it carried
+  // the real counts (Audit 10, finding 3.5).
+  const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
+  const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
+  const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
+  const lowCount      = parsedFindings.filter(f => f.severity === 'LOW').length;
+  const totalHours    = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
   const meta = {
     filesAnalyzed: `${patchedContext.loadedFiles} of ${patchedContext.totalFiles}`,
     totalFiles:    patchedContext.totalFiles,
@@ -396,6 +418,11 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     profile,
     findings:      parsedFindings,
     findingCount:  parsedFindings.length,
+    critical:      criticalCount,
+    high:          highCount,
+    medium:        mediumCount,
+    low:           lowCount,
+    totalHours,
     // Omitted when zero, matching the blast batch-retrieve convention.
     ...(forecastRunCost > 0 ? { cost: forecastRunCost.toFixed(4) } : {}),
   };
@@ -735,6 +762,11 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         color: 'magenta',
       }).start();
 
+      // Caller-owned tracker (same pattern as blast): declared OUTSIDE the
+      // try so a mid-scan throw cannot discard the already-billed passes
+      // from conflictRunCost and meta.cost (Audit 10, finding 3.7).
+      const interactiveConflictTracker = new SessionCostTracker();
+
       try {
         const callbacks = {
           onChunk(text) { conflictBuffer += text; },
@@ -847,6 +879,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           projectLabel,
           profile,
           tier,
+          tracker: interactiveConflictTracker,
           // Thread the forecast framing into every conflict pass prompt.
           forecastContext:
             `The following files have NOT yet been committed — they are proposed changes ` +
@@ -877,7 +910,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           }
 
           showConflictCost(result.tracker);
-          conflictRunCost = result.tracker?.totalCost || 0;
           console.log('');
         } else {
           if (conflictSpinner) conflictSpinner.stop();
@@ -886,7 +918,14 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       } catch (err) {
         if (conflictSpinner) conflictSpinner.stop();
         showFriendlyError(err);
+        // Partial passes were billed before the throw; show the spend the
+        // same way the success path does so the on-screen figure matches
+        // the meta.cost stamp below.
+        if (interactiveConflictTracker.totalCost > 0) showConflictCost(interactiveConflictTracker);
       }
+      // Success or failure, whatever the tracker billed lands in the save
+      // meta (Audit 10, finding 3.7).
+      conflictRunCost = interactiveConflictTracker.totalCost;
     }
   }
 

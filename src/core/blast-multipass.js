@@ -17,6 +17,7 @@ import { getConfig, resolveApiKey } from '../config.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
 import { buildUnverifiedSidecar } from './sidecar-pipeline.js';
 import { extractFindings }  from '../utils/finding-parser.js';
+import { stripCapDisclosures } from './agent/narrator.js';
 
 // Blast uses max_tokens: 8096 for output. Leave 20% headroom on top of that
 // for system prompt and framing. Mirrors getPassTokenLimit() in conflict.js.
@@ -251,11 +252,15 @@ ${combinedResults}`;
     // note explaining the synthesis pass did not complete, instead of ''.
     // No sidecar callback fires on this path: the concatenation carries
     // cross-pass duplicates, and there is no merged finding set to hand over.
+    // Strip every per-pass cap-disclosure line first: each pass may carry its
+    // own "All N findings ... in the accompanying .findings.json" line, but
+    // no sidecar is written on this path, so those lines pointed at findings
+    // files that exist nowhere (Audit 10, finding 2.3).
     console.warn(`[Ghost] Blast synthesis did not complete: ${err.message} Falling back to the ${total} unmerged per-pass reports.`);
     return (
       `> Note: automated synthesis of the ${total} Blast Radius passes did not complete. ` +
       `${err.message} The unmerged per-pass reports are included below; review them individually.\n\n` +
-      combinedResults
+      stripCapDisclosures(combinedResults)
     );
   }
 
@@ -275,8 +280,21 @@ ${combinedResults}`;
         });
         synthesisOutput = sidecar.reportText;
         onSidecarFindings(sidecar.sidecarFindings);
+      } else if (synthesisOutput.trim()) {
+        // Zero findings parsed from a non-empty synthesis is either a truly
+        // clean scan or the synthesis prompt drifting away from the '### '
+        // finding headers the parser splits on. Silence here made the two
+        // indistinguishable and quietly regressed multipass Commit Forecast
+        // to the no-sidecar state Audit 9 finding 3.10 fixed (Audit 10,
+        // finding 3.9). Observability only; the report itself still ships.
+        console.warn('[Ghost] Blast synthesis produced no parseable findings; no findings sidecar will be written for this run.');
       }
-    } catch { /* best-effort — the synthesized report itself is unaffected */ }
+    } catch (sidecarErr) {
+      // Best-effort — the synthesized report itself is unaffected. But log
+      // the error: a swallowed throw here was indistinguishable from a
+      // clean scan (Audit 10, finding 3.9).
+      console.warn(`[Ghost] Blast synthesis sidecar failed (non-fatal): ${sidecarErr.message}`);
+    }
   }
 
   return synthesisOutput;

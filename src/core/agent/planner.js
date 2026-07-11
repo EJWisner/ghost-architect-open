@@ -268,6 +268,14 @@ export async function runRecon(fileMap, mode = 'poi', options = {}) {
   const plan      = await generatePlan(structure, costs, mode, options);
 
   return {
+    // Degraded-output marker. generatePlan's fallback sets this when the
+    // planning API call failed; recon.js branches on it to stamp $0.0000
+    // (nothing was billed) and disclose the structural fallback in the saved
+    // artifact (Audit 9, finding 2.4). This return object is built field by
+    // field, so the flag must be copied explicitly or the consumers never
+    // see it (Audit 10, finding 3.1).
+    plannerFailed:        plan.plannerFailed === true,
+
     // Plan details
     recommendedPasses:    plan.recommendedPasses    || costs.estimatedPasses,
     highRiskAreas:        plan.highRiskAreas        || [],

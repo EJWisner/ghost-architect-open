@@ -17,6 +17,7 @@
 // All fields optional; absence of `token` means no license is installed.
 
 import { getConfig } from '../config.js';
+import { decodeTokenUnsafe } from './token.js';
 
 const KEY = 'license';
 
@@ -101,6 +102,20 @@ export function saveRevocationCache({ licenseId, status }) {
   const r = read();
   if (!r) {
     // Env-var (CI) license: persist standalone so TTL + sticky-revoked hold.
+    getConfig().set(REVOCATION_STANDALONE_KEY, entry);
+    return;
+  }
+  // A record exists, but the verdict may belong to a DIFFERENT license: on a
+  // machine with installed key A running under GHOST_LICENSE_KEY=B, key B's
+  // verdict written into key A's record slot evicted A's cached verdict (an
+  // extra network probe on A's next run) and never landed on the standalone
+  // key that B's env-var contract reads (Audit 10, finding 3.10). Route by
+  // lid: only verdicts for the installed token live on the record;
+  // everything else goes standalone. decodeTokenUnsafe is fine here — the
+  // lid is used for cache-slot routing only, never for trust.
+  let recordLid = null;
+  try { recordLid = decodeTokenUnsafe(r.token)?.payload?.lid ?? null; } catch { /* malformed record token: keep legacy routing */ }
+  if (recordLid !== null && recordLid !== licenseId) {
     getConfig().set(REVOCATION_STANDALONE_KEY, entry);
     return;
   }

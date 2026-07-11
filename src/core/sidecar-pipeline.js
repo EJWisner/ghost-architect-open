@@ -62,13 +62,24 @@ export function dedupeFindingsByTitle(findings) {
     const key = normalizeTitleForDedupe(f.title);
     if (!key) continue;
     const isDupe = seen.some((s) => {
-      // Exact-title matches require file overlap too, same as containment:
+      // Exact-title matches require file overlap, same as containment:
       // identical generic titles ("missing error handling") in DIFFERENT
       // modules are distinct findings, and collapsing them silently shrank
-      // the sidecar and the disclosure count (Audit 9, finding 3.9). The
-      // both-empty case still collapses via filesOverlap's carve-out, which
-      // buildVerifiedSidecar's narrator-polish dedupe relies on.
-      if (s.key === key) return filesOverlap(s.files, f.files);
+      // the sidecar and the disclosure count (Audit 9, finding 3.9). But on
+      // EXACT titles, one-side-empty counts as overlap: in the
+      // narrator-polish case the detailed copy carries files (the rendered
+      // report mandates a Files line) while its raw twin carries none, so
+      // requiring a shared path meant the twin never collapsed and the same
+      // finding shipped twice in the sidecar, once detailed and once with
+      // null effort, over-counting the disclosure (Audit 10, finding 3.6).
+      // The stricter both-sides-must-share-a-file rule stays on the fuzzy
+      // containment branch so distinct-modules protection is untouched.
+      if (s.key === key) {
+        const a = Array.isArray(s.files) ? s.files.filter(Boolean) : [];
+        const b = Array.isArray(f.files) ? f.files.filter(Boolean) : [];
+        if (a.length === 0 || b.length === 0) return true;
+        return a.some((x) => b.includes(x));
+      }
       const shorter = s.key.length <= key.length ? s.key : key;
       const longer  = s.key.length <= key.length ? key : s.key;
       return shorter.length > 10 && longer.includes(shorter) && filesOverlap(s.files, f.files);

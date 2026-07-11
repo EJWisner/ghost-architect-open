@@ -622,6 +622,20 @@ export function rewriteCapDisclosure(reportText, total, cap = MAX_FINDINGS_FOR_P
 }
 
 /**
+ * Remove EVERY cap-disclosure line from a report. For salvage paths that
+ * concatenate multiple per-pass reports and write no sidecar: each pass may
+ * carry its own reconciled disclosure pointing at a .findings.json that was
+ * never populated for that pass, so the concatenation could promise findings
+ * files that exist nowhere (Audit 10, finding 2.3). rewriteCapDisclosure
+ * only touches the first occurrence by design; this strips them all.
+ */
+export function stripCapDisclosures(reportText) {
+  if (!reportText) return reportText;
+  const allOccurrences = new RegExp(CAP_DISCLOSURE_LINE.source, 'gm');
+  return reportText.replace(allOccurrences, '').replace(/\n{3,}/g, '\n\n');
+}
+
+/**
  * Build a disclosure note listing the findings the planner dropped as
  * non-actionable (plan.skipped_findings), so the saved report tells the reader
  * exactly what was omitted and why. Returns null when nothing was skipped.

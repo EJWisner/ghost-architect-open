@@ -1490,9 +1490,24 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
                 tier: pending.tier || tier, profile,
               });
             } catch (e) {
-              console.error(`Ghost Watcher: prompts resume brief regen failed (non-fatal) — ${e.message}`);
+              console.error(`Ghost Watcher: prompts resume brief regen failed: ${e.message}`);
             }
             const promptCount = resumeBrief?.prompts?.length || 0;
+
+            // Regen failure must not upgrade the commit state. Stamping
+            // 'complete' with "prompts ready" and prompts: 0 overwrote the
+            // nonzero basic-brief count Step 8b recorded, and clearing the
+            // pending record meant it never retried: the customer clicked
+            // through to an empty Brief tab, permanently (Audit 10,
+            // finding 1.3). Leave the record pending and the state untouched;
+            // the next watcher run re-polls the batch (retrieval is free) and
+            // retries the regen. Retries are bounded by the 29-day batch
+            // expiry, after which pollBatch throws a non-timeout error and
+            // the catch below clears the record.
+            if (!resumeBrief) {
+              console.log(`Ghost Watcher: prompts batch ${pending.batchId} left pending, will retry brief regeneration next run`);
+              continue;
+            }
 
             // Push the enriched brief to the portal Brief tab under the original commit.
             if (resumeBrief && octokitPortal && portalOwner && portalRepoName
@@ -1635,6 +1650,43 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           const resumeBlastObservations = pendingFindings.filter(f => f.source_mode === 'blast');
           const sev = buildSeverityCounts(resumeActionFindings);
 
+          // Coverage honesty (Audit 10, findings 3.2 and 3.3). A resumed
+          // record must not stamp 'complete' when it covers less than the
+          // original run was going to scan:
+          //   - partial: the record holds only the conflict chunks that
+          //     survived a submission failure; the surviving fraction is
+          //     delivered but must not overwrite the honest 'incomplete'
+          //     Step 8 wrote for that run.
+          //   - expectedScans: a blast timeout exits before conflict ever
+          //     submits (and a conflict timeout discards blast results that
+          //     died with the process), so a record covering one scan type
+          //     cannot speak for the other expected one.
+          // Legacy records carry neither field and keep the old behavior.
+          const expectedScans = (pending.expectedScans && typeof pending.expectedScans === 'object')
+            ? pending.expectedScans : null;
+          const missingOtherScan = expectedScans
+            ? ((expectedScans.blast === true && pending.type !== 'blast')
+              || (expectedScans.conflict === true && pending.type !== 'conflict'))
+            : false;
+          const resumeIncomplete = pending.partial === true || missingOtherScan;
+          const resumeStatus  = resumeIncomplete ? 'incomplete' : 'complete';
+          const resumeMessage = pending.partial === true
+            ? `Ghost Watcher™ ${pending.type} results retrieved from a partial submission; this commit's coverage is incomplete.`
+            : missingOtherScan
+              ? `Ghost Watcher™ ${pending.type} results retrieved; other expected scans did not complete for this commit.`
+              : `Ghost Watcher™ ${pending.type} results retrieved.`;
+
+          // ADD this resume's batch usage to what the original run already
+          // persisted. Overwriting dropped the other scan's tokens from the
+          // portal's per-commit figure, the same defect the prompts-resume
+          // path fixed in v11.0.1 (Audit 10, finding 3.4). Best-effort: a
+          // failed fetch degrades to the resume-only figure, never blocks.
+          let resumePriorUsage = null;
+          try {
+            resumePriorUsage = (await fetchWatchCommitState(
+              octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash))?.tokenUsage || null;
+          } catch { /* degrade to resume-only usage */ }
+
           // Push resumed results to Ghost Portal under the ORIGINAL commit hash.
           await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
             commitHash: pending.commitHash,
@@ -1646,15 +1698,18 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             branch: pending.branch || branch,
             developer: pending.developer || developer.name,
             timestamp: new Date().toISOString(),
-            status: 'complete',
+            status: resumeStatus,
             batchId: pending.batchId,
-            message: `Ghost Watcher™ ${pending.type} results retrieved.`,
+            message: resumeMessage,
             findings: resumeActionFindings,
             findingCount: resumeActionFindings.length,
             blastRadiusObservations: resumeBlastObservations,
             severity: sev,
             prompts: 0,
-            tokenUsage: buildTokenUsage(resumeUsage.inputTokens, resumeUsage.outputTokens),
+            tokenUsage: buildTokenUsage(
+              (resumePriorUsage?.inputTokens  || 0) + resumeUsage.inputTokens,
+              (resumePriorUsage?.outputTokens || 0) + resumeUsage.outputTokens,
+            ),
           });
 
           // Update the PR comment on the ORIGINAL PR with the real findings.
@@ -1663,10 +1718,16 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             const observationLine = resumeBlastObservations.length > 0
               ? `**Blast Radius observations:** ${resumeBlastObservations.length} (impact context, no action required)\n\n`
               : '';
+            const coverageLine = resumeIncomplete
+              ? `**Note:** coverage for this commit is incomplete. ${pending.partial === true
+                ? 'These results come from a partial submission and do not cover the full commit.'
+                : 'Other scans expected for this commit did not complete.'}\n\n`
+              : '';
             const body =
               `## 👻 Ghost Watcher™ -- Results delivered\n\n` +
               `The batched ${pending.type} analysis for commit \`${(pending.commitHash || '').slice(0, 7)}\` has completed.\n\n` +
               `**Findings:** ${summary}\n\n` +
+              coverageLine +
               observationLine +
               (portalSlug ? `[Open Ghost Portal to copy prompts into your AI coding tool.](https://ghostarchitect.dev/portal-${portalSlug}.html)\n` : '');
             await postCommentToPR(pending.repo || repoPath, pending.prNumber, body);
@@ -1686,14 +1747,50 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
 
           console.log(`Ghost Watcher: resumed batch ${pending.batchId} successfully`);
           await clearPendingBatch(octokitPortal, portalRepoPath, pending.batchId);
-          // A successful retrieval counts as a completed scan — reset the counter.
-          await resetIncompleteRuns(octokitPortal, portalRepoPath);
+          // Only a retrieval that restores FULL coverage counts as a
+          // completed scan. A partial or subset resume leaves the
+          // consecutive-incomplete counter intact so the 3-strikes setup
+          // warning still fires (same contract as Step 8b's runComplete gate).
+          if (!resumeIncomplete) {
+            await resetIncompleteRuns(octokitPortal, portalRepoPath);
+          }
 
         } catch (err) {
           if (err instanceof BatchTimeoutError) {
             console.log(`Ghost Watcher: batch ${pending.batchId} still processing, will retry next run`);
           } else {
             console.log(`Ghost Watcher: resume failed for batch ${pending.batchId} — ${err.message}`);
+            // A non-timeout failure is terminal for this record (batch
+            // expired past 29 days, all requests failed, deterministic API
+            // error) and the record is about to be cleared, so nothing will
+            // ever retry. The original run exited before Step 8b on the
+            // timeout path, so without a state write here the portal showed
+            // "Analyzing..." for this commit permanently, with no signal to
+            // the developer (Audit 10, finding 2.2). Write the same honest
+            // 'incomplete' shape Step 8b uses, preserving whatever the prior
+            // state recorded; the raw error stays in the CI log above, not
+            // the portal message.
+            try {
+              const existingState = await fetchWatchCommitState(
+                octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash);
+              await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
+                ...(existingState || {
+                  commitHash: pending.commitHash,
+                  branch: pending.branch || branch,
+                  developer: pending.developer || developer.name,
+                  batchId: null,
+                  findings: [], findingCount: 0,
+                  severity: { critical: 0, high: 0, medium: 0, low: 0 },
+                  prompts: 0,
+                  resolvedFindings: [], newFindingIds: [], priorCommitHash: null,
+                }),
+                timestamp: new Date().toISOString(),
+                status: 'incomplete',
+                message: `Ghost Watcher™ run incomplete: ${pending.type} results could not be retrieved. Prior findings left unchanged.`,
+              });
+            } catch (stateErr) {
+              console.error(`Ghost Watcher: could not record incomplete state for ${(pending.commitHash || '').slice(0, 7)}: ${stateErr.message}`);
+            }
             await clearPendingBatch(octokitPortal, portalRepoPath, pending.batchId);
           }
         }
@@ -1881,6 +1978,14 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         // (which filters prior states by branch) could go wrong
         // (Audit 9, quick win 7).
         branch, developer: developer.name,
+        // Expected-scan snapshot: which scans THIS run was going to perform.
+        // Without it, a resumed blast record wrote 'complete' for the commit
+        // even when conflict detection was enabled but never submitted
+        // (blast timeout exits before Step 6), overstating coverage
+        // (Audit 10, finding 3.3). The resume path compares the record's
+        // type against this set and writes 'incomplete' when the record
+        // covers only a subset.
+        expectedScans: { blast: blastWillRun, conflict: conflictWillRun },
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
       });
@@ -1966,6 +2071,13 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           type: 'conflict', batchIds: conflictBatchIds,
           commitHash: commitHashFull, repo: repoPath, repoOwner,
           branch, developer: developer.name,
+          // This record carries only the chunks that made it before the
+          // submission failure. Without the marker, the next run's resume
+          // polled the surviving chunks and wrote 'complete', overwriting
+          // the honest 'incomplete' state Step 8 writes for this run with
+          // findings from a fraction of the repo (Audit 10, finding 3.2).
+          partial: true,
+          expectedScans: { blast: blastWillRun, conflict: conflictWillRun },
           timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
           pollIntervalMs, timeoutMs,
         });
@@ -1982,6 +2094,11 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
         type: 'conflict', batchIds: conflictBatchIds,
         commitHash: commitHashFull, repo: repoPath, repoOwner,
         branch, developer: developer.name,
+        // Expected-scan snapshot; see the blast store above (Audit 10,
+        // finding 3.3). A conflict-only resume must not report the commit
+        // 'complete' when blast ran in-process but its results died with a
+        // later timeout exit before Step 8 could persist them.
+        expectedScans: { blast: blastWillRun, conflict: conflictWillRun },
         timestamp: new Date().toISOString(), emailRecipients, prNumber, portalSlug,
         pollIntervalMs, timeoutMs,
       });

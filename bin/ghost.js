@@ -53,8 +53,8 @@ import { showFriendlyError } from '../src/utils/errors.js';
 // v1 ships on the Pro umbrella main branch only. Ghost Open (MIT, public)
 // MUST NOT receive this code. Team and Enterprise inherit when those
 // branches sync forward from main.
-import { validateLicense, isBlocking, isWarning } from '../src/license/validator.js';
-import { checkRevocation } from '../src/license/revocation.js';
+import { validateLicense, isBlocking } from '../src/license/validator.js';
+import { checkRevocation, hasCachedRevokedVerdict } from '../src/license/revocation.js';
 import { decodeAndVerifyToken } from '../src/license/token.js';
 import { tryParseKey, looksLikeHumanKey } from '../src/license/format.js';
 import { currentFingerprintHashes } from '../src/license/fingerprint.js';
@@ -136,8 +136,9 @@ async function refreshSessionAndTier() {
   if (isBlocking(result.state)) {
     SESSION_DEGRADE_REASON =
       result.state === 'revoked' ? 'revoked' :
-      (result.state === 'hard_stop' && result.payload?.tier === 'trial') ? 'trial-ended' :
-      null;
+      result.state === 'hard_stop'
+        ? (result.payload?.tier === 'trial' ? 'trial-ended' : 'expired')
+        : null;
   } else {
     SESSION_DEGRADE_REASON = null;
   }
@@ -1478,6 +1479,15 @@ async function runExportCiTokenFlow() {
     console.error(`Note: this license expires on ${payload.expires.slice(0, 10)}. ` +
       'CI runs will stop scanning once it fully expires. Renew soon.');
   }
+  // Tier advisory (Audit 10, quick win 1): both CI consumers of
+  // GHOST_LICENSE_KEY gate above this token's tier when it is sub-entitled.
+  // Ghost Watcher™ requires Team or above and exits 0 advisory on every
+  // commit, so a Pro token exported with no note configured a runner that
+  // silently never scanned. Informational only; the token still exports.
+  if (payload.tier && !WATCH_TIERS_ALLOWED.includes(payload.tier)) {
+    console.error(`Note: this is a ${payload.tier} token. Ghost Watcher™ CI scanning requires Team or above; ` +
+      'a runner using this token will not run Watch scans.');
+  }
 
   console.error('Signed Ghost Architect™ license token (set this as the GHOST_LICENSE_KEY secret in CI):');
   console.error('');
@@ -2487,6 +2497,9 @@ function licenseMenuLabel() {
   if (SESSION_DEGRADE_REASON === 'trial-ended') {
     return 'License key (trial ended: subscribe at ghostarchitect.dev/pricing)';
   }
+  if (SESSION_DEGRADE_REASON === 'expired') {
+    return 'License key (expired: renew at ghostarchitect.dev/pricing)';
+  }
   const state = getActiveLicense()?.state || 'missing';
   return `License key (${TIER}: ${state})`;
 }
@@ -2623,13 +2636,27 @@ async function main() {
     // check revocation; here only already-cached/offline-detectable blocking
     // states (hard_stop, tampered, invalid) degrade.
     const earlyLicenseResult = await validateLicense({ skipNetworkClock: true, skipRevocationCheck: true });
-    if (isBlocking(earlyLicenseResult.state)) {
+    // skipRevocationCheck also skips the validator's OFFLINE sticky
+    // revocation cache, so a cancelled customer with a cached 'revoked'
+    // verdict resolved 'valid' here and kept paid-tier profile flags until
+    // hard_stop, roughly 36 days, while the 'revoked' arm of the mapping
+    // below was unreachable dead code (Audit 10, finding 3.8). Consult the
+    // cache separately: hasCachedRevokedVerdict is synchronous, offline,
+    // and cheap, so --help/--version stay fast with zero network risk.
+    // Trials are exempt from revocation, mirroring the validator.
+    const earlyRevoked = Boolean(
+      earlyLicenseResult.payload?.lid
+      && earlyLicenseResult.payload?.tier !== 'trial'
+      && hasCachedRevokedVerdict(earlyLicenseResult.payload.lid)
+    );
+    if (earlyRevoked || isBlocking(earlyLicenseResult.state)) {
       setActiveLicense(null);
       TIER = 'open';
       SESSION_DEGRADE_REASON =
-        earlyLicenseResult.state === 'revoked' ? 'revoked' :
-        (earlyLicenseResult.state === 'hard_stop' && earlyLicenseResult.payload?.tier === 'trial') ? 'trial-ended' :
-        null;
+        (earlyRevoked || earlyLicenseResult.state === 'revoked') ? 'revoked' :
+        earlyLicenseResult.state === 'hard_stop'
+          ? (earlyLicenseResult.payload?.tier === 'trial' ? 'trial-ended' : 'expired')
+          : null;
     } else {
       setActiveLicense(earlyLicenseResult);
       TIER = getActiveTier() || 'open';
@@ -2776,15 +2803,48 @@ async function main() {
     cliOpts.setDefaultProfile !== null ||
     cliOpts.clearDefaultProfile;
   if (profileFlagRequested && !requireTier('feature:profiles', { tier: TIER }).allowed) {
-    console.log('\n' + boxen(
-      chalk.cyan.bold('Ghost Partner profiles are a Pro feature') + '\n\n' +
-      chalk.white('Profiles let consultants and agencies run scans with their own') + '\n' +
-      chalk.white('branding, methodology, and billing rates baked into reports.') + '\n\n' +
-      chalk.white('Activate a Pro license to use profiles:') + '\n' +
-      chalk.cyan('  ghost --activate <your key here>') + '\n\n' +
-      chalk.white('Pricing: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
-      { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
-    ));
+    // Branch on why the session is at Open. A paying customer whose license
+    // just lapsed (or was revoked, or whose trial ended) was shown the
+    // "Activate a Pro license" purchase pitch for a feature they already own,
+    // with no mention their license lapsed (Audit 10, finding 1.1). Mirror
+    // licenseMenuLabel(): show the recovery action that actually applies.
+    if (SESSION_DEGRADE_REASON === 'expired') {
+      console.log('\n' + boxen(
+        chalk.red.bold('License expired') + '\n\n' +
+        chalk.white('Ghost Partner profiles are part of your paid plan, but your') + '\n' +
+        chalk.white('license has expired. Renew to restore access:') + '\n\n' +
+        chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.gray('Help:  ') + chalk.cyan('support@ghostarchitect.dev'),
+        { padding: 1, borderColor: 'red', borderStyle: 'round' }
+      ));
+    } else if (SESSION_DEGRADE_REASON === 'revoked') {
+      console.log('\n' + boxen(
+        chalk.red.bold('License revoked') + '\n\n' +
+        chalk.white('Your license was revoked, usually because the subscription') + '\n' +
+        chalk.white('was cancelled. Resubscribe to restore profile access:') + '\n\n' +
+        chalk.gray('Resubscribe: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.gray('Help:        ') + chalk.cyan('support@ghostarchitect.dev'),
+        { padding: 1, borderColor: 'red', borderStyle: 'round' }
+      ));
+    } else if (SESSION_DEGRADE_REASON === 'trial-ended') {
+      console.log('\n' + boxen(
+        chalk.cyan.bold('Trial ended') + '\n\n' +
+        chalk.white('Your trial has ended. Subscribe to keep using Ghost Partner') + '\n' +
+        chalk.white('profiles and the rest of the Pro feature set:') + '\n\n' +
+        chalk.white('Pricing: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+    } else {
+      console.log('\n' + boxen(
+        chalk.cyan.bold('Ghost Partner profiles are a Pro feature') + '\n\n' +
+        chalk.white('Profiles let consultants and agencies run scans with their own') + '\n' +
+        chalk.white('branding, methodology, and billing rates baked into reports.') + '\n\n' +
+        chalk.white('Activate a Pro license to use profiles:') + '\n' +
+        chalk.cyan('  ghost --activate <your key here>') + '\n\n' +
+        chalk.white('Pricing: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
+        { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+    }
     console.log('');
     process.exit(0);
   }

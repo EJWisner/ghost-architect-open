@@ -141,13 +141,7 @@ export async function runReconMode(codebaseContext, options = {}) {
     const meta = {
       filesAnalyzed:  `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
       totalFiles:     codebaseContext.totalFiles,
-      // Real planner spend. When the planner API call failed (structural
-      // fallback plan, plannerFailed set), the run billed nothing: stamp
-      // 0.0000 instead of the old hardcoded 0.0500 guess, which claimed
-      // spend on a sales-facing artifact for a call that never succeeded
-      // (Audit 9, finding 2.4). The 0.0500 estimate remains only for the
-      // succeeded-but-usage-unobservable case.
-      cost:           plan.plannerFailed ? '0.0000' : (reconCost > 0 ? reconCost.toFixed(4) : '0.0500'),
+      cost:           reconMetaCost(plan, reconCost),
       version:        GHOST_VERSION,   // was a hardcoded '4.7.0' — a sales-facing scoping artifact claimed a 4.x Ghost produced it
       findingCount:   0,         // recon doesn't produce findings
       critical:       0,
@@ -178,6 +172,19 @@ export async function runReconMode(codebaseContext, options = {}) {
   }
 }
 
+// ── Meta cost ────────────────────────────────────────────────────────────────
+//
+// Real planner spend for the saved artifact's Analysis Cost row. When the
+// planner API call failed (structural fallback plan, plannerFailed set), the
+// run billed nothing: stamp 0.0000 instead of the old hardcoded 0.0500 guess,
+// which claimed spend on a sales-facing artifact for a call that never
+// succeeded (Audit 9, finding 2.4). The 0.0500 estimate remains only for the
+// succeeded-but-usage-unobservable case.
+// @ghost-verified: exported for unit testing (tests/recon-planner-failed.smoke.mjs)
+export function reconMetaCost(plan, reconCost) {
+  return plan.plannerFailed ? '0.0000' : (reconCost > 0 ? reconCost.toFixed(4) : '0.0500');
+}
+
 // ── Markdown rendering ───────────────────────────────────────────────────────
 //
 // Renders the structured plan as a saved-report-friendly markdown document.
@@ -185,8 +192,8 @@ export async function runReconMode(codebaseContext, options = {}) {
 // (engagement_perspective, methodology_note) are written in the consultant's
 // voice. When no profile is loaded, the prose still works but reads as a
 // neutral pre-engagement triage.
-
-function renderReconMarkdown(plan, projectLabel, profile) {
+// @ghost-verified: exported for unit testing (tests/recon-planner-failed.smoke.mjs)
+export function renderReconMarkdown(plan, projectLabel, profile) {
   const consultantName = profile?.author || profile?.organization || null;
   const consultantOrg  = profile?.organization || profile?.author  || null;
 
