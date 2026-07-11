@@ -14,7 +14,7 @@ import chalk from 'chalk';
 import { getConfig, resolveApiKey } from '../config.js';
 import { buildSystemPOI } from '../../prompts/index.js';
 import { prioritizeFileMap, getTopFiles } from '../prioritizer.js';
-import { narrateReport, scrubEmptyHeaders } from './agent/narrator.js';
+import { narrateReport, scrubEmptyHeaders, stripCapDisclosures } from './agent/narrator.js';
 import { buildVerifiedSidecar, buildUnverifiedSidecar } from './sidecar-pipeline.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
 import { isContextOverflow } from '../utils/errors.js';
@@ -236,9 +236,11 @@ export function loadSession(label) {
       const done  = forced.completedPassCount || 0;
       const total = forced.totalPassCount || done;
       const estSpent = (done * EST_COST_PER_PASS).toFixed(2);
+      // done is the COMPLETED count; the scan continues at the next pass
+      // (Audit 11, quick win 6).
       console.log(chalk.yellow(
         `Ghost recovered session for project: ${label} (forced recovery). ` +
-        `Resuming from pass ${done} of ${total}. ` +
+        `Resuming from pass ${Math.min(done + 1, total)} of ${total}. ` +
         `Estimated API cost already spent: $${estSpent}`
       ));
       return forced;
@@ -284,9 +286,11 @@ export function loadSession(label) {
     const done  = salvaged.completedPassCount || 0;
     const total = salvaged.totalPassCount || done;
     const estSpent = (done * EST_COST_PER_PASS).toFixed(2);
+    // done is the COMPLETED count; the scan continues at the next pass
+    // (Audit 11, quick win 6).
     console.log(chalk.yellow(
       `Ghost recovered session for project: ${label}. ` +
-      `Resuming from pass ${done} of ${total}. ` +
+      `Resuming from pass ${Math.min(done + 1, total)} of ${total}. ` +
       `Estimated API cost already spent: $${estSpent}`
     ));
     return salvaged;
@@ -1015,7 +1019,16 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
         finalOutput = fallback.reportText;
         sidecarTotalCount = fallback.sidecarFindings.length;
         if (options.onSidecarFindings) options.onSidecarFindings(fallback.sidecarFindings);
-      } catch { /* sidecar fallback is best-effort — the report still ships */ }
+      } catch (sidecarErr) {
+        // Both the verifier AND the fallback sidecar failed: no sidecar will
+        // be written, so the narrator's pre-verification disclosure would
+        // promise findings that exist nowhere, and the regen gate below never
+        // fires (sidecarTotalCount stays null). Strip the stale disclosure
+        // and say what happened; the silent swallow here was invisible in the
+        // logs (Audit 11, finding 3.6). The report itself still ships.
+        console.warn(`[Ghost] Findings sidecar could not be built (non-fatal): ${sidecarErr.message}. The report ships without a findings sidecar.`);
+        finalOutput = stripCapDisclosures(finalOutput);
+      }
     }
   }
 

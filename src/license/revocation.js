@@ -75,14 +75,18 @@ function cacheIsFresh(entry, licenseId) {
  */
 export function hasCachedRevokedVerdict(licenseId) {
   if (!licenseId) return false;
-  const cached = getRevocationCache();
+  // lid-aware read: checks both the record slot and the standalone (env-var)
+  // slot so a CI license's sticky verdict is visible even when a different
+  // key is installed on the same machine (Audit 11, finding 3.1).
+  const cached = getRevocationCache(licenseId);
   return !!(cached && cached.license_id === licenseId && cached.status === 'revoked');
 }
 
 export async function checkRevocation(licenseId, opts = {}) {
   if (!licenseId) return 'unknown';
 
-  const cached = getRevocationCache();
+  // lid-aware read: see hasCachedRevokedVerdict above (Audit 11, finding 3.1).
+  const cached = getRevocationCache(licenseId);
 
   // GHOST_LICENSE_VERIFY_FORCE=1 bypasses the TTL AND the sticky-revoked
   // short-circuit, re-probing the worker every run. Exists for two reasons:

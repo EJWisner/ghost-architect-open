@@ -294,6 +294,11 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
 
   let blastBuffer    = '';
   let conflictBuffer = '';
+  // Full sidecar finding set from the blast pipeline, including findings
+  // ranked past the narrator's cap. Preferred over re-parsing the report
+  // text so meta.findings agrees with the cap disclosure (Audit 11,
+  // finding 1.2). Same pattern as blast.js.
+  let blastSidecarFindings = null;
   // Total billed spend across both scans, stamped into meta.cost so the saved
   // artifact records what the COST BREAKDOWN boxes just showed on screen
   // (Audit 9, finding 2.3). Failed scans still add their partial spend.
@@ -312,21 +317,38 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
           onPassComplete: (n, t) => console.log(chalk.green(`  ${SYM.check} Blast pass ${n} of ${t} complete`)),
           onSynthesisStart: () => console.log(chalk.gray('  Synthesizing blast results...')),
           onUsage: blastUsage,
+          onSidecarFindings: (found) => {
+            if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
+          },
         });
         console.log(chalk.green(`  ${SYM.check} Blast Radius forecast ready\n`));
         showConflictCost(blastTracker);
       } catch (err) {
         console.error(chalk.red(`  ${SYM.cross} Blast failed: ${err.message}`));
+        // Surface what was billed before the failure, matching the conflict
+        // catch below (Audit 11, quick win 10). meta.cost already records it.
+        if (blastTracker.totalCost > 0) showConflictCost(blastTracker);
       }
     } else {
       const blastSpinner = ora({ text: chalk.gray('  Running Blast Radius...'), color: 'cyan' }).start();
       try {
-        await runBlastRadius(patchedContext, allChanged, (c) => { blastBuffer += c; }, { profile, forecastMode: true, onUsage: blastUsage });
+        const blastResult = await runBlastRadius(patchedContext, allChanged, (c) => { blastBuffer += c; }, {
+          profile, forecastMode: true, onUsage: blastUsage,
+          onSidecarFindings: (found) => {
+            if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
+          },
+        });
+        // Prefer the return value: it carries the reconciled cap disclosure.
+        // The chunk-accumulated buffer is the mid-narration draft (Audit 11,
+        // finding 1.2; same contract blast.js documents at its call site).
+        if (blastResult) blastBuffer = blastResult;
         blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
         showConflictCost(blastTracker);
       } catch (err) {
         blastSpinner.fail(chalk.red('Blast failed'));
         showFriendlyError(err);
+        // Surface what was billed before the failure (Audit 11, quick win 10).
+        if (blastTracker.totalCost > 0) showConflictCost(blastTracker);
       }
     }
     forecastRunCost += blastTracker.totalCost;
@@ -398,7 +420,14 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     hasConflict ? `# CONFLICT FORECAST\n\n${conflictBuffer}`  : '',
   ].filter(Boolean).join('\n\n---\n\n');
 
-  const parsedFindings = extractFindings(forecastReport);
+  // Prefer the full sidecar set from the blast pipeline (includes findings
+  // ranked past the narrator's cap) so meta.findings agrees with the report's
+  // cap disclosure; conflict findings still come from the report text. Falls
+  // back to parsing the combined report when the callback never fired
+  // (Audit 11, finding 1.2; same pattern as blast.js).
+  const parsedFindings = (blastSidecarFindings && blastSidecarFindings.length > 0)
+    ? [...blastSidecarFindings, ...(hasConflict ? extractFindings(conflictBuffer) : [])]
+    : extractFindings(forecastReport);
   // Severity counts + totalHours, exactly as the interactive save block
   // computes them. The mobile-publish scanRecord reads meta.critical/high/
   // medium/low/totalHours directly (src/reports.js), so omitting them here
@@ -653,6 +682,11 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
 
   // ── Blast Radius ────────────────────────────────────────────────────────
   let blastBuffer = '';
+  // Full sidecar finding set from the blast pipeline, including findings
+  // ranked past the narrator's cap. Preferred over re-parsing the report
+  // text so meta.findings agrees with the cap disclosure (Audit 11,
+  // finding 1.2). Same pattern as blast.js.
+  let blastSidecarFindings = null;
   const blastTracker = new SessionCostTracker();
   const blastUsage   = (i, o, m, stage) => blastTracker.record(stage || 'scan', i, o, m);
   // Hoisted: the conflict scan's tracker is scoped to its try block below, but
@@ -686,6 +720,9 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           tier,
           profile,
           forecastMode: true,
+          onSidecarFindings: (found) => {
+            if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
+          },
           onPassStart: (passNum, total) => {
             if (blastSpinner) blastSpinner.stop();
             blastSpinner = ora({ text: chalk.gray(`  Pass ${passNum} of ${total}...`), color: 'cyan' }).start();
@@ -706,6 +743,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         if (blastSpinner) blastSpinner.stop();
         console.log(chalk.red('  Blast Radius forecast failed'));
         showFriendlyError(err);
+        // Surface what was billed before the failure (Audit 11, quick win 10).
+        if (blastTracker.totalCost > 0) showConflictCost(blastTracker);
       }
     } else {
       // ── Single-pass Blast ───────────────────────────────────────────────
@@ -715,7 +754,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       }).start();
 
       try {
-        await runBlastRadius(
+        const blastResult = await runBlastRadius(
           patchedContext,
           forecastTarget,
           (chunk) => { blastBuffer += chunk; },
@@ -726,8 +765,15 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
             profile,
             forecastMode: true,
             onUsage: blastUsage,
+            onSidecarFindings: (found) => {
+              if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
+            },
           }
         );
+        // Prefer the return value: it carries the reconciled cap disclosure.
+        // The chunk-accumulated buffer is the mid-narration draft (Audit 11,
+        // finding 1.2; same contract blast.js documents at its call site).
+        if (blastResult) blastBuffer = blastResult;
         blastSpinner.succeed(chalk.green('Blast Radius forecast ready'));
         console.log('');
         showConflictCost(blastTracker);
@@ -735,6 +781,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       } catch (err) {
         blastSpinner.fail(chalk.red('Blast Radius forecast failed'));
         showFriendlyError(err);
+        // Surface what was billed before the failure (Audit 11, quick win 10).
+        if (blastTracker.totalCost > 0) showConflictCost(blastTracker);
       }
     }
   } // end blast section
@@ -954,7 +1002,14 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   }]);
 
   if (doSave) {
-    const parsedFindings = extractFindings(forecastReport);
+    // Prefer the full sidecar set from the blast pipeline (includes findings
+    // ranked past the narrator's cap) so meta.findings agrees with the
+    // report's cap disclosure; conflict findings still come from the report
+    // text. Falls back to parsing the combined report when the callback never
+    // fired (Audit 11, finding 1.2; same pattern as blast.js).
+    const parsedFindings = (blastSidecarFindings && blastSidecarFindings.length > 0)
+      ? [...blastSidecarFindings, ...(hasConflict ? extractFindings(conflictBuffer) : [])]
+      : extractFindings(forecastReport);
     const criticalCount  = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
     const highCount      = parsedFindings.filter(f => f.severity === 'HIGH').length;
     const mediumCount    = parsedFindings.filter(f => f.severity === 'MEDIUM').length;

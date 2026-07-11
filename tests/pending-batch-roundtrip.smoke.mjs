@@ -118,6 +118,11 @@ console.log('\nTest 1: every stored field survives the store/retrieve round-trip
 
 console.log('\nTest 2: every key written at a storePendingBatch call site is covered above');
 {
+  // Scope note (Audit 11, quick win 7): this sweep covers watcher-commit.js,
+  // the only file with storePendingBatch call sites today (verified by
+  // repo-wide grep). A storePendingBatch call added in ANY OTHER file is NOT
+  // guarded here and would need its own sweep entry; if you add one, extend
+  // this test to read that file too.
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'modes', 'watcher-commit.js'), 'utf8');
 

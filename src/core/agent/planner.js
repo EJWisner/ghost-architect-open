@@ -9,6 +9,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import path      from 'path';
 import { getConfig, resolveApiKey } from '../../config.js';
 import { getSamplingParams } from '../../utils/sampling-params.js';
+import { getPricing } from '../estimator.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
 function getModel()  { return getConfig().get('defaultModel') || 'claude-sonnet-4-6'; }
@@ -89,16 +90,23 @@ function estimateCosts(fileMap, mode = 'poi') {
   const PASS_TOKEN_LIMIT = 45000;
   const estimatedPasses  = Math.ceil(totalTokens / PASS_TOKEN_LIMIT);
 
-  // Cost estimate: ~$0.003/1K input tokens + ~$0.015/1K output tokens
-  // Rough estimate: each pass ~$0.20-0.35 depending on output verbosity
-  const costPerPass = mode === 'conflict' ? 0.30 : 0.25;
+  // Per-pass baseline (~$0.25-0.30) was calibrated on Sonnet-era rates
+  // ($3/M input, $15/M output). Scale it by the CONFIGURED model's rates via
+  // getPricing, the same table the picker and estimator use, so an Opus- or
+  // Fable-configured install does not hand a prospect a full-scan quote
+  // several times below reality (Audit 11, finding 3.7). The planner and
+  // verifier overhead calls bill at the same model, so they scale too.
+  const pricing   = getPricing(getModel());
+  const baseline  = getPricing('claude-sonnet-4-6');
+  const rateScale = (pricing.inputPerM + pricing.outputPerM) / (baseline.inputPerM + baseline.outputPerM);
+  const costPerPass = (mode === 'conflict' ? 0.30 : 0.25) * rateScale;
   const estCost     = (estimatedPasses * costPerPass).toFixed(2);
   const estMinutes  = Math.max(3, Math.round(estimatedPasses * 3.5));
 
   // Agent overhead: planner (1 call) + optional verifier calls
   const agentOverhead = mode === 'conflict'
-    ? (0.05 * Math.min(estimatedPasses * 2, 20)).toFixed(2) // ~5¢ per verification
-    : '0.05'; // just the planner call itself
+    ? (0.05 * rateScale * Math.min(estimatedPasses * 2, 20)).toFixed(2) // ~5¢ per verification at Sonnet rates
+    : (0.05 * rateScale).toFixed(2); // just the planner call itself
 
   return {
     totalFiles,

@@ -138,7 +138,13 @@ async function refreshSessionAndTier() {
       result.state === 'revoked' ? 'revoked' :
       result.state === 'hard_stop'
         ? (result.payload?.tier === 'trial' ? 'trial-ended' : 'expired')
-        : null;
+        // A tampered or invalid token belongs to a customer whose license
+        // FILE is broken, not a prospect: showing them the purchase pitch
+        // hid the actual recovery action (Audit 11, finding 2.5). 'missing'
+        // stays null: no license installed is the genuine purchase case.
+        : (result.state === 'tampered' || result.state === 'invalid')
+          ? 'license-problem'
+          : null;
   } else {
     SESSION_DEGRADE_REASON = null;
   }
@@ -194,6 +200,7 @@ function parseArgs(argv) {
     revokeKey: null,
     revokeReason: null,
     cleanCache: false,
+    listSessions: false,
     reconfigure: false,
     skipRedaction: false,
     stream: false,
@@ -253,6 +260,7 @@ function parseArgs(argv) {
     if (a.startsWith('--activate=')){ out.activate = a.slice('--activate='.length); continue; }
     if (a === '--recover-session')          { out.recoverSession = argv[++i] || ''; continue; }
     if (a.startsWith('--recover-session=')) { out.recoverSession = a.slice('--recover-session='.length); continue; }
+    if (a === '--list-sessions')            { out.listSessions = true; continue; }
     if (a === '--sessions-dir')          { out.sessionsDir = argv[++i] || ''; continue; }
     if (a.startsWith('--sessions-dir=')) { out.sessionsDir = a.slice('--sessions-dir='.length); continue; }
     if (a === '--license')          { out.licenseStatus = true; continue; }
@@ -398,6 +406,9 @@ Session recovery:
                            Force-recover a scan for <label> from its checkpoint
                            sidecar on the next run, even if a main session file
                            exists. Use when the saved session is stale or bad.
+  --list-sessions          List resumable scan sessions (label, pass progress,
+                           started timestamp) from both session locations.
+                           Then exit.
   --sessions-dir <path>    Relocate the resume-checkpoint directory for this run
                            (default: ~/Ghost Architect Reports/sessions). Useful
                            when the default location is read-only or unsuitable.
@@ -1488,6 +1499,13 @@ async function runExportCiTokenFlow() {
     console.error(`Note: this is a ${payload.tier} token. Ghost Watcher™ CI scanning requires Team or above; ` +
       'a runner using this token will not run Watch scans.');
   }
+  // Same shape for the other CI consumer (Audit 11, finding 2.3): Ghost
+  // Brief™ requires a Max plan and exits 1 in CI, so a non-Max token exported
+  // with no note configured a pipeline whose --brief step failed on every run.
+  if (payload.tier && !MAX_TIERS.includes(payload.tier)) {
+    console.error(`Note: this is a ${payload.tier} token. Ghost Brief™ in CI requires a Max plan (Pro Max, Team Max, or Enterprise Max); ` +
+      'a --brief step using this token will fail.');
+  }
 
   console.error('Signed Ghost Architect™ license token (set this as the GHOST_LICENSE_KEY secret in CI):');
   console.error('');
@@ -2500,6 +2518,9 @@ function licenseMenuLabel() {
   if (SESSION_DEGRADE_REASON === 'expired') {
     return 'License key (expired: renew at ghostarchitect.dev/pricing)';
   }
+  if (SESSION_DEGRADE_REASON === 'license-problem') {
+    return 'License key (problem reading license: run ghost --activate <your key> or contact support@ghostarchitect.dev)';
+  }
   const state = getActiveLicense()?.state || 'missing';
   return `License key (${TIER}: ${state})`;
 }
@@ -2508,6 +2529,15 @@ async function runSelectiveReconfigure() {
   // Test the GitHub token once when the menu opens; cache for the session.
   let githubOk = await testGithubToken();
   while (true) {
+    // Tri-state label (Audit 11, finding 2.6): only a PRESENT token that
+    // fails auth earns "(bad credentials)"; a fresh install with no token
+    // stored reads "(not set)", matching the API key row's convention.
+    // Presence is re-read each pass because the sub-flow can store a token.
+    let githubTokenPresent = false;
+    try { githubTokenPresent = !!(await getPublishToken()); } catch { /* treat as not set */ }
+    const githubLabel = githubOk
+      ? '(verified)'
+      : githubTokenPresent ? '(bad credentials: needs update)' : '(not set)';
     const reconfigureChoices = [
       {
         name: `Anthropic API key ${resolveApiKey() ? '(configured)' : '(not set)'}`,
@@ -2516,7 +2546,7 @@ async function runSelectiveReconfigure() {
         // disable this row but keep the GitHub token and license rows usable.
         disabled: usingEnvKey() ? chalk.gray('(set via ANTHROPIC_API_KEY env var)') : false,
       },
-      { name: `GitHub reports token ${githubOk ? '(verified)' : '(bad credentials: needs update)'}`, value: 'githubToken' },
+      { name: `GitHub reports token ${githubLabel}`, value: 'githubToken' },
       { name: licenseMenuLabel(), value: 'license' },
       { name: `Change scan model (${getConfig().get('defaultModel') || 'claude-sonnet-4-6'})`, value: 'model' },
       { name: 'Run full setup wizard', value: 'full' },
@@ -2620,6 +2650,32 @@ async function main() {
     setSessionsDir(cliOpts.sessionsDir);
   }
 
+  // --list-sessions: show every resumable scan session and exit. Runs after
+  // --sessions-dir so a relocated directory is honored, and before the license
+  // resolve because listing local session files needs no tier. This is the
+  // display surface for listSessions' dual-directory enumeration; the function
+  // previously had no caller, so a fallback-dir session was resumable by label
+  // yet invisible to the user (Audit 11, finding 3.3).
+  if (cliOpts.listSessions) {
+    const { listSessions } = await import('../src/core/multipass.js');
+    const sessions = listSessions();
+    if (sessions.length === 0) {
+      console.log('No resumable scan sessions found.');
+    } else {
+      console.log(`Resumable scan sessions (${sessions.length}):\n`);
+      for (const s of sessions) {
+        const label = s.projectLabel || 'default';
+        const done  = s.completedPassCount || 0;
+        const total = s.totalPassCount || done;
+        const started = s.startedAt ? new Date(s.startedAt).toLocaleString() : 'unknown start time';
+        console.log(`  ${label}`);
+        console.log(`    passes complete: ${done} of ${total}, started: ${started}`);
+      }
+      console.log('\nRun a scan with the same project label to resume, or use --recover-session <label> to force checkpoint recovery.');
+    }
+    process.exit(0);
+  }
+
   // Early license-tier resolve for display surfaces (--help, --version, banner).
   // validateLicense({ skipNetworkClock: true }) skips the worldtimeapi roundtrip
   // so documentation flags stay fast. The main-flow validateLicense() later still
@@ -2656,7 +2712,12 @@ async function main() {
         (earlyRevoked || earlyLicenseResult.state === 'revoked') ? 'revoked' :
         earlyLicenseResult.state === 'hard_stop'
           ? (earlyLicenseResult.payload?.tier === 'trial' ? 'trial-ended' : 'expired')
-          : null;
+          // Same mapping as refreshSessionAndTier: a broken license file is
+          // not a purchase prospect (Audit 11, finding 2.5); 'missing' stays
+          // null so unlicensed users get the purchase pitch.
+          : (earlyLicenseResult.state === 'tampered' || earlyLicenseResult.state === 'invalid')
+            ? 'license-problem'
+            : null;
     } else {
       setActiveLicense(earlyLicenseResult);
       TIER = getActiveTier() || 'open';
@@ -2814,6 +2875,7 @@ async function main() {
         chalk.white('Ghost Partner profiles are part of your paid plan, but your') + '\n' +
         chalk.white('license has expired. Renew to restore access:') + '\n\n' +
         chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.gray('Then:  ') + chalk.cyan('ghost --activate <your new key>') + '\n' +
         chalk.gray('Help:  ') + chalk.cyan('support@ghostarchitect.dev'),
         { padding: 1, borderColor: 'red', borderStyle: 'round' }
       ));
@@ -2823,6 +2885,7 @@ async function main() {
         chalk.white('Your license was revoked, usually because the subscription') + '\n' +
         chalk.white('was cancelled. Resubscribe to restore profile access:') + '\n\n' +
         chalk.gray('Resubscribe: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.gray('Then:        ') + chalk.cyan('ghost --activate <your new key>') + '\n' +
         chalk.gray('Help:        ') + chalk.cyan('support@ghostarchitect.dev'),
         { padding: 1, borderColor: 'red', borderStyle: 'round' }
       ));
@@ -2833,6 +2896,15 @@ async function main() {
         chalk.white('profiles and the rest of the Pro feature set:') + '\n\n' +
         chalk.white('Pricing: ') + chalk.cyan('https://ghostarchitect.dev/pricing'),
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
+      ));
+    } else if (SESSION_DEGRADE_REASON === 'license-problem') {
+      console.log('\n' + boxen(
+        chalk.red.bold('License problem') + '\n\n' +
+        chalk.white('Ghost could not read your installed license. The license file') + '\n' +
+        chalk.white('may be corrupted. Re-activate with your original key:') + '\n\n' +
+        chalk.gray('Fix:  ') + chalk.cyan('ghost --activate <your key>') + '\n' +
+        chalk.gray('Help: ') + chalk.cyan('support@ghostarchitect.dev'),
+        { padding: 1, borderColor: 'red', borderStyle: 'round' }
       ));
     } else {
       console.log('\n' + boxen(
@@ -2846,7 +2918,12 @@ async function main() {
       ));
     }
     console.log('');
-    process.exit(0);
+    // Exit 1, deliberately (Audit 11, quick win 8): every branch above is an
+    // access refusal, and a scripted `ghost --set-default-profile x && deploy`
+    // must not treat a revoked or expired license as success. This differs
+    // from Ghost Watcher™'s advisory exit 0, whose contract is "never block
+    // a commit"; no commit is at stake here.
+    process.exit(1);
   }
 
   // Headless Ghost Partner profile management flags. Each one performs its
@@ -3027,12 +3104,12 @@ async function main() {
       console.log('');
     }
 
-    // Re-seed scan options with the resolved tier. The earlier setScanOptions
-    // call (right after parseArgs) ran with TIER='open' as the placeholder
-    // default — it had to, since license validation hadn't happened yet, but
-    // CLI parsing precedes everything. Now that we know the real tier, push
-    // it down to the loader so the very first loadCodebase() call uses the
-    // correct tier-cap (open 50K vs pro/team/enterprise 100K/150K/200K).
+    // Seed scan options with the resolved tier. Until this point nothing has
+    // called setScanOptions on the normal startup path (the CLI-derived
+    // overrides live in the CLI_SCAN_OVERRIDES stash; only degrade blocks
+    // re-seed earlier), so this is the loader's first real seeding. Push the
+    // real tier down so the very first loadCodebase() call uses the correct
+    // tier-cap (open 50K vs pro/team/enterprise 100K/150K/200K).
     // setScanOptions is documented as last-write-wins and safe to recall.
     setScanOptions({
       tier: TIER,
@@ -3767,9 +3844,9 @@ async function main() {
         console.log('\n' + boxen(
           chalk.cyan.bold('💰 ESTIMATED API COST') + '\n' +
           chalk.gray('Charged to your Anthropic API key. Ghost does not charge for API usage.\n') +
-          chalk.white(`Per commit:     `) + chalk.yellow(`$${estimate.perRun.low.toFixed(2)} – $${estimate.perRun.high.toFixed(2)}`) + '\n' +
-          chalk.white(`Daily (~${commitsPerDay} commits): `) + chalk.yellow(`$${estimate.daily.low.toFixed(2)} – $${estimate.daily.high.toFixed(2)}`) + '\n' +
-          chalk.white(`Monthly est.:   `) + chalk.yellow(`$${estimate.monthly.low.toFixed(2)} – $${estimate.monthly.high.toFixed(2)}`),
+          chalk.white(`Per commit:     `) + chalk.yellow(`$${estimate.perRun.low.toFixed(2)} to $${estimate.perRun.high.toFixed(2)}`) + '\n' +
+          chalk.white(`Daily (~${commitsPerDay} commits): `) + chalk.yellow(`$${estimate.daily.low.toFixed(2)} to $${estimate.daily.high.toFixed(2)}`) + '\n' +
+          chalk.white(`Monthly est.:   `) + chalk.yellow(`$${estimate.monthly.low.toFixed(2)} to $${estimate.monthly.high.toFixed(2)}`),
           { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
         ));
         console.log('');

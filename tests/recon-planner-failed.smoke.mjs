@@ -67,6 +67,27 @@ check('Test 6: observed spend stamps the billed figure',
 check('Test 7: fallback plan carries structural sizing fields',
   plan.totalFiles === 4 && typeof plan.planSummary === 'string' && plan.planSummary.length > 0);
 
+// Test 8: billed-but-unparseable (Audit 11, finding 3.4). The planner reports
+// usage on a successful API response BEFORE parsing it, so a malformed model
+// response arrives with plannerFailed=true AND observed spend. The billed
+// figure must win over the 0.0000 stamp: the spend was real.
+check('Test 8: observed spend wins even when plannerFailed is set',
+  reconMetaCost({ plannerFailed: true }, 0.0512) === '0.0512');
+
+// Test 9: repository-total disclosure (Audit 11, finding 2.4). plan.totalFiles
+// is the LOADED count; when the caller passes the larger repository total,
+// the Total files line must show the repo total and disclose the loaded
+// subset instead of contradicting the meta header's "X of Y".
+const cappedMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null, 396);
+check('Test 9a: capped repo shows repository total with loaded-subset disclosure',
+  cappedMd.includes('**Total files:** 396 (4 loaded for sizing within the context budget)'));
+const uncappedMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null, 4);
+check('Test 9b: uncapped repo shows the plain total with no disclosure',
+  uncappedMd.includes('**Total files:** 4\n') && !uncappedMd.includes('loaded for sizing'));
+const legacyMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null);
+check('Test 9c: omitted repo total falls back to the loaded count',
+  legacyMd.includes('**Total files:** 4'));
+
 if (failures > 0) {
   console.error(`recon-planner-failed.smoke: ${failures} assertion(s) failed`);
   process.exit(1);

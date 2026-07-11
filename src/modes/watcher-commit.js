@@ -46,6 +46,7 @@ import {
   storePendingBatch,
   retrievePendingBatches,
   clearPendingBatch,
+  recordRegenAttempt,
   incrementIncompleteRuns,
   resetIncompleteRuns,
   getPendingState,
@@ -1129,8 +1130,14 @@ async function fetchPriorCommitState(octokit, portalOwner, portalRepoName, repoP
   }
 }
 
+// Returns true when the state was written (or there was nothing to write),
+// false when the portal write failed. Callers that must not deliver
+// downstream artifacts over a stuck portal state gate on the result
+// (Audit 11, finding 3.8); everyone else can keep ignoring it.
 async function pushWatchCommitState(octokit, portalOwner, portalRepoName, repoPath, commitHash, entry) {
-  if (!octokit || !portalOwner || !portalRepoName || !commitHash) return;
+  // Unconfigured portal or a record with no commit hash: no state file will
+  // ever exist to strand, so report success and let the caller proceed.
+  if (!octokit || !portalOwner || !portalRepoName || !commitHash) return true;
   try {
     const filePath = `projects/${repoSlugFor(repoPath)}/scans/watch/commits/${commitHash}.json`;
     await upsertPortalFile(
@@ -1139,8 +1146,10 @@ async function pushWatchCommitState(octokit, portalOwner, portalRepoName, repoPa
       JSON.stringify(entry, null, 2),
       `ghost: watch commit state ${commitHash.slice(0, 7)} (${entry.status})`,
     );
+    return true;
   } catch (err) {
     console.error(`Ghost Watcher: portal commit-state push failed (non-fatal) — ${err.message}`);
+    return false;
   }
 }
 
@@ -1456,15 +1465,41 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
       for (const pending of pendingBatches) {
         console.log(`Ghost Watcher: resuming incomplete batch ${pending.batchId} (${pending.type}) from commit ${(pending.commitHash || '').slice(0, 7)}...`);
 
-        // EMAIL 2 — resume detected
+        // Redelivery guard (Audit 11, finding 2.1): a prior run may have
+        // delivered this batch and then failed to clear its record
+        // (clearPendingBatch never throws). Re-running the delivery would add
+        // the batch's token usage to the portal figure a second time and
+        // duplicate the PR comment and emails. The delivery below stamps the
+        // batchId into the commit state's resumedBatchIds; when the stamp is
+        // already there, only the record clear is retried. Fetched once here
+        // and reused for the prior-usage sum further down.
+        let priorCommitState = null;
         try {
-          const e2 = emailResumeDetected({
-            repo: pending.repo || repoPath,
-            shortSha: (pending.commitHash || '').slice(0, 7),
-            type: pending.type,
-          });
-          await sendWatcherEmail(pending.emailRecipients?.length ? pending.emailRecipients : emailRecipients, e2.subject, e2.html);
-        } catch (_) { /* email never blocks */ }
+          priorCommitState = await fetchWatchCommitState(
+            octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash);
+        } catch { /* degrade: treat as no prior state */ }
+        if (Array.isArray(priorCommitState?.resumedBatchIds)
+            && priorCommitState.resumedBatchIds.includes(pending.batchId)) {
+          console.log(`Ghost Watcher: batch ${pending.batchId} results already delivered, clearing stale record`);
+          await clearPendingBatch(octokitPortal, portalRepoPath, pending.batchId);
+          continue;
+        }
+
+        // EMAIL 2 — resume detected. Suppressed for prompts records that have
+        // already attempted (and failed) brief regeneration: those retry on
+        // every watcher run for up to 29 days, and re-announcing the same
+        // resume each run reads as spam (Audit 11, finding 2.2). The first
+        // detection still emails.
+        if (!(pending.type === 'prompts' && (pending.regenAttempts || 0) > 0)) {
+          try {
+            const e2 = emailResumeDetected({
+              repo: pending.repo || repoPath,
+              shortSha: (pending.commitHash || '').slice(0, 7),
+              type: pending.type,
+            });
+            await sendWatcherEmail(pending.emailRecipients?.length ? pending.emailRecipients : emailRecipients, e2.subject, e2.html);
+          } catch (_) { /* email never blocks */ }
+        }
 
         // ── Detailed-prompts batch resume ────────────────────────────────────
         // No raw scan to re-parse: the results ARE the prompt texts. Enrich the
@@ -1475,7 +1510,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             const shortSha = (pending.commitHash || '').slice(0, 7);
             const promptResults = await pollBatch(anthropic, pending.batchId, {
               pollIntervalMs: 10000, timeoutMs: 60000,
-              onProgress: (p) => console.log(`Ghost Watcher: prompts resume check — ${p.status}`),
+              onProgress: (p) => console.log(`Ghost Watcher: prompts resume check: ${p.status}`),
             });
             const promptUsage = sumBatchUsage(promptResults);
 
@@ -1506,6 +1541,10 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             // the catch below clears the record.
             if (!resumeBrief) {
               console.log(`Ghost Watcher: prompts batch ${pending.batchId} left pending, will retry brief regeneration next run`);
+              // Count the attempt so later runs suppress the duplicate
+              // "resume detected" email while the retries continue
+              // (Audit 11, finding 2.2).
+              await recordRegenAttempt(octokitPortal, portalRepoPath, pending.batchId);
               continue;
             }
 
@@ -1521,7 +1560,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
                   `watch-brief: ${shortSha} (detailed prompts)`,
                 );
               } catch (e) {
-                console.error(`Ghost Watcher: prompts resume brief push failed (non-fatal) — ${e.message}`);
+                console.error(`Ghost Watcher: prompts resume brief push failed (non-fatal): ${e.message}`);
               }
             }
 
@@ -1586,7 +1625,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             if (err instanceof BatchTimeoutError) {
               console.log(`Ghost Watcher: prompts batch ${pending.batchId} still processing, will retry next run`);
             } else {
-              console.log(`Ghost Watcher: prompts resume failed for batch ${pending.batchId} — ${err.message}`);
+              console.log(`Ghost Watcher: prompts resume failed for batch ${pending.batchId}: ${err.message}`);
               await clearPendingBatch(octokitPortal, portalRepoPath, pending.batchId);
             }
           }
@@ -1681,14 +1720,20 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           // portal's per-commit figure, the same defect the prompts-resume
           // path fixed in v11.0.1 (Audit 10, finding 3.4). Best-effort: a
           // failed fetch degrades to the resume-only figure, never blocks.
-          let resumePriorUsage = null;
-          try {
-            resumePriorUsage = (await fetchWatchCommitState(
-              octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash))?.tokenUsage || null;
-          } catch { /* degrade to resume-only usage */ }
+          // The state was fetched once at the top of the loop (redelivery
+          // guard); the guard guarantees this batch's usage is not already in
+          // it, so the sum below cannot double-count (Audit 11, finding 2.1).
+          const resumePriorUsage = priorCommitState?.tokenUsage || null;
 
           // Push resumed results to Ghost Portal under the ORIGINAL commit hash.
-          await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
+          // The delivery below is gated on this write landing: a swallowed
+          // push failure followed by a successful record clear left the
+          // portal on "Analyzing..." permanently with nothing left to retry
+          // (Audit 11, finding 3.8). On failure the record stays pending and
+          // the whole delivery, PR comment and email included, reruns next
+          // watcher run; the resumedBatchIds stamp keeps that retry
+          // idempotent once a push finally lands.
+          const resumeStatePushed = await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
             commitHash: pending.commitHash,
             // Original run identity from the pending record. The resuming run
             // may be on a different branch/developer; stamping the CURRENT
@@ -1710,7 +1755,20 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
               (resumePriorUsage?.inputTokens  || 0) + resumeUsage.inputTokens,
               (resumePriorUsage?.outputTokens || 0) + resumeUsage.outputTokens,
             ),
+            // Idempotency stamp for the redelivery guard at the top of the
+            // loop: if the record clear below silently fails, the next run
+            // sees this batchId here and retries only the clear instead of
+            // double-adding usage and re-sending the PR comment and email
+            // (Audit 11, finding 2.1).
+            resumedBatchIds: [
+              ...(Array.isArray(priorCommitState?.resumedBatchIds) ? priorCommitState.resumedBatchIds : []),
+              pending.batchId,
+            ],
           });
+          if (!resumeStatePushed) {
+            console.warn(`Ghost Watcher: portal state push failed for resumed batch ${pending.batchId}; leaving record pending to retry delivery next run`);
+            continue;
+          }
 
           // Update the PR comment on the ORIGINAL PR with the real findings.
           if (pending.prNumber) {
@@ -1759,7 +1817,7 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
           if (err instanceof BatchTimeoutError) {
             console.log(`Ghost Watcher: batch ${pending.batchId} still processing, will retry next run`);
           } else {
-            console.log(`Ghost Watcher: resume failed for batch ${pending.batchId} — ${err.message}`);
+            console.log(`Ghost Watcher: resume failed for batch ${pending.batchId}: ${err.message}`);
             // A non-timeout failure is terminal for this record (batch
             // expired past 29 days, all requests failed, deterministic API
             // error) and the record is about to be cleared, so nothing will
@@ -1783,6 +1841,11 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
                   severity: { critical: 0, high: 0, medium: 0, low: 0 },
                   prompts: 0,
                   resolvedFindings: [], newFindingIds: [], priorCommitHash: null,
+                  // Shape parity with Step 8b's incomplete entry (Audit 11,
+                  // quick win 9): the portal renderer gets a consistently
+                  // shaped state whichever path wrote it.
+                  blastRadiusObservations: [],
+                  tokenUsage: buildTokenUsage(0, 0),
                 }),
                 timestamp: new Date().toISOString(),
                 status: 'incomplete',

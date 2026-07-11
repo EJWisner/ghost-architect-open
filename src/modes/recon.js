@@ -98,14 +98,14 @@ export async function runReconMode(codebaseContext, options = {}) {
     // Render the recon plan as a markdown report. This is the artifact
     // the consultant hands to a prospect — it must read as a polished
     // engagement-ready document, not raw planner output.
-    const markdown = renderReconMarkdown(plan, label, profile);
+    const markdown = renderReconMarkdown(plan, label, profile, codebaseContext.totalFiles);
 
     // Print a short summary to the terminal so the user sees the headline
     // numbers before deciding whether to save.
     console.log(boxen(
       chalk.cyan.bold('📋 RECON SUMMARY') + '\n\n' +
       chalk.white(plan.planSummary || plan.sizingSummary || '') + '\n\n' +
-      chalk.gray('Total files: ')         + chalk.bold(String(plan.totalFiles)) + '   ' +
+      chalk.gray('Total files: ')         + chalk.bold(String(codebaseContext.totalFiles || plan.totalFiles)) + '   ' +
       chalk.gray('Estimated passes: ')    + chalk.bold(String(plan.estimatedPasses)) + '   ' +
       chalk.gray('Full-scan cost: ')      + chalk.bold('~$' + plan.totalEstCost) + '   ' +
       chalk.gray('Full-scan time: ')      + chalk.bold('~' + plan.estMinutes + ' min') +
@@ -174,15 +174,18 @@ export async function runReconMode(codebaseContext, options = {}) {
 
 // ── Meta cost ────────────────────────────────────────────────────────────────
 //
-// Real planner spend for the saved artifact's Analysis Cost row. When the
-// planner API call failed (structural fallback plan, plannerFailed set), the
-// run billed nothing: stamp 0.0000 instead of the old hardcoded 0.0500 guess,
-// which claimed spend on a sales-facing artifact for a call that never
-// succeeded (Audit 9, finding 2.4). The 0.0500 estimate remains only for the
-// succeeded-but-usage-unobservable case.
+// Real planner spend for the saved artifact's Analysis Cost row. Observed
+// spend ALWAYS wins: the planner reports usage on a successful API response
+// before parsing it, so a billed-but-unparseable response arrives here with
+// plannerFailed set AND reconCost > 0, and stamping 0.0000 would under-report
+// real spend on a sales-facing artifact (Audit 11, finding 3.4). Only a run
+// with no observed spend distinguishes by flag: a failed planner call billed
+// nothing (0.0000, Audit 9, finding 2.4); a succeeded-but-usage-unobservable
+// call keeps the 0.0500 estimate.
 // @ghost-verified: exported for unit testing (tests/recon-planner-failed.smoke.mjs)
 export function reconMetaCost(plan, reconCost) {
-  return plan.plannerFailed ? '0.0000' : (reconCost > 0 ? reconCost.toFixed(4) : '0.0500');
+  if (reconCost > 0) return reconCost.toFixed(4);
+  return plan.plannerFailed ? '0.0000' : '0.0500';
 }
 
 // ── Markdown rendering ───────────────────────────────────────────────────────
@@ -193,7 +196,7 @@ export function reconMetaCost(plan, reconCost) {
 // voice. When no profile is loaded, the prose still works but reads as a
 // neutral pre-engagement triage.
 // @ghost-verified: exported for unit testing (tests/recon-planner-failed.smoke.mjs)
-export function renderReconMarkdown(plan, projectLabel, profile) {
+export function renderReconMarkdown(plan, projectLabel, profile, repoTotalFiles = null) {
   const consultantName = profile?.author || profile?.organization || null;
   const consultantOrg  = profile?.organization || profile?.author  || null;
 
@@ -227,7 +230,19 @@ export function renderReconMarkdown(plan, projectLabel, profile) {
     lines.push(plan.sizingSummary.trim());
     lines.push('');
   }
-  lines.push(`- **Total files:** ${plan.totalFiles}`);
+  // plan.totalFiles is the LOADED count (files that fit the context budget),
+  // not the repository total. On a context-capped repo the old line
+  // contradicted the meta header's "X of Y" and understated the codebase in
+  // a sizing artifact's headline number (Audit 11, finding 2.4). When the
+  // caller supplies the repository total, show it, and disclose the loaded
+  // subset when the two differ.
+  const totalForDisplay = Number.isFinite(repoTotalFiles) && repoTotalFiles > 0
+    ? repoTotalFiles : plan.totalFiles;
+  if (totalForDisplay !== plan.totalFiles) {
+    lines.push(`- **Total files:** ${totalForDisplay} (${plan.totalFiles} loaded for sizing within the context budget)`);
+  } else {
+    lines.push(`- **Total files:** ${totalForDisplay}`);
+  }
   lines.push(`- **Estimated full-scan passes:** ${plan.estimatedPasses}`);
   lines.push(`- **Estimated full-scan cost:** $${plan.totalEstCost}`);
   lines.push(`- **Estimated full-scan time:** ~${plan.estMinutes} minutes`);

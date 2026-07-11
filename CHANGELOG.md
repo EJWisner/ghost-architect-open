@@ -5,6 +5,44 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v11.0.3 -- July 10, 2026
+
+### Audit 11 Remediation: Renewal Recovery Copy, Forecast Sidecar Parity, Revocation Read Routing, Session Listing Wired
+
+**Ship blockers**
+- The expired and revoked profile paywall boxes include the ghost --activate step. Both told a lapsed customer to renew or resubscribe with only a pricing link, but neither action restores access on its own: the revocation verdict is sticky until a fresh activation rewrites the record, and an expired token's hard stop is baked into its signed payload, so a customer who followed the box's instructions hit the same wall again. Both boxes now mirror the main-flow banner's "run ghost --activate with your new key" copy.
+- Commit Forecast uses the reconciled Blast Radius report instead of the mid-narration draft. Both single-pass call sites discarded runBlastRadius's return value, which carries the reconciled cap disclosure, and no forecast path passed onSidecarFindings even though the multipass synthesis sidecar branch was built for it: on a change set past the narrator's cap, the saved forecast promised a complete findings sidecar while meta.findings held only the narrated subset. All four blast invocations (single-pass and multipass, interactive and non-interactive) now wire the sidecar callback through, and both save blocks prefer the full sidecar set for meta.findings, falling back to report parsing when the callback never fired.
+- Revocation cache reads are license-aware, completing the v11.0.2 write routing. getRevocationCache always returned the installed record's entry when one existed, making the standalone slot write-only on a machine running an env-var license alongside an installed one: the env-var license's sticky revoked verdict was unreadable, so it re-probed the worker every run and failed open when the worker was unreachable. Reads now check both slots and return the entry whose license_id matches; the no-argument form keeps the legacy behavior for callers with no lid in hand.
+- Activating or clearing a license only deletes the standalone revocation verdict when it belongs to that license. Both paths deleted the slot unconditionally, so activating or clearing installed key A erased env-var key B's sticky revoked verdict. The verdict now survives when both lids are known and differ; the delete still happens whenever ownership cannot be determined, preserving the resubscribe guarantee.
+
+**Revenue and trust**
+- New --list-sessions flag lists every resumable scan session with its label, pass progress, and start time, reading both the primary and OS-temp fallback session directories. The dual-directory enumeration shipped in v11.0.2 had no caller, so a fallback-directory session was resumable by label yet invisible to the user. Documented in --help under Session recovery.
+- Watcher resume delivery is idempotent. If a delivered batch's record clear silently failed, the next run re-resumed the same batch, added its token usage to the portal figure a second time, and re-sent the PR comment and completion email. The delivery now stamps the batch id into the commit state's resumedBatchIds; a record whose batch is already stamped retries only the clear.
+- A prompts record whose brief regeneration fails deterministically no longer emails "resume detected" on every subsequent run for up to 29 days. The record carries a regenAttempts counter; the first detection still emails, later retries run silently.
+- ghost --export-ci-token prints a second stderr advisory when the exported token's tier is below the Max plans, since Ghost Brief™ in CI exits 1 on every run with a sub-Max token: the same silent-dead-runner shape the existing Watch advisory covers. The token still exports.
+- The Recon report's Total files line shows the repository total instead of the loaded-file count, with an explicit "N loaded for sizing within the context budget" disclosure when the two differ. On a context-capped repo the sizing artifact's headline number contradicted its own meta header. The terminal summary box uses the repository total too, and the smoke test pins the capped, uncapped, and legacy renderings.
+- A customer whose license file cannot be read (tampered or invalid state) sees a "License problem" box telling them to re-activate with their original key or contact support, instead of the "Activate a Pro license" purchase pitch for a feature they already own. The degrade mapping gains a 'license-problem' reason in both the startup resolve and the mid-session refresh, and the Reconfigure menu's license row shows it.
+- The Reconfigure menu's GitHub token row distinguishes "(not set)" from "(bad credentials: needs update)". A fresh install with no token stored read as broken credentials.
+
+**Technical**
+- reconMetaCost prefers observed spend unconditionally. The planner reports usage on a successful API response before parsing it, so a billed-but-unparseable model response arrived with plannerFailed set and real spend, and the $0.0000 stamp under-reported actual billing on a sales-facing artifact: the same accuracy class the v11.0.2 fix targeted, in the opposite direction. A new smoke test case pins the billed figure winning over the flag.
+- Per-pass cap-disclosure lines are stripped when the synthesis input is built, not only on the salvage path. The synthesizer could copy a per-pass disclosure into its output, where the reconciler rewrites only the first occurrence, leaving a second line pointing at a per-pass findings file that is never written on the multipass path.
+- The double-failure path (verifier throws and the fallback sidecar also throws) logs what happened and strips the narrator's stale pre-verification disclosure instead of silently shipping a promise of findings that exist nowhere. Previously that inner catch swallowed without a trace and the regeneration gate never fired.
+- The Recon full-scan cost estimate scales its per-pass rate by the configured model's pricing via getPricing, the same table the model picker and estimator use. The hardcoded Sonnet-era rate quoted an Opus or Fable configured install a full-scan figure several times below reality on a prospect-facing artifact. The planner and verification overhead estimates scale the same way.
+- The watcher resume delivery is gated on the portal state push landing. pushWatchCommitState swallowed failures internally, so a failed push followed by a successful record clear stranded the portal on "Analyzing..." permanently with nothing left to retry. The helper now reports success; on failure the record stays pending and the whole delivery, PR comment and email included, reruns on the next watcher run, kept idempotent by the resumedBatchIds stamp.
+
+**Quick wins**
+- README What's New for v11.0.2 says three new test suites, matching what shipped.
+- The four resume-path log lines that used em dashes now use colons.
+- The Watch-enable cost box renders its dollar ranges with "to" instead of an en dash.
+- When the synthesis output yields zero parseable findings, any cap-disclosure lines are stripped from it, since the warning on the same path just said no sidecar will be written.
+- The stale comment claiming a setScanOptions call "right after parseArgs" (refactored away when the CLI overrides moved to a stash) now describes the actual seeding order.
+- Session recovery messages report the pass the scan continues at instead of the completed count ("Resuming from pass 6 of 16" after 5 completed passes, not "pass 5").
+- The pending-batch round-trip test documents that its source sweep covers watcher-commit.js, today's only storePendingBatch call-site file, and must be extended if a call site appears elsewhere.
+- The headless profile paywall exits 1 on every refusal branch instead of 0, so scripted profile management no longer treats a revoked or expired license as success. Documented in place as a deliberate contrast with Ghost Watcher™'s never-block-a-commit exit 0.
+- The non-timeout resume failure's fallback state carries tokenUsage and blastRadiusObservations with safe defaults, matching the shape Step 8b writes.
+- A Blast Radius failure inside a Commit Forecast shows the partial COST BREAKDOWN for what was billed before the failure, on all four catch paths, matching the conflict scan's behavior. The spend already landed in meta.cost; now the screen agrees.
+
 ## v11.0.2 -- July 10, 2026
 
 ### Audit 10 Remediation: Recon Disclosure Made Live, Resume Coverage Honesty, Renewal Copy, Pending-Record Integrity

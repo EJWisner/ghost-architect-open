@@ -86,11 +86,25 @@ export function getFingerprintAtActivation() {
 // guarantees on the installed path.
 const REVOCATION_STANDALONE_KEY = 'revocationCacheStandalone';
 
-export function getRevocationCache() {
+// READ ROUTING (Audit 11, finding 3.1): the v11.0.2 write routing sent an
+// env-var license's verdict to the standalone slot, but the read side always
+// returned the record slot when one existed, making the standalone slot
+// write-only on a machine with installed key A plus GHOST_LICENSE_KEY=B: B's
+// sticky revoked verdict was unreadable and B failed open offline. When the
+// caller knows which license it is asking about, check BOTH slots and return
+// the entry whose license_id matches. The no-arg form keeps the legacy
+// record-shadows-standalone behavior for callers with no lid in hand.
+export function getRevocationCache(licenseId = null) {
   const r = read();
-  if (r && r.revocation && typeof r.revocation === 'object') return r.revocation;
-  const standalone = getConfig().get(REVOCATION_STANDALONE_KEY);
-  return standalone && typeof standalone === 'object' ? standalone : null;
+  const recordEntry = (r && r.revocation && typeof r.revocation === 'object') ? r.revocation : null;
+  const standaloneRaw = getConfig().get(REVOCATION_STANDALONE_KEY);
+  const standaloneEntry = (standaloneRaw && typeof standaloneRaw === 'object') ? standaloneRaw : null;
+  if (licenseId) {
+    if (recordEntry && recordEntry.license_id === licenseId) return recordEntry;
+    if (standaloneEntry && standaloneEntry.license_id === licenseId) return standaloneEntry;
+    return null;
+  }
+  return recordEntry || standaloneEntry;
 }
 
 export function saveRevocationCache({ licenseId, status }) {
@@ -136,8 +150,17 @@ export function saveActivation({ token, fingerprintHashes }) {
   // key must honor the same guarantee: a stale standalone 'revoked' entry for
   // the SAME license_id (cached during env-var use) survived re-activation
   // and the sticky short-circuit blocked a resubscribed customer without
-  // ever probing the worker again (Audit 9, finding 3.5).
-  getConfig().delete(REVOCATION_STANDALONE_KEY);
+  // ever probing the worker again (Audit 9, finding 3.5). But a verdict that
+  // provably belongs to a DIFFERENT license (env-var key B while installing
+  // key A) must survive, or activating A grants B offline amnesty (Audit 11,
+  // finding 3.2). Delete unless both lids are known and differ.
+  const standalone = getConfig().get(REVOCATION_STANDALONE_KEY);
+  const standaloneLid = (standalone && typeof standalone === 'object') ? standalone.license_id ?? null : null;
+  let activatedLid = null;
+  try { activatedLid = decodeTokenUnsafe(token)?.payload?.lid ?? null; } catch { /* undecodable: legacy delete below */ }
+  if (standaloneLid === null || activatedLid === null || standaloneLid === activatedLid) {
+    getConfig().delete(REVOCATION_STANDALONE_KEY);
+  }
 }
 
 // Strict ISO-8601 UTC instant, matching what saveActivation/the validator emit:
@@ -223,11 +246,22 @@ export function updateLastSeenUtc(newIso) {
 
 // Wipe the license. Used by tests and by `ghost license clear`.
 export function clearLicense() {
+  // Capture the installed token's lid BEFORE wiping the record so the
+  // standalone-slot guard below can tell whose verdict it is looking at.
+  const r = read();
+  let clearedLid = null;
+  try { clearedLid = decodeTokenUnsafe(r?.token)?.payload?.lid ?? null; } catch { /* undecodable: legacy delete below */ }
   write(null);
   // Same guarantee as saveActivation: clearing the license must not leave a
   // stale standalone revocation verdict behind to block a future activation
-  // of the same key (Audit 9, finding 3.5).
-  getConfig().delete(REVOCATION_STANDALONE_KEY);
+  // of the same key (Audit 9, finding 3.5). A verdict that provably belongs
+  // to a DIFFERENT license (env-var key B while key A is installed) must
+  // survive the clear (Audit 11, finding 3.2).
+  const standalone = getConfig().get(REVOCATION_STANDALONE_KEY);
+  const standaloneLid = (standalone && typeof standalone === 'object') ? standalone.license_id ?? null : null;
+  if (standaloneLid === null || clearedLid === null || standaloneLid === clearedLid) {
+    getConfig().delete(REVOCATION_STANDALONE_KEY);
+  }
 }
 
 // ── Admin token ─────────────────────────────────────────────────────────────

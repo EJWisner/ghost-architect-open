@@ -560,6 +560,12 @@ export async function retrievePendingBatches(octokit, portalRepo) {
         pollIntervalMs:  b.pollIntervalMs,
         timeoutMs:       b.timeoutMs,
         // Detailed-prompts (type 'prompts') resume payload:
+        // regenAttempts bounds the "resume detected" email: a record that
+        // already failed brief regeneration retries silently on later runs
+        // instead of re-emailing the customer each time (Audit 11,
+        // finding 2.2). Written by recordRegenAttempt below, not by a
+        // storePendingBatch call site.
+        regenAttempts:   Number.isFinite(b.regenAttempts) ? b.regenAttempts : undefined,
         findings:        Array.isArray(b.findings) ? b.findings : undefined,
         severity:        b.severity ?? undefined,
         findingCount:    b.findingCount ?? undefined,
@@ -570,6 +576,30 @@ export async function retrievePendingBatches(octokit, portalRepo) {
       }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Increment the regen-attempt counter on a pending prompts record. The resume
+ * path calls this when brief regeneration fails and the record is left pending
+ * to retry: the counter lets later runs suppress the duplicate "resume
+ * detected" email while the retries continue (Audit 11, finding 2.2).
+ * Never throws.
+ */
+export async function recordRegenAttempt(octokit, portalRepo, batchId) {
+  try {
+    if (!octokit || !portalRepo || !batchId) return;
+    const { owner, repo } = splitRepo(portalRepo);
+    await mutatePendingFile(
+      octokit, owner, repo,
+      (d) => {
+        if (!d.batches || !d.batches[batchId]) return false;
+        d.batches[batchId].regenAttempts = (d.batches[batchId].regenAttempts || 0) + 1;
+      },
+      `ghost-watcher: regen attempt ${batchId}`
+    );
+  } catch (err) {
+    console.warn(`Ghost Watcher: recordRegenAttempt failed (non-fatal): ${err.message}`);
   }
 }
 

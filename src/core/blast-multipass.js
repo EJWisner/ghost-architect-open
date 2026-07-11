@@ -141,8 +141,14 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
   // can reference any file.
   if (onSynthesisStart) onSynthesisStart();
 
+  // Strip each pass's cap-disclosure line BEFORE the synthesis prompt sees it
+  // (Audit 11, finding 3.5). Those lines point at per-pass .findings.json
+  // files that are never written on the multipass path, and the synthesizer
+  // may copy them into its output, where rewriteCapDisclosure reconciles only
+  // the FIRST occurrence: a second copied line survived with a stale count
+  // pointing at a nonexistent file. They carry nothing the merge needs.
   const combinedResults = perPassResults
-    .map((r, i) => `=== BLAST PASS ${i + 1} OF ${total} ===\n${r}`)
+    .map((r, i) => `=== BLAST PASS ${i + 1} OF ${total} ===\n${stripCapDisclosures(r)}`)
     .join('\n\n---\n\n');
 
   // Build synthesis prompt inline — asks the model to merge N blast outputs
@@ -252,15 +258,15 @@ ${combinedResults}`;
     // note explaining the synthesis pass did not complete, instead of ''.
     // No sidecar callback fires on this path: the concatenation carries
     // cross-pass duplicates, and there is no merged finding set to hand over.
-    // Strip every per-pass cap-disclosure line first: each pass may carry its
-    // own "All N findings ... in the accompanying .findings.json" line, but
-    // no sidecar is written on this path, so those lines pointed at findings
-    // files that exist nowhere (Audit 10, finding 2.3).
+    // Per-pass cap-disclosure lines were already stripped when
+    // combinedResults was built above (Audit 10, finding 2.3; moved to build
+    // time by Audit 11, finding 3.5, so the synthesis prompt never sees them
+    // either).
     console.warn(`[Ghost] Blast synthesis did not complete: ${err.message} Falling back to the ${total} unmerged per-pass reports.`);
     return (
       `> Note: automated synthesis of the ${total} Blast Radius passes did not complete. ` +
       `${err.message} The unmerged per-pass reports are included below; review them individually.\n\n` +
-      stripCapDisclosures(combinedResults)
+      combinedResults
     );
   }
 
@@ -288,6 +294,9 @@ ${combinedResults}`;
         // to the no-sidecar state Audit 9 finding 3.10 fixed (Audit 10,
         // finding 3.9). Observability only; the report itself still ships.
         console.warn('[Ghost] Blast synthesis produced no parseable findings; no findings sidecar will be written for this run.');
+        // No sidecar will exist, so any disclosure line the model carried
+        // into the synthesis must not promise one (Audit 11, quick win 4).
+        synthesisOutput = stripCapDisclosures(synthesisOutput);
       }
     } catch (sidecarErr) {
       // Best-effort — the synthesized report itself is unaffected. But log
