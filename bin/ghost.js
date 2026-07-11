@@ -1919,15 +1919,27 @@ function renderLicenseStateAndMaybeBlock(result, promoText = '') {
       result.state === 'invalid'   ? 'License invalid' :
       result.state === 'tampered'  ? 'Clock validation failed' :
                                      'License problem';
+    // Recovery copy is state-routed (Audit 12, finding 1.1). An expired paid
+    // license is fixed by renewing and then activating the NEW key; renewal
+    // alone leaves the customer blocked until they activate. Tampered and
+    // invalid mean the stored token could not be validated, so renewal is the
+    // wrong instruction entirely: re-activating with the original key rebuilds
+    // the token, matching the profile paywall boxes fixed in v11.0.3.
+    const recovery = result.state === 'hard_stop'
+      ? chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
+        chalk.gray('Then:  ') + chalk.cyan('ghost --activate <your new key>') + '\n' +
+        chalk.gray('Help:  ') + chalk.cyan('support@ghostarchitect.dev')
+      : chalk.white('Your license could not be validated. Re-activate with your original key:') + '\n\n' +
+        chalk.gray('Fix:  ') + chalk.cyan('ghost --activate <your key>') + '\n' +
+        chalk.gray('If that fails, contact ') + chalk.cyan('support@ghostarchitect.dev');
     console.log('\n' + boxen(
       chalk.red.bold(`${SYM.cross} ${headline}`) + '\n\n' +
       chalk.white(result.message) + '\n\n' +
-      chalk.gray('Renew: ') + chalk.cyan('https://ghostarchitect.dev/pricing') + '\n' +
-      chalk.gray('Help:  ') + chalk.cyan('support@ghostarchitect.dev'),
+      recovery,
       { padding: 1, borderColor: 'red', borderStyle: 'round' }
     ));
     console.log('');
-    console.log(chalk.gray('Existing reports on disk are unaffected. New scans are blocked until\nthe license is renewed.\n'));
+    console.log(chalk.gray(`Existing reports on disk are unaffected. New scans are blocked until\nthe license is ${result.state === 'hard_stop' ? 'renewed and activated' : 're-activated'}.\n`));
     return true;
   }
   // Active trial: surface days remaining so the countdown is visible and the
@@ -2516,7 +2528,7 @@ function licenseMenuLabel() {
     return 'License key (trial ended: subscribe at ghostarchitect.dev/pricing)';
   }
   if (SESSION_DEGRADE_REASON === 'expired') {
-    return 'License key (expired: renew at ghostarchitect.dev/pricing)';
+    return 'License key (expired: renew at ghostarchitect.dev/pricing, then run ghost --activate <your new key>)';
   }
   if (SESSION_DEGRADE_REASON === 'license-problem') {
     return 'License key (problem reading license: run ghost --activate <your key> or contact support@ghostarchitect.dev)';

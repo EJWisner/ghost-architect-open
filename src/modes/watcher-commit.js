@@ -1584,7 +1584,14 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
             // 'complete' here; anything else keeps its status and message.
             const promptsResumeUpgradeOk = !existingState?.status
               || ['pending', 'complete'].includes(existingState.status);
-            await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
+            // The delivery below is gated on this write landing, mirroring the
+            // blast/conflict resume: a swallowed push failure followed by a
+            // successful record clear left the portal Brief tab stale with
+            // nothing left to retry (Audit 12, finding 2.1). On failure the
+            // record stays pending and the whole delivery reruns next watcher
+            // run; the resumedBatchIds stamp keeps that retry idempotent once
+            // a push finally lands.
+            const promptsStatePushed = await pushWatchCommitState(octokitPortal, portalOwner, portalRepoName, pending.repo || repoPath, pending.commitHash, {
               ...(existingState || {
                 commitHash: pending.commitHash,
                 branch: pending.branch || branch,
@@ -1607,7 +1614,18 @@ export async function runWatchCommit({ tier = 'open', version = '9.0.0' } = {}) 
                 (existingState?.tokenUsage?.inputTokens  || 0) + promptUsage.inputTokens,
                 (existingState?.tokenUsage?.outputTokens || 0) + promptUsage.outputTokens,
               ),
+              // Idempotency stamp for the redelivery guard at the top of the
+              // loop, same contract as the blast/conflict resume push
+              // (Audit 12, finding 2.1).
+              resumedBatchIds: [
+                ...(Array.isArray(existingState?.resumedBatchIds) ? existingState.resumedBatchIds : []),
+                pending.batchId,
+              ],
             });
+            if (!promptsStatePushed) {
+              console.warn(`Ghost Watcher: portal state push failed for resumed prompts batch ${pending.batchId}; leaving record pending to retry delivery next run`);
+              continue;
+            }
 
             if (pending.prNumber) {
               const body =

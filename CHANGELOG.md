@@ -43,6 +43,11 @@ and the project adheres to semantic versioning.
 - The non-timeout resume failure's fallback state carries tokenUsage and blastRadiusObservations with safe defaults, matching the shape Step 8b writes.
 - A Blast Radius failure inside a Commit Forecast shows the partial COST BREAKDOWN for what was billed before the failure, on all four catch paths, matching the conflict scan's behavior. The spend already landed in meta.cost; now the screen agrees.
 
+**Applied in a follow-up commit before publication (Audit 12)**
+- The prompts resume delivery is gated on the portal state push landing and stamps resumedBatchIds, mirroring the blast/conflict resume. A failed push no longer posts the PR comment or clears the record; the delivery retries on the next watcher run.
+- The main-flow license blocking box routes recovery copy by state: an expired license shows renew, then ghost --activate with the new key; tampered and invalid states show re-activate guidance instead of renewal copy, matching the profile paywall boxes. The Reconfigure menu's expired row carries the activate step too.
+- The pending-batch round-trip test's CANONICAL record includes regenAttempts, so removing its whitelist mapping now fails the round-trip assertion.
+
 ## v11.0.2 -- July 10, 2026
 
 ### Audit 10 Remediation: Recon Disclosure Made Live, Resume Coverage Honesty, Renewal Copy, Pending-Record Integrity

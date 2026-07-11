@@ -98,6 +98,9 @@ const CANONICAL = {
   projectSlug:     'acme-storefront',
   version:         '11.0.2',
   tier:            'team',
+  // Covered by Test 1 only: written by recordRegenAttempt, not at a
+  // storePendingBatch call site, so Test 2's sweep never sees it.
+  regenAttempts:   3,
 };
 
 console.log('\nTest 1: every stored field survives the store/retrieve round-trip');
