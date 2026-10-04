@@ -8,7 +8,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { getConfig } from '../config.js';
-import { resolveContextCap } from './tierCaps.js';
+import { resolveContextCap } from './contextCap.js';
 import { resolveExcludePatterns, isExcluded, filterPaths } from './excludes.js';
 import { redactContent, showRedactionSummary } from '../redactor.js';
 import { isBackKeyword } from '../cli/prompt-helpers.js';
@@ -19,37 +19,23 @@ import { SYM } from '../cli/symbols.js';
 // Scan-time options set by bin/ghost.js from CLI flags / prompts.
 // Read by buildContext and the three loader entry points.
 let SCAN_OPTIONS = {
-  tier: 'open',
   maxContextOverride: null,   // number | null
-  ignoreSavedContext: false,  // boolean — when true, buildContext ignores the saved configstore maxTokensContext and falls back to the full tier cap (set by the CI guard)
   excludePresets: [],         // string[]
   excludePatterns: [],        // string[]
-  skipRedaction: false,       // boolean — Pro+ escape hatch for the fail-closed redaction abort
+  skipRedaction: false,       // boolean: escape hatch for the fail-closed redaction abort
 };
 
 /**
- * Called from bin/ghost.js to seed tier + flag values before a scan runs.
+ * Called from bin/ghost.js to seed flag values before a scan runs.
  * Safe to call multiple times; last call wins.
  */
 export function setScanOptions(opts = {}) {
   SCAN_OPTIONS = {
-    tier: opts.tier || SCAN_OPTIONS.tier || 'open',
     maxContextOverride: opts.maxContextOverride ?? null,
-    ignoreSavedContext: opts.ignoreSavedContext === true,
     excludePresets: Array.isArray(opts.excludePresets) ? opts.excludePresets : [],
     excludePatterns: Array.isArray(opts.excludePatterns) ? opts.excludePatterns : [],
     skipRedaction: opts.skipRedaction === true,
   };
-}
-
-// Tiers that may use --skip-redaction. The flag is a deliberate "expose secrets
-// to finish the scan" escape hatch, so it is gated to paid tiers only; Open
-// always fails closed. Trial mirrors Pro for feature access, so it is included.
-const SKIP_REDACTION_TIERS = new Set([
-  'trial', 'pro', 'pro-max', 'team', 'team-max', 'enterprise', 'enterprise-max',
-]);
-function canSkipRedaction(tier) {
-  return SKIP_REDACTION_TIERS.has(tier);
 }
 
 // Write redaction-failure details to the debug directory for post-mortem
@@ -64,7 +50,6 @@ function writeRedactionFailureLog(failedRules, { continued }) {
     const lines = [];
     lines.push('Redaction failure report');
     lines.push(`Timestamp:    ${new Date().toISOString()}`);
-    lines.push(`Tier:         ${SCAN_OPTIONS.tier}`);
     lines.push(`Outcome:      ${continued
       ? 'scan CONTINUED via --skip-redaction (secrets may be exposed)'
       : 'scan ABORTED (fail-closed — codebase NOT sent to API)'}`);
@@ -222,14 +207,9 @@ export async function loadCodebase(method, options) {
 }
 
 // ── loadFromPath — non-interactive, takes a known directory path ──────────────
-// Used by the Commit Forecast non-interactive flag path (--baseline) and by
-// Ghost Watcher. Throws with a clear message if path doesn't exist or isn't a
-// directory. Returns the same shape as loadFromFiles.
-//
-// options.tier — optional tier ('open' | 'pro' | 'team' | 'enterprise'). When
-// provided, the tier-appropriate context cap is applied. Non-interactive
-// callers must pass it because they never run setScanOptions through the
-// interactive flow; without it the cap defaults to the Open 50K ceiling.
+// Used by the Commit Forecast non-interactive flag path (--baseline). Throws
+// with a clear message if path doesn't exist or isn't a directory. Returns the
+// same shape as loadFromFiles.
 export async function loadFromPath(dirPath, options = {}) {
   if (!fs.existsSync(dirPath)) {
     throw new Error(`Path does not exist: ${dirPath}`);
@@ -242,14 +222,6 @@ export async function loadFromPath(dirPath, options = {}) {
 
 // ── _loadFromDirPath — shared implementation used by both interactive and non-interactive paths ──
 async function _loadFromDirPath(dirPath, options = {}) {
-  // Honor an explicitly passed tier so non-interactive callers (e.g. Ghost
-  // Watcher) get the tier-appropriate context cap. resolveContextCap is the
-  // single cap resolver (invoked downstream in buildContext); seeding the tier
-  // here routes it through that resolver instead of the Open 50K default.
-  if (options.tier) {
-    setScanOptions({ ...getScanOptions(), tier: options.tier });
-  }
-
   const spinner = ora('Scanning files...').start();
 
   // Step 1: get ALL files (no exclusions yet) so we can report a default-excluded count.
@@ -895,16 +867,14 @@ async function readFiles(filePaths, basePath) {
 }
 
 // ── Custom-patterns extension hook (stub for v7 GA scope addition) ────────────────────────────────
-// Returns profile-declared private_patterns as rule objects to append to the
+// Returns user-declared private patterns as rule objects to append to the
 // redactor's built-in rule set. Initial implementation returns an empty array;
-// full feature is sequenced after Stage 3 freemium-to-requireTier conversion.
-// Designed-in extension point: when implemented, this becomes a real loader
-// that reads profile.private_patterns, validates regex/literal entries,
-// tier-gates (Open returns []), and produces { name, regex, replacement }
-// objects shaped like REDACTION_RULES.
+// the full feature is not built yet. Designed-in extension point: when
+// implemented, this validates regex/literal entries and produces
+// { name, regex, replacement } objects shaped like REDACTION_RULES.
 //
 // See TODO-architect-redactor-custom-patterns-v7.md for full design.
-function loadCustomPatterns({ tier, profile }) {
+function loadCustomPatterns() {
   // Stub: no custom patterns until the feature lands.
   // Returning [] is the correct behavior for v7 GA base ship.
   return [];
@@ -913,30 +883,19 @@ function loadCustomPatterns({ tier, profile }) {
 function buildContext(fileMap) {
   const config = getConfig();
   // A saved `ghost reconfigure` preference, if any. Treated as "present" only
-  // when it is a real positive number; an absent/blank/zero value must fall
-  // through to the full tier cap, NOT a hardcoded 50K. The old `|| 50000`
-  // collapsed "no saved preference" into Open's ceiling, so Pro/Team/Enterprise
-  // with no saved value (e.g. a fresh CI runner) were silently clamped to 50K
-  // even though resolveContextCap would have granted the full tier cap for a
-  // null request. ignoreSavedContext (set by the CI guard) forces that null
-  // path regardless of any value the runner's configstore happens to hold.
+  // when it is a real positive number; an absent/blank/zero value falls
+  // through to the full cap.
   const savedMax = config.get('maxTokensContext');
-  const hasSavedMax = !SCAN_OPTIONS.ignoreSavedContext
-    && typeof savedMax === 'number' && Number.isFinite(savedMax) && savedMax > 0;
+  const hasSavedMax = typeof savedMax === 'number' && Number.isFinite(savedMax) && savedMax > 0;
 
-  // Resolve the effective cap: tier ceiling vs. user's CLI override vs. saved config.
-  // Precedence: CLI --max-context (if provided) > config.maxTokensContext > full tier cap.
-  // A null userRequested makes resolveContextCap return the tier ceiling outright.
-  // Tier cap always clamps the final value.
+  // Resolve the effective cap. Precedence: CLI --max-context (if provided) >
+  // config.maxTokensContext > the full cap. CONTEXT_CAP always clamps.
   const userRequested = SCAN_OPTIONS.maxContextOverride ?? (hasSavedMax ? savedMax : null);
   // Source distinction so the clamp warning names the actual provenance.
-  // CLI: user passed --max-context. Config: value came from configstore (often
-  // a prior `ghost reconfigure` from a different tier). Default: no saved value,
-  // resolving to the full tier cap. See TODO-architect-open-clamp-message-misleading.md.
   const source = SCAN_OPTIONS.maxContextOverride != null
     ? 'cli'
     : (hasSavedMax ? 'config' : 'default');
-  const { effective: maxTokens, clamped, tierCap, tier } = resolveContextCap(SCAN_OPTIONS.tier, userRequested, source);
+  const { effective: maxTokens, clamped, cap } = resolveContextCap(userRequested, source);
 
   // ── Redaction ──────────────────────────────────────────────────────────────
   // Strip API keys, secrets, DB credentials, and private keys before files are
@@ -955,12 +914,10 @@ function buildContext(fileMap) {
   //     abort the scan before any API call. User's secrets are more important
   //     than completing the scan.
   //
-  // Custom-patterns extension hook: profile-declared private_patterns will be
+  // Custom-patterns extension hook: user-declared private patterns will be
   // appended to the rule set by loadCustomPatterns(). Initial implementation
-  // returns an empty array; full feature is sequenced after Stage 3 freemium-
-  // to-requireTier conversion. See TODO-architect-redactor-custom-patterns-v7.md.
-  // @ghost-verified: SCAN_OPTIONS.profile is intentionally undefined -- loadCustomPatterns is a stub that always returns [] until custom pattern support is implemented; the undefined profile is an accepted no-op
-  const customRules = loadCustomPatterns({ tier: SCAN_OPTIONS.tier, profile: SCAN_OPTIONS.profile });
+  // returns an empty array. See TODO-architect-redactor-custom-patterns-v7.md.
+  const customRules = loadCustomPatterns();
 
   const redactedFileMap = {};
   const allFindings     = [];
@@ -991,7 +948,7 @@ function buildContext(fileMap) {
         error: err?.message || String(err),
         snippet: typeof content === 'string' ? content.slice(0, 200) : String(content ?? '').slice(0, 200),
       });
-      // Preserve the raw content so a Pro+ --skip-redaction run still includes
+      // Preserve the raw content so a --skip-redaction run still includes
       // this file. Only ever reached when the user has opted into exposure; the
       // fail-closed path below returns null before this map is used.
       redactedFileMap[filePath] = typeof content === 'string' ? content : '';
@@ -1000,10 +957,9 @@ function buildContext(fileMap) {
   }
 
   if (anyPartial) {
-    // A --skip-redaction request is only honored on Pro+ tiers. Open always
-    // fails closed regardless of the flag.
-    const skipRequested = SCAN_OPTIONS.skipRedaction === true;
-    const skipAllowed   = skipRequested && canSkipRedaction(SCAN_OPTIONS.tier);
+    // --skip-redaction is an explicit opt-in to continue past a redaction
+    // failure. Without it the scan always fails closed.
+    const skipAllowed   = SCAN_OPTIONS.skipRedaction === true;
 
     // Persist the full failure detail for post-mortem diagnosis whether we
     // abort or continue. Path is surfaced to the user below.
@@ -1021,7 +977,7 @@ function buildContext(fileMap) {
     }
 
     if (skipAllowed) {
-      // Pro+ escape hatch: bypass the fail-closed abort and continue with the
+      // Escape hatch: bypass the fail-closed abort and continue with the
       // best-effort redacted content. Warn prominently — secrets in the files
       // above may reach the API unredacted.
       console.log(chalk.yellow.bold(`\n  ${SYM.warn}  --skip-redaction is set: continuing WITHOUT complete redaction.`));
@@ -1031,10 +987,7 @@ function buildContext(fileMap) {
     } else {
       // Fail-closed: if any redaction rule errored OR redactContent itself
       // threw, halt before sending anything to Anthropic.
-      if (skipRequested) {
-        // Requested but not allowed on this tier — say so explicitly.
-        console.log(chalk.gray('  --skip-redaction is a Pro+ feature and was not applied on the Open tier.'));
-      }
+      console.log(chalk.gray('  To continue anyway (secrets in the files above may be sent unredacted), re-run with --skip-redaction.'));
       console.log(chalk.gray('  Scan aborted to protect secrets. Investigate the failing rule(s) before re-running. Your codebase was NOT sent to the API.\n'));
       return null;
     }
@@ -1082,8 +1035,8 @@ function buildContext(fileMap) {
 
   // Announce the effective context cap once per scan so users understand what's in play.
   const capLabel = clamped
-    ? `${maxTokens.toLocaleString()} tokens (clamped from ${userRequested.toLocaleString()} by ${tier} tier)`
-    : `${maxTokens.toLocaleString()} tokens (${tier} tier, cap ${tierCap.toLocaleString()})`;
+    ? `${maxTokens.toLocaleString()} tokens (clamped from ${userRequested.toLocaleString()})`
+    : `${maxTokens.toLocaleString()} tokens (maximum ${cap.toLocaleString()})`;
   console.log(chalk.gray(`  ${SYM.info}  Context cap: ${capLabel}`));
 
   if (loadedFiles < totalFiles) {

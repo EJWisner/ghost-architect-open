@@ -1,7 +1,8 @@
 /**
  * Smoke tests for Commit Forecast — Day 3
  *
- * Tests the synthesis primitive (forecast-overlay.js), tier gating,
+ * Tests the synthesis primitive (forecast-overlay.js), the absence of any
+ * run limit (Ghost Open™ 12 is free for one person),
  * diff renderer, and analyst framing, all without network calls or
  * a real codebase scan.
  *
@@ -12,15 +13,12 @@
 import { buildForecastOverlay, discoverWorkingTreeChanges, isGitRepo } from '../src/core/forecast-overlay.js';
 import { renderForecastDiff } from '../src/utils/diff-renderer.js';
 import { buildConflictPrompt } from '../prompts/conflict.js';
-import { requireTier, FORECAST_QUOTA } from '../src/license/tier-gates.js';
-import {
-  getForecastCount,
-  incrementForecastCount,
-  resetForecastCount,
-} from '../src/freemium.js';
 import fs   from 'fs';
 import path from 'path';
 import os   from 'os';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let failures = 0;
 let total    = 0;
@@ -98,48 +96,23 @@ function makeBaseline(fileMap) {
   };
 }
 
-// ── Suite 1: Tier gate logic ──────────────────────────────────────────────────
+// ── Suite 1: No run limit ─────────────────────────────────────────────────────
+// Ghost Open™ 11 allowed one free Commit Forecast per install, then rendered a
+// paywall. 12.0.0 is free for one person: no quota module, no gate, no upsell.
+// The behavioural check (many forecasts in a row) lives in
+// tests/ghost-open-12-free-for-one.smoke.mjs; this suite pins the source.
 
-console.log('\nSuite 1: Tier gate logic');
-
-check('FORECAST_QUOTA is 1', FORECAST_QUOTA, 1);
+console.log('\nSuite 1: No run limit');
 
 {
-  const r = requireTier('mode:commit-forecast', { tier: 'open', forecastsUsed: 0 });
-  check('Open unused: allowed', r.allowed, true);
-  check('Open unused: quotaRemaining=1', r.quotaRemaining, 1);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'modes', 'commit-forecast.js'), 'utf8');
+  check('no forecast gate function', /checkForecastGate/.test(src), false);
+  check('no forecast counter', /ForecastCount/.test(src), false);
+  check('no paywall renderer', /Paywall/.test(src), false);
+  check('no tier gate import', /tier-gates/.test(src), false);
+  check('no upgrade-to-Pro copy', /Upgrade to Pro/i.test(src), false);
+  check('freemium module is gone', fs.existsSync(path.join(__dirname, '..', 'src', 'freemium.js')), false);
 }
-{
-  const r = requireTier('mode:commit-forecast', { tier: 'open', forecastsUsed: 1 });
-  check('Open exhausted: blocked', r.allowed, false);
-  checkContains('Open exhausted: reason', r.reason, 'forecast_quota_exceeded');
-}
-{
-  const r = requireTier('mode:commit-forecast', { tier: 'pro', forecastsUsed: 9999 });
-  check('Pro unlimited: allowed', r.allowed, true);
-}
-{
-  const r = requireTier('mode:commit-forecast', { tier: 'team', forecastsUsed: 9999 });
-  check('Team unlimited: allowed', r.allowed, true);
-}
-{
-  const r = requireTier('mode:commit-forecast', { tier: 'trial', forecastsUsed: 9999 });
-  check('Trial unlimited: allowed', r.allowed, true);
-}
-
-// ── Suite 2: Forecast counter (configstore) ───────────────────────────────────
-
-console.log('\nSuite 2: Forecast counter');
-
-// Reset first so test is idempotent
-resetForecastCount();
-check('after reset, count=0', getForecastCount(), 0);
-incrementForecastCount();
-check('after 1 increment, count=1', getForecastCount(), 1);
-incrementForecastCount();
-check('after 2 increments, count=2', getForecastCount(), 2);
-resetForecastCount();
-check('after reset again, count=0', getForecastCount(), 0);
 
 // ── Suite 3: Synthesis primitive — path mapping ───────────────────────────────
 
@@ -168,7 +141,7 @@ console.log('\nSuite 3: Synthesis primitive — path mapping');
     const { patchedContext, changedFiles } = await buildForecastOverlay(
       baselineContext,
       proposed.dir,
-      { tier: 'pro', verbose: false }
+      { verbose: false }
     );
 
     // Verify overlay shape
@@ -237,7 +210,7 @@ console.log('\nSuite 4: Synthesis primitive — handles empty proposed dir grace
   const baselineContext = makeBaseline({ '/repo/src/app.js': 'const x = 1;' });
   let threw = false;
   try {
-    await buildForecastOverlay(baselineContext, emptyDir.dir, { tier: 'open' });
+    await buildForecastOverlay(baselineContext, emptyDir.dir, {});
   } catch (err) {
     threw = true;
     checkContains('empty dir throws descriptive error', err.message, 'no code files found');

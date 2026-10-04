@@ -41,7 +41,7 @@ function isTransientStreamError(err) {
 // the full response in one shot, which eliminates the mid-response stream closure.
 // Local dev keeps the existing behavior untouched.
 //
-// Detection mirrors src/license/validator.js: trust CI, but also honor
+// Detection: trust CI, but also honor
 // GITHUB_ACTIONS as a fallback in case a runner ever leaves CI unset/empty.
 function isCI() {
   const truthy = (v) => v !== undefined && v !== '' && v !== 'false' && v !== '0';

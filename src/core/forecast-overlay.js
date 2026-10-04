@@ -17,7 +17,7 @@
 //      "added"    = proposed path is net-new (no baseline key).
 //   5. Patch baseline fileMap: overwrite modified keys, insert added keys.
 //   6. Rebuild context string from patched fileMap using the same token-budget logic
-//      the loader uses (MAX_CONTEXT_TOKENS from tierCaps, same truncation behavior).
+//      the loader uses (CONTEXT_CAP from contextCap.js, same truncation behavior).
 //   7. Return { patchedContext, changedFiles }.
 //
 // PATH RESOLUTION (mirror-structure rule):
@@ -43,7 +43,7 @@ import fs   from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { redactContent } from '../redactor.js';
-import { resolveContextCap } from '../loader/tierCaps.js';
+import { resolveContextCap } from '../loader/contextCap.js';
 
 // Code extensions that the loader recognizes — kept in sync with loader/index.js.
 // If the loader list grows, update this too. Sharing via a constants module is
@@ -205,8 +205,6 @@ export function isGitRepo(dir) {
  * @param {object} baselineContext   — shape: { context, fileIndex, fileMap, totalFiles, loadedFiles }
  * @param {string} proposedDir       — absolute path to folder of proposed file states
  * @param {object} [opts]
- * @param {string} [opts.tier]       — 'open' | 'pro' | 'team' | 'enterprise'  (for token-cap)
- * @param {object} [opts.profile]    — Ghost Partner profile (null = none)
  * @param {boolean} [opts.verbose]   — emit console warnings for unmapped / unreadable files
  *
  * @returns {{
@@ -218,7 +216,6 @@ export function isGitRepo(dir) {
  * }}
  */
 export async function buildForecastOverlay(baselineContext, proposedDir, opts = {}) {
-  const tier    = opts.tier    || 'open';
   const verbose = opts.verbose ?? false;
 
   const baselineFileMap = baselineContext.fileMap || {};
@@ -349,10 +346,10 @@ export async function buildForecastOverlay(baselineContext, proposedDir, opts = 
   // ── Step 4: Rebuild context string from patched fileMap ──────────────────
   // Mirrors the token-budget loop in loader/index.js exactly.
   // The overlay rebuilds context from saved baseline + proposed files and has no
-  // live CLI --max-context override in scope (opts carries only tier/profile/
-  // verbose). Pass null explicitly so the tier cap applies and the intent is
+  // live CLI --max-context override in scope (opts carries only verbose).
+  // Pass null explicitly so the full cap applies and the intent is
   // documented; the 'forecast-overlay' source labels any clamp warning.
-  const maxTokens  = resolveContextCap(tier, null, 'forecast-overlay').effective;
+  const maxTokens  = resolveContextCap(null, 'forecast-overlay').effective;
   let   context    = '';
   const fileIndex  = [];
   let   approxTokens = 0;
@@ -387,7 +384,6 @@ export async function buildForecastOverlay(baselineContext, proposedDir, opts = 
     _forecastMeta: {
       baselineRoot,
       proposedDir,
-      tier,
     },
   };
 

@@ -1,24 +1,22 @@
 /**
- * Smoke test for the finding-lifecycle delta computation used by Ghost Watcher
- * Step 8b in src/modes/watcher-commit.js.
+ * Smoke test for the finding-lifecycle delta computation (NEW / CARRIED /
+ * RESOLVED) built on similarFinding().
  *
- * The delta compares the current scan's findings against the most recent
- * completed run (fetched by fetchPriorCommitState) and classifies each finding:
- *   - NEW      — a current finding with no match in the prior run.
- *   - CARRIED  — a current finding that matches a prior one (neither new nor
- *                resolved).
- *   - RESOLVED — a prior finding with no match in the current run (fixed).
+ * The two-loop delta below came from Ghost Watcher™, which is not part of
+ * Ghost Open™ 12. The test stays because it pins similarFinding() from
+ * src/utils/finding-parser.js on the four canonical shapes, and Compare
+ * Reports classifies resolved and new findings with the same matcher. It
+ * classifies each finding:
+ *   - NEW      - a current finding with no match in the prior run.
+ *   - CARRIED  - a current finding that matches a prior one.
+ *   - RESOLVED - a prior finding with no match in the current run (fixed).
  *
  * Matching is done by similarFinding() from src/utils/finding-parser.js, which
  * matches on deterministic ID first, then normalized title, then word/file
  * overlap. This test locks in the classification for the four canonical shapes:
  * carried, resolved, new, and a mixed run containing all three.
  *
- * computeLifecycleDelta() below is a copy of the exact two-loop structure from
- * watcher-commit.js Step 8b (not a reimplementation) so the test tracks the
- * shipped logic. The production call site additionally guards on
- * `prior && prior.findings.length > 0`; the loops themselves are what this
- * test exercises.
+ * computeLifecycleDelta() below keeps the original two-loop structure.
  *
  * Run: node tests/finding-lifecycle.smoke.mjs
  */
@@ -40,7 +38,7 @@ function checkEqual(label, actual, expected) {
   }
 }
 
-// ── Delta logic — copied verbatim from watcher-commit.js Step 8b ────────────
+// ── Delta logic: two loops over similarFinding ──────────────────────────────
 // Same two-loop structure, same similarFinding calls. Returns the same
 // { resolvedFindings, newFindingIds } shape the state entry is populated with.
 function computeLifecycleDelta(allFindings, priorFindings, commitHashFull) {

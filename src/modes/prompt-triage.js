@@ -20,17 +20,6 @@
  *   - targetModel:   model registry ID (see src/prompt-pack/models.js).
  *                    When provided, length-aware detectors use the
  *                    correct tokenizer; otherwise the heuristic is used.
- *   - tier:          'open' | 'pro' | 'team' | 'enterprise'. Controls
- *                    feature gating. Project Intelligence (label prompt,
- *                    baseline tracking, comparison, velocity) is Pro+
- *                    only. When tier is 'open' or unset, the project
- *                    label prompt is skipped and no project history is
- *                    written. The bin/ghost.js for each branch is the
- *                    single source of truth for TIER and passes it
- *                    through. Defaults to 'open' (most conservative —
- *                    fail-closed for Project Intelligence) so that any
- *                    caller that forgets to pass tier does not leak
- *                    a paid feature.
  *   - onProgress:    optional callback (file, idx, total) => void
  */
 
@@ -46,8 +35,6 @@ import { redactContent } from '../redactor.js';
 import { renderReport } from '../prompt-pack/report.js';
 import { getModel } from '../prompt-pack/models.js';
 import { resetSessionUsage, getSessionUsage } from '../prompt-pack/llmAuditClient.js';
-import { promptProjectLabel, handleProjectIntelligence } from '../projects.js';
-import { isPortalConfigured, publishToPortal } from '../core/portal-publish.js';
 // @ghost-verified: prompt-triage.js imports estimateMultiCallCost, formatCost, formatCostRange, calcActualCost directly from src/core/estimator.js where all four are exported -- the src/estimator.js barrel shim does not re-export these but prompt-triage.js does not use the shim
 import {
   estimateMultiCallCost,
@@ -55,9 +42,7 @@ import {
   formatCostRange,
   calcActualCost,
 } from '../core/estimator.js';
-import { requireTier } from '../license/tier-gates.js';
-import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
-import { incrementScanCount } from '../freemium.js';
+import { printUpgradeLine } from '../cli/upgrade-line.js';
 
 function defaultReportsDir() {
   return path.join(os.homedir(), 'Ghost Architect Reports', 'prompt-triage');
@@ -164,12 +149,6 @@ export async function runPromptTriageMode(options = {}) {
   // correct per-model tokenizers (exact tiktoken for OpenAI, heuristic
   // elsewhere) and never call the Anthropic API for prompt judgment.
   const tier2Disabled = !!(targetModelEntry && targetModelEntry.tier2Supported === false);
-  // Feature gating. Project Intelligence is Pro+ only. We default to 'open'
-  // (fail-closed) so any caller that forgets to pass tier does not leak the
-  // paid feature. The bin/ghost.js for each branch is the source of truth.
-  const tier = options.tier || 'open';
-  const projectIntelGate = requireTier('feature:project-tracking', { tier });
-  const projectIntelEnabled = projectIntelGate.allowed;
 
   // ── Banner ──────────────────────────────────────────────────────────────
   console.log('');
@@ -297,30 +276,6 @@ export async function runPromptTriageMode(options = {}) {
     }
   }
 
-  // ── Project label ────────────────────────────────────────────────
-  // Optional project tracking. When the user provides a label, the scan
-  // will be saved to project history; subsequent scans against the same
-  // label produce a baseline comparison (resolved/remaining/new findings,
-  // velocity trend). Hitting Enter without a label runs the scan as a
-  // one-time audit with no history. Mirrors POI/Conflict/Blast behaviour.
-  //
-  // GATED: Project Intelligence is Pro+ only. On Open, we skip the label
-  // prompt entirely — the user runs a one-shot scan, gets a full report,
-  // and no project history is written. This is consistent with how Open
-  // already hides the Project Dashboard and Compare Reports menu items.
-  let projectLabel = null;
-  if (projectIntelEnabled) {
-    projectLabel = await promptProjectLabel();
-    console.log('');
-  } else if (!hasShownCallout('feature:project-tracking')) {
-    // D3 soft-gate callout: one line, once per session, gentle. Open users
-    // still get the full prompt-triage report — this just signals what they'd
-    // gain on Pro (label-driven baselines, comparison, velocity).
-    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
-    console.log('');
-    markCalloutShown('feature:project-tracking');
-  }
-
   // ── Scan ────────────────────────────────────────────────────────────────
   const allFindings = [];
   const scannedFilePaths = [];
@@ -435,132 +390,11 @@ export async function runPromptTriageMode(options = {}) {
     fs.writeFileSync(reportPath, markdown, 'utf8');
     console.log('');
     console.log(chalk.gray('Report saved to: ') + reportPath);
-    // Bump the freemium counter for Open tier. Prompt-triage doesn't go
-    // through saveReport() (different report-folder layout, no PDF), so
-    // we increment explicitly here using the same 'ghost-prompt-triage'
-    // prefix that saveReport would use. Mirrors D1: prompt-triage counts
-    // toward the 4-scan quota alongside POI/Blast/Conflict. Non-fatal on
-    // failure — the counter is honor-system, the scan completed.
-    // Guarded on tier: only Open ever reads this counter, so trial and paid
-    // scans must not drain it, or a lapsed trial lands straight on the
-    // Open paywall for quota it never actually spent.
-    if (tier === 'open') {
-      try { incrementScanCount('ghost-prompt-triage'); } catch {}
-    }
+    // Prompt Triage™ saves through its own writer rather than saveReport(),
+    // so it prints the upgrade line itself, once per saved report.
+    printUpgradeLine();
   } catch (err) {
     console.log(chalk.red('  ✗ Could not save report: ' + err.message));
-  }
-
-  // ── Portal publish ────────────────────────────────────────────────────
-  // Push the Prompt Triage results to the web portal alongside POI/Blast/
-  // Conflict/Recon/Audit. Mirror the saveReport contract: write standard-
-  // naming files (ghost-prompt-triage-{label}-{ts}.{md,findings.json}) to
-  // the main reports dir, build a findings.json sidecar that powers Jira
-  // export, and call publishToPortal. Non-fatal on failure — the primary
-  // report at prompt-triage/ is already saved.
-  //
-  // Fires whenever portal is configured. No-label scans synthesize a
-  // 'untitled' filename slug and land in the manifest as project
-  // '(untitled)' — same convention as src/reports.js portal block.
-  if (isPortalConfigured()) {
-    try {
-      const mainReportsDir = path.join(os.homedir(), 'Ghost Architect Reports');
-      const safeLabel = (projectLabel || 'untitled').replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 30);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const baseName = `ghost-prompt-triage-${safeLabel}-${ts}`;
-
-      const stdMdPath  = path.join(mainReportsDir, baseName + '.md');
-      const stdTxtPath = path.join(mainReportsDir, baseName + '.txt');
-      const findingsJsonPath = path.join(mainReportsDir, baseName + '.findings.json');
-
-      fs.writeFileSync(stdMdPath,  markdown, 'utf8');
-      fs.writeFileSync(stdTxtPath, markdown, 'utf8');
-
-      // Map prompt-triage finding shape to the portal sidecar shape.
-      // Prompt Triage findings carry: detector, severity, title, file,
-      // detail (or message), confidence. Map to: id, title, severity,
-      // files (array), effortHours, confidence, detail.
-      const sidecarFindings = allFindings.map((f, i) => ({
-        id:          `${(f.severity || 'INFO').toUpperCase()}:${f.file || 'unknown'}:${f.detector || ('f' + i)}`,
-        title:       f.title || f.detector || 'Untitled finding',
-        severity:    (f.severity || 'INFO').toUpperCase(),
-        files:       f.file ? [f.file] : [],
-        effortHours: 0,
-        // Number.isFinite, not ||: absence of a confidence claim must not be
-        // rewritten as 85 (the same absence-read-as-claim pattern the
-        // flagFinding/verifier fix eradicated in v10.0.17), and a legitimate
-        // 0 must survive. null = "no claim", rendered as needs-review.
-        confidence:  Number.isFinite(f.confidence) ? f.confidence : null,
-        detail:      f.detail || f.message || '',
-      }));
-      const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-      for (const f of sidecarFindings) {
-        const k = (f.severity || '').toLowerCase();
-        if (counts[k] !== undefined) counts[k]++;
-      }
-      const sidecar = {
-        schema:         1,
-        generatedAt:    new Date().toISOString(),
-        project:        projectLabel || '(untitled)',
-        mode:           'prompt-triage',
-        totalFindings:  sidecarFindings.length,
-        severityCounts: counts,
-        findings:       sidecarFindings,
-      };
-      fs.writeFileSync(findingsJsonPath, JSON.stringify(sidecar, null, 2));
-
-      const portalTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('portal-publish timeout after 120s')), 120000)
-      );
-      await Promise.race([
-        publishToPortal({
-          baseName,
-          mode:             'prompt-triage',
-          label:            projectLabel,
-          txtPath:          stdTxtPath,
-          mdPath:           stdMdPath,
-          pdfPath:          null,
-          findingsJsonPath,
-          reportText:       markdown,
-          scanIso:          new Date().toISOString(),
-        }),
-        portalTimeout,
-      ]);
-    } catch {
-      // Portal failure is non-fatal — the primary report is already saved.
-    }
-  }
-
-  // ── Project intelligence ──────────────────────────────────────────────
-  // When the user gave a project label, save this scan into project history
-  // and (for subsequent scans) print a baseline comparison. We pass the
-  // already-extracted findings via meta.findings so saveProjectIntelligence
-  // doesn't try to re-parse our markdown shape (which differs from POI's).
-  if (projectLabel) {
-    const piFindings = allFindings.map(f => ({
-      title: f.title || f.detector || 'Untitled finding',
-      severity: f.severity || 'UNKNOWN',
-      // Prompt Triage findings don't carry effort hours; the project
-      // intelligence layer reads this for velocity rollups but treats 0
-      // gracefully — it just won't show effort-based velocity.
-      effortHours: 0,
-    }));
-    const piMeta = {
-      findings: piFindings,
-      // scannedFilePaths, not loaded.files: redaction-skipped prompts were
-      // never analyzed and must not inflate the project-history coverage
-      // figure (same rule as the terminal count above).
-      filesAnalyzed: scannedFilePaths.length + ' prompt' + (scannedFilePaths.length === 1 ? '' : 's'),
-      targetModel: targetModel || null,
-      detectorsRun: detectors.length,
-    };
-    try {
-      await handleProjectIntelligence(projectLabel, markdown, piMeta);
-    } catch (err) {
-      // Project intelligence is non-fatal; the scan and report are already
-      // saved. Log and continue rather than tank the user's main result.
-      console.log(chalk.gray('  (Project intelligence unavailable: ' + (err.message || err) + ')'));
-    }
   }
 
   // ── Actual cost ────────────────────────────────────────────────────

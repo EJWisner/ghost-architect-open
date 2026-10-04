@@ -22,16 +22,11 @@
 // Companion pattern for text-input prompts: the 'back' keyword. Inquirer
 // v9 has no built-in Esc-to-cancel mechanism (verified 2026-05-23: no
 // AbortController support, no keypress hook documented in the public API).
-// For the highest-pain text inputs (loader paths, license key, project label),
+// For the highest-pain text inputs (loader paths, API keys, tokens),
 // callers accept the literal string 'back' (case-insensitive) and treat
 // it as the back-out signal. Discoverable via the prompt's message text:
 //   "Path to codebase (or 'back' to return)"
 // Proper Esc-handling deferred — see TODO-architect-cli-text-input-esc-handler-v7.md.
-//
-// Future companion: src/cli/session-state.js (reserved, not yet created)
-// will house Stage 3's session-scoped soft-gate callout tracking. Same
-// directory because both are CLI-layer concerns that don't fit neatly
-// into mode files or src/license/.
 
 export const BACK_VALUE = '__ghost_back__';
 

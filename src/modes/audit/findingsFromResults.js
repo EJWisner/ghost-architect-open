@@ -13,7 +13,7 @@
 //     severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW',
 //     files: string[],
 //     effortHours: number,        // 0 if not estimable
-//     confidence: number | null,  // 0-100 integer (matches finding-parser.js and portal-publish.js)
+//     confidence: number | null,  // 0-100 integer (matches finding-parser.js and findings-sidecar.js)
 //     detail: string,
 //   }
 //

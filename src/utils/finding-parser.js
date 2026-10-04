@@ -299,7 +299,6 @@ export function extractFindings(reportText, opts = {}) {
             // - all-digit-and-dot strings (version strings like "9.4.9")
             // - tokens with spaces or parentheses ("package.json (version field 9.4.9")
             // - tokens without a dotted extension or invalid path characters
-            // Mirrors looksLikeFilePath in watcher-commit.js.
             if (/^[\d.]+$/.test(f)) return false;
             if (/\s/.test(f) || f.includes('(') || f.includes(')')) return false;
             return /\.[A-Za-z0-9]+$/.test(f) && /^[\w./@-]+$/.test(f);

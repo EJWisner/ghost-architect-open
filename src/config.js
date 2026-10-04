@@ -6,18 +6,17 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { execFileSync } from 'child_process';
-import { getTierCap } from './loader/tierCaps.js';
-import { getActiveTier } from './license/session.js';
+import { getContextCap } from './loader/contextCap.js';
 import { MODEL_RATES, getPricing } from './core/estimator.js';
 
 // ── Configstore path resolution (Linux sudo/root hardening) ──────────────────
 // configstore@6 resolves to ${XDG_CONFIG_HOME || ~/.config}/configstore/<name>.json
 // via os.homedir()/env at import time. Under `sudo` on Linux, HOME=/root, so
-// `sudo ghost --activate` writes the license to /root/.config/... while a normal
-// relaunch (as the user) reads ~/.config/... and finds nothing -> silent Open
-// tier. When we are root via sudo we redirect to the invoking user's REAL home
-// so the license lands where the normal relaunch looks. macOS, Windows, and
-// non-sudo runs are unchanged (resolveConfigstorePath returns undefined).
+// `sudo ghost --reconfigure` would write settings to /root/.config/... while a
+// normal relaunch (as the user) reads ~/.config/... and finds nothing. When we
+// are root via sudo we redirect to the invoking user's REAL home so settings
+// land where the normal relaunch looks. macOS, Windows, and non-sudo runs are
+// unchanged (resolveConfigstorePath returns undefined).
 const CONFIGSTORE_NAME = 'ghost-architect';
 
 // ── Selectable scan models ─────────────────────────────────────────────────
@@ -82,15 +81,6 @@ function isLinuxSudoRoot() {
     && !!process.env.SUDO_USER;
 }
 
-// Root on Linux via a real root login (no sudo): no signal for which user
-// should own the license, so the activate flow warns instead of guessing.
-export function isLinuxRootWithoutSudoUser() {
-  return process.platform === 'linux'
-    && typeof process.getuid === 'function'
-    && process.getuid() === 0
-    && !process.env.SUDO_USER;
-}
-
 // Resolve a username's home WITHOUT trusting $HOME (sudo rewrites it to /root).
 // getent respects NSS/LDAP; /etc/passwd is the local fallback. null = unknown.
 function resolveUserHome(username) {
@@ -128,45 +118,6 @@ const CONFIG_PATH = resolveConfigstorePath();
 const config = CONFIG_PATH
   ? new Configstore(CONFIGSTORE_NAME, {}, { configPath: CONFIG_PATH })
   : new Configstore(CONFIGSTORE_NAME);
-
-// After a root/sudo WRITE, hand the store back to the invoking user so their
-// later non-root writes (the monotonic last-seen ratchet on every run, and
-// `ghost --configure`) don't EACCES on a root-owned file. Must run AFTER the
-// file exists (i.e., after saveActivation). sudo sets SUDO_UID / SUDO_GID.
-export function reconcileSudoOwnership() {
-  if (!isLinuxSudoRoot() || !CONFIG_PATH) return;
-  const uid = parseInt(process.env.SUDO_UID || '', 10);
-  const gid = parseInt(process.env.SUDO_GID || '', 10);
-  if (!Number.isInteger(uid) || !Number.isInteger(gid)) return;
-  const configstoreDir = path.dirname(CONFIG_PATH);   // .../.config/configstore
-  const dotConfigDir   = path.dirname(configstoreDir); // .../.config
-  // Non-recursive: only the file, its configstore dir, and .config. If .config
-  // pre-existed user-owned, chown is a harmless no-op; if root just created it,
-  // this hands it back. We never recurse into .config (other apps live there).
-  for (const p of [dotConfigDir, configstoreDir, CONFIG_PATH]) {
-    try {
-      fs.chownSync(p, uid, gid);
-    } catch (err) {
-      // Best-effort, but no longer silent: surface the failure so a user whose
-      // config is left root-owned understands why later non-root runs EACCES.
-      process.stderr.write(
-        '[Ghost] Warning: could not restore ownership ' +
-        'of ' + p + ': ' + err.message + '\n'
-      );
-    }
-    // Verify the chown actually took effect. A swallowed or partial failure can
-    // leave the file root-owned; tell the user exactly how to fix it themselves.
-    try {
-      const stat = fs.statSync(p);
-      if (stat.uid !== uid) {
-        console.warn(
-          'Config file remains root-owned. ' +
-          'Run: sudo chown $USER ' + p
-        );
-      }
-    } catch { /* stat failed — nothing more we can do here */ }
-  }
-}
 
 // Distinguishes a user-initiated cancellation (Ctrl+C, force-closed prompt)
 // from a real system failure (read-only or full configstore directory,
@@ -233,32 +184,8 @@ export function resolveApiKey() {
   return process.env.ANTHROPIC_API_KEY || config.get('anthropicApiKey') || null;
 }
 
-export async function resolveApiKeyEnterprise() {
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
-  try {
-    const { getOrgApiKey } = await import('./core/enterprise.js');
-    const orgKey = await getOrgApiKey();
-    if (orgKey) return orgKey;
-  } catch { /* non-fatal */ }
-  return config.get('anthropicApiKey') || null;
-}
-
 export function resolveGitHubToken() {
   return process.env.GITHUB_TOKEN || config.get('githubToken') || null;
-}
-
-// ── Ghost Partner default profile ─────────────────────────────────────────
-// When a default profile slug is set, ghost.js loads that profile at startup
-// for every scan unless the user passes --no-profile or an explicit --profile
-// flag overrides it. Stored as a slug (filename without extension), not a
-// full path, so moving the profiles directory doesn't break the config.
-export function getDefaultProfileSlug() {
-  return config.get('defaultProfileSlug') || null;
-}
-
-export function setDefaultProfileSlug(slug) {
-  if (slug) { config.set('defaultProfileSlug', slug); secureConfigFile(); }
-  else      config.delete('defaultProfileSlug');
 }
 
 // Configured means "the user has finished the setup wizard at least once",
@@ -271,37 +198,6 @@ export function isConfigured() {
 }
 
 export function usingEnvKey() { return !!process.env.ANTHROPIC_API_KEY; }
-
-export function resolveTeamSync() {
-  return config.get('teamSync') || [];
-}
-
-export function getDefaultTeamSync() {
-  const repos = resolveTeamSync();
-  return repos.length > 0 ? repos[0] : null;
-}
-
-export function addTeamSyncRepo({ name, repo, token }) {
-  const existing = resolveTeamSync();
-  const idx = existing.findIndex(r => r.name === name);
-  if (idx >= 0) {
-    existing[idx] = { name, repo, token };
-  } else {
-    existing.push({ name, repo, token });
-  }
-  config.set('teamSync', existing);
-  secureConfigFile();
-}
-
-export function removeTeamSyncRepo(name) {
-  const existing = resolveTeamSync().filter(r => r.name !== name);
-  config.set('teamSync', existing);
-  secureConfigFile();
-}
-
-export function isTeamConfigured() {
-  return resolveTeamSync().length > 0;
-}
 
 export async function runSetupWizard() {
  try {
@@ -326,11 +222,9 @@ export async function runSetupWizard() {
   ));
   console.log('');
 
-  // Resolve the context cap from the active tier so the wizard defaults to the
-  // user's actual ceiling instead of a hardcoded 50K. getTierCap is the single
-  // source of truth (src/loader/tierCaps.js); getActiveTier() === null (no
-  // license = Open) resolves to the Open cap. No tier-cap numbers live here.
-  const tierCap = getTierCap(getActiveTier());
+  // Default the context prompt to the full ceiling. getContextCap is the
+  // single source of truth (src/loader/contextCap.js); no cap numbers live here.
+  const contextCap = getContextCap();
 
   const answers = await inquirer.prompt([
     {
@@ -395,8 +289,8 @@ export async function runSetupWizard() {
     {
       type: 'number',
       name: 'maxTokensContext',
-      message: chalk.cyan(`Max file context size in tokens (${tierCap.toLocaleString()} = your tier cap):`),
-      default: tierCap,
+      message: chalk.cyan(`Max file context size in tokens (${contextCap.toLocaleString()} = the maximum):`),
+      default: contextCap,
     },
     {
       type: 'number',
@@ -436,7 +330,7 @@ export async function runSetupWizard() {
     wizardComplete: true,
     anthropicApiKey: answers.anthropicApiKey,
     defaultModel: answers.defaultModel,
-    maxTokensContext: answers.maxTokensContext || tierCap,
+    maxTokensContext: answers.maxTokensContext || contextCap,
     rateJunior: answers.rateJunior || 85,
     rateMid: answers.rateMid || 125,
     rateSenior: answers.rateSenior || 200,
@@ -444,14 +338,6 @@ export async function runSetupWizard() {
   if (answers.githubToken) block.githubToken = answers.githubToken;
   config.set(block);
   secureConfigFile();
-
-  // Note: the inline "Set up Ghost Team shared sync repo?" prompt that lived
-  // here in Team v6.0.1 was removed during v7 unification. The unified
-  // codebase ships to all tiers, including 3,000+ Open users who have no
-  // Ghost Team license and would find an unsolicited team-sync prompt
-  // confusing. Team customers use the standalone `ghost --configure-team`
-  // command (configureTeamSync below) instead.
-  // See TODO-architect-inline-teamsync-prompt-removed.md for rationale.
 
   console.log('\n' + chalk.green('Configuration saved.\n'));
  } catch (err) {
@@ -466,63 +352,4 @@ export async function reconfigure() {
   } catch (err) {
     handleSetupInterrupt(err);
   }
-}
-
-export async function configureTeamSync() {
- try {
-  console.log('\n' + boxen(
-      chalk.cyan.bold('GHOST TEAM SYNC SETUP') + '\n\n' +
-      chalk.gray('Configure a shared GitHub repo for your team.\n') +
-      chalk.gray('All seats push and pull project data to this repo.\n\n') +
-      chalk.gray('You will need:\n') +
-      chalk.gray('  - A private GitHub repo\n') +
-      chalk.gray('  - A GitHub PAT with repo read/write access'),
-      { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
-  ));
-  console.log('');
-
-  const existing = resolveTeamSync();
-  if (existing.length > 0) {
-    console.log(chalk.gray('  Current workspaces:'));
-    existing.forEach(r => console.log(chalk.gray('    - ' + r.name + ': ' + r.repo)));
-    console.log('');
-  }
-
-  const answers = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'syncName',
-      message: chalk.cyan('Workspace name:'),
-      default: 'default',
-      validate: v => v.trim().length > 0 ? true : 'Name is required',
-    },
-    {
-      type: 'input',
-      name: 'syncRepo',
-      message: chalk.cyan('Sync repo URL:'),
-      validate: v => v.includes('github.com') ? true : 'Must be a GitHub repo URL',
-    },
-    {
-      type: 'password',
-      name: 'syncToken',
-      message: chalk.cyan('GitHub PAT for sync repo:'),
-      mask: '*',
-      validate: v => {
-        if (!v) return 'Token is required';
-        if (!v.startsWith('ghp_') && !v.startsWith('github_pat_')) return 'Token should start with ghp_ or github_pat_';
-        return true;
-      },
-    },
-  ]);
-
-  addTeamSyncRepo({
-    name: answers.syncName.trim(),
-    repo: answers.syncRepo.trim(),
-    token: answers.syncToken,
-  });
-
-  console.log('\n' + chalk.green('Team sync configured: ' + answers.syncName.trim() + '\n'));
- } catch (err) {
-  handleSetupInterrupt(err);
- }
 }

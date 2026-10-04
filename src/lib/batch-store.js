@@ -10,7 +10,7 @@
  *     portal GitHub repo via octokit, because it runs headless in CI with no
  *     local configstore to rely on.
  *   - This module persists in the local `ghost-architect` configstore (the same
- *     store that holds the API key and profile defaults), because the
+ *     store that holds the API key and settings), because the
  *     interactive CLI submitting a batch IS on a developer machine.
  *
  * Stored under the `pendingBatches` key as an array. Each entry:
@@ -26,7 +26,7 @@
  *   }
  *
  * `context` carries everything a later `batch-retrieve` needs to reproduce the
- * streaming output (target, project label, rates, profile, file counts, save
+ * streaming output (target, project label, rates, file counts, save
  * label, etc.) without re-loading the codebase. It is opaque to this store.
  */
 
@@ -40,7 +40,7 @@ const KEY = 'pendingBatches';
 // uses for optimistic locking across processes.
 function readStore() {
   try {
-    // @ghost-verified: split Configstore access with portal-publish.js is safe -- both use different keys (pendingBatches vs portalPublish), configstore writes atomically via write-file-atomic, and the two write paths (scan submission vs configuration) do not race in practice
+    // configstore writes atomically via write-file-atomic; this module owns its key exclusively
     const raw = getConfig().get(KEY);
     if (Array.isArray(raw)) return { version: 0, batches: raw }; // legacy shape
     if (raw && Array.isArray(raw.batches)) {

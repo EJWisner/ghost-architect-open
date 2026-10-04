@@ -10,7 +10,7 @@ import { buildVerifiedSidecar, buildUnverifiedSidecar } from '../core/sidecar-pi
 import { createLLMVerifier } from '../core/llm-verifier.js';
 import { recordUsage, beginUsageCapture, endUsageCapture, getCapturedUsage } from '../core/usage-tracker.js';
 import { extractFindings as extractFindingsFromReport } from '../utils/finding-parser.js';
-import { mergeRates } from '../profile/index.js';
+import { resolveRates } from '../utils/rates.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
 
 // Resolve the running version once (same package.json bin/ghost.js reads) so the
@@ -58,7 +58,7 @@ function extractFindings(rawText, _mode = 'poi') {
 // send byte-for-byte identical params. Returns { model, max_tokens, temperature,
 // system, messages } — the codebase context is prepended to the first user
 // message exactly as streamChat did inline.
-export function buildQuestionRequest(codebaseContext, conversationHistory, userMessage, tier = 'open') {
+export function buildQuestionRequest(codebaseContext, conversationHistory, userMessage) {
   const messages = [...conversationHistory, { role: 'user', content: userMessage }];
   const contextualMessages = messages.map((msg, i) => {
     if (i === 0 && msg.role === 'user') {
@@ -70,14 +70,16 @@ export function buildQuestionRequest(codebaseContext, conversationHistory, userM
     model:       getModel(),
     max_tokens:  4096,
     ...getSamplingParams(0, getModel()),
-    system:      buildChatSystemPrompt(GHOST_VERSION, tier),
+    // 'open' is the edition label in the prompt's identity line ("Current
+    // tier: Open"); the prompt text itself is unchanged from 11.x.
+    system:      buildChatSystemPrompt(GHOST_VERSION, 'open'),
     messages:    contextualMessages,
   };
 }
 
-export async function streamChat(codebaseContext, conversationHistory, userMessage, tier = 'open') {
+export async function streamChat(codebaseContext, conversationHistory, userMessage) {
   const anthropic = getClient();
-  const req = buildQuestionRequest(codebaseContext, conversationHistory, userMessage, tier);
+  const req = buildQuestionRequest(codebaseContext, conversationHistory, userMessage);
 
   process.stdout.write(chalk.cyan('\n👻 Ghost: '));
   let fullResponse = '';
@@ -124,16 +126,13 @@ export async function streamChat(codebaseContext, conversationHistory, userMessa
 
 export async function runPOIScan(codebaseContext, onChunk, options = {}) {
   const anthropic = getClient();
-  const rates     = mergeRates(getRates(), options.profile);
+  const rates     = resolveRates(getRates());
 
   // Step 1: Run scan silently — collect raw output
-  // Temperature 0.3: reduces run-to-run variance so profile signal shows through.
-  const profileReminder = options.profile
-    ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
-    : '';
+  // Temperature 0.3: reduces run-to-run variance.
   const stream = anthropic.messages.stream({
-    model: getModel(), max_tokens: 8096, ...getSamplingParams(0.3, getModel()), system: buildSystemPOI(rates, options.profile),
-    messages: [{ role: 'user', content: `${profileReminder}Perform a full Points of Interest scan on this codebase:\n\n${codebaseContext.context}` }]
+    model: getModel(), max_tokens: 8096, ...getSamplingParams(0.3, getModel()), system: buildSystemPOI(rates),
+    messages: [{ role: 'user', content: `Perform a full Points of Interest scan on this codebase:\n\n${codebaseContext.context}` }]
   });
 
   let rawOutput = '';
@@ -178,7 +177,6 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
       mode: 'poi',
       rates,
       fileMap: options.fileMap || codebaseContext.fileMap,
-      profile: options.profile,  // Ghost Partner — consultant lens for narrator voice
     },
     onChunk
   );
@@ -263,7 +261,7 @@ export async function runPOIScan(codebaseContext, onChunk, options = {}) {
 // post-processing needs, so a batch-retrieve (which has no codebaseContext)
 // can persist them at submit time and reuse them at retrieve time.
 export function buildBlastRequest(codebaseContext, target, options = {}) {
-  const rates = mergeRates(getRates(), options.profile);
+  const rates = resolveRates(getRates());
 
   // Normalize target into a consistent shape. We always work with an array
   // internally so the prompt branch is the same shape; we just decide the
@@ -276,10 +274,7 @@ export function buildBlastRequest(codebaseContext, target, options = {}) {
     throw new Error('Blast radius requires at least one target.');
   }
 
-  const systemPrompt = buildSystemBlast(rates, options.profile);
-  const profileReminder = options.profile
-    ? `You are scanning on behalf of ${options.profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize the rollback plan around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
-    : '';
+  const systemPrompt = buildSystemBlast(rates);
 
   const forecastPreamble = options.forecastMode
     ? `COMMIT FORECAST CONTEXT:\n` +
@@ -298,12 +293,11 @@ export function buildBlastRequest(codebaseContext, target, options = {}) {
 
   let userMessage;
   if (targets.length === 1) {
-    userMessage = `${forecastPreamble}${profileReminder}Perform a blast radius analysis for: "${targets[0]}"\n\nCodebase:\n\n${codebaseContext.context}`;
+    userMessage = `${forecastPreamble}Perform a blast radius analysis for: "${targets[0]}"\n\nCodebase:\n\n${codebaseContext.context}`;
   } else {
     const targetList = targets.map((t, i) => `  ${i + 1}. ${t}`).join('\n');
     userMessage =
       forecastPreamble +
-      profileReminder +
       `Perform a blast radius analysis for the following coordinated change set ` +
       `(${targets.length} files that will be modified together as part of one engagement):\n\n` +
       targetList + '\n\n' +
@@ -349,7 +343,6 @@ export async function processBlastRawOutput(rawOutput, {
   targets,
   projectLabel,
   rates,
-  profile = null,
   loadedFiles = 0,
   onChunk = () => {},
   onNarratorStart,
@@ -397,7 +390,6 @@ export async function processBlastRawOutput(rawOutput, {
       projectLabel: label,
       mode: 'blast',
       rates,
-      profile,  // Ghost Partner — consultant voice for narrator
     },
     onChunk
   );
@@ -486,7 +478,6 @@ export async function runBlastRadius(codebaseContext, target, onChunk, options =
     targets,
     projectLabel,
     rates,
-    profile:        options.profile,
     loadedFiles:    codebaseContext.loadedFiles || 0,
     onChunk,
     onNarratorStart:   options.onNarratorStart,

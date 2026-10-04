@@ -11,24 +11,18 @@
  *   Test 1 stores a record carrying EVERY field any call site writes, reads
  *          it back through the real store/retrieve pipeline against a mock
  *          Octokit, and asserts each field survives with its value intact.
- *   Test 2 sweeps src/modes/watcher-commit.js for storePendingBatch call
- *          sites, extracts the metadata keys each one writes, and fails if
- *          any key is missing from the round-trip record below. Adding a new
- *          field at a store site without teaching the whitelist (and this
- *          test) about it is a test failure, not a silent drop.
+ *
+ *   (A second test used to sweep the Ghost Watcher™ call sites of
+ *   storePendingBatch for uncovered keys. Ghost Watcher™ is not part of Ghost
+ *   Open™ 12, so there are no call sites left to sweep.)
  *
  * Run: node tests/pending-batch-roundtrip.smoke.mjs
  */
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import {
   storePendingBatch,
   retrievePendingBatches,
 } from '../src/modes/watcher-batch.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let failures = 0;
 function ok(label) { console.log('  OK  ' + label); }
@@ -116,55 +110,6 @@ console.log('\nTest 1: every stored field survives the store/retrieve round-trip
     const same = JSON.stringify(got) === JSON.stringify(value);
     assert(same, `field "${key}" survives the round-trip`,
       `stored ${JSON.stringify(value)} but retrieved ${JSON.stringify(got)}`);
-  }
-}
-
-console.log('\nTest 2: every key written at a storePendingBatch call site is covered above');
-{
-  // Scope note (Audit 11, quick win 7): this sweep covers watcher-commit.js,
-  // the only file with storePendingBatch call sites today (verified by
-  // repo-wide grep). A storePendingBatch call added in ANY OTHER file is NOT
-  // guarded here and would need its own sweep entry; if you add one, extend
-  // this test to read that file too.
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'modes', 'watcher-commit.js'), 'utf8');
-
-  // Extract the metadata object-literal keys at each call site.
-  function extractStoreSiteKeys(src) {
-    const sites = [];
-    const re = /storePendingBatch\s*\(/g;
-    let m;
-    while ((m = re.exec(src))) {
-      const start = src.indexOf('{', m.index);
-      if (start === -1) continue;
-      let depth = 0, end = -1;
-      for (let i = start; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
-      }
-      if (end === -1) continue;
-      let body = src.slice(start + 1, end);
-      body = body.replace(/\/\/[^\n]*/g, '');                     // line comments
-      while (/\{[^{}]*\}/.test(body)) {
-        body = body.replace(/\{[^{}]*\}/g, 'NESTED');             // nested literals
-      }
-      const keys = new Set();
-      for (const k of body.matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*:/g)) keys.add(k[1]);
-      // Shorthand properties (e.g. `branch,` or trailing `version, tier`):
-      for (const k of body.matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*(?=,|\s*$)/g)) keys.add(k[1]);
-      sites.push([...keys]);
-    }
-    return sites;
-  }
-
-  const sites = extractStoreSiteKeys(source);
-  assert(sites.length >= 4, 'found the four storePendingBatch call sites', `found ${sites.length}`);
-  const covered = new Set(Object.keys(CANONICAL));
-  for (let i = 0; i < sites.length; i++) {
-    const missing = sites[i].filter(k => !covered.has(k) && k !== 'NESTED');
-    assert(missing.length === 0,
-      `call site ${i + 1} writes only round-trip-covered fields`,
-      `uncovered field(s): ${missing.join(', ')} -- add to retrievePendingBatches AND this test`);
   }
 }
 

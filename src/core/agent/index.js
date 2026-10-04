@@ -26,7 +26,7 @@ export const AgentMode = {
   CHAT:     'chat',      // Tool-enabled chat
 };
 
-// ── Step caps by mode and tier ────────────────────────────────────────────────
+// ── Step caps by mode ───────────────────────────────────────────────────────
 
 const STEP_CAPS = {
   recon:    3,    // Always cheap — just the planner
@@ -36,11 +36,8 @@ const STEP_CAPS = {
   chat:     3,    // Per chat turn
 };
 
-export function getStepCap(mode, tier = 'pro') {
-  const base = STEP_CAPS[mode] || 10;
-  if (tier === 'team' || tier === 'enterprise') return base;
-  if (tier === 'pro')  return Math.min(base, 8);    // Pro gets slightly lower caps
-  return Math.min(base, 3);                          // Open gets minimal
+export function getStepCap(mode) {
+  return STEP_CAPS[mode] || 10;
 }
 
 // ── Main agent runner ─────────────────────────────────────────────────────────
@@ -49,14 +46,13 @@ export function getStepCap(mode, tier = 'pro') {
  *
  * @param {string}  mode       — AgentMode constant
  * @param {object}  fileMap    — { path: content }
- * @param {object}  options    — { projectLabel, tier, focusAreas, rates }
+ * @param {object}  options    - { projectLabel, focusAreas, rates }
  * @param {object}  callbacks  — { onStep, onThought, onToolCall, onToolResult, onChunk, onProgress }
  * @returns {object}           — { plan, memoryResult, report }
  */
 export async function runAgent(mode, fileMap, options = {}, callbacks = {}) {
   const {
     projectLabel = 'unknown',
-    tier         = 'pro',
     focusAreas   = '',
     rates        = { junior: 85, mid: 125, senior: 200 },
   } = options;
@@ -75,7 +71,7 @@ export async function runAgent(mode, fileMap, options = {}, callbacks = {}) {
   // Step 2: Run the appropriate agent mode
   const memory   = new AgentMemory();
   const tools    = buildTools(fileMap, memory);
-  const stepCap  = getStepCap(mode, tier);
+  const stepCap  = getStepCap(mode);
 
   let memoryResult, report;
 
@@ -101,7 +97,7 @@ export async function runAgent(mode, fileMap, options = {}, callbacks = {}) {
       ...callbacks,
       onVerifying: ({ candidate }) => onProgress({ type: 'verifying', candidate }),
       onVerified:  ({ verified  }) => onProgress({ type: 'verified',  verified  }),
-    }, 'full', tier);
+    }, 'full');
     onProgress({ type: 'verification_done', stats: verificationResult.stats });
 
     onProgress({ type: 'narrating' });

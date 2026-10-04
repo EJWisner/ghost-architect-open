@@ -5,7 +5,7 @@
 // structured data object, asks Claude for a plain-language executive narrative,
 // then renders a dark-themed deal-grade PDF via ReportLab (Python).
 //
-// Exported entry point: runExecutiveBriefMode({ findings, tier, scanFile,
+// Exported entry point: runExecutiveBriefMode({ findings, scanFile,
 // codebaseRoot, anthropicClient }) -> { pdfPath }
 
 import fs from 'fs';
@@ -121,9 +121,7 @@ export function buildBriefData(findings, seniorRate = 200) {
 // of ~$0.15 per manual hour displaced (roughly one Sonnet-class fix loop per
 // small finding at mid-2026 token prices). They exist as named constants so
 // the assumption is visible, reviewable, and changeable in one place instead
-// of living as magic numbers inside a client deliverable (Audit 7, Q27). If a
-// Ghost Partner profile ever carries its own AI-economics assumptions, wire
-// them through buildBriefData the way seniorRate already is.
+// of living as magic numbers inside a client deliverable (Audit 7, Q27).
 const AI_COST_PER_MANUAL_HOUR  = 0.15;
 const AI_HOURS_PER_MANUAL_HOUR = 0.10;
 
@@ -379,7 +377,7 @@ export function renderPdf(payload) {
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
-export async function runExecutiveBriefMode({ findings, tier, scanFile, codebaseRoot, anthropicClient, branding }) {
+export async function runExecutiveBriefMode({ findings, scanFile, codebaseRoot, anthropicClient }) {
   const findingsList = Array.isArray(findings) ? findings : [];
   // Read the configured senior rate rather than letting buildBriefData fall back
   // to its 200 default, so the brief quotes the same hourly rate as every other
@@ -424,16 +422,16 @@ export async function runExecutiveBriefMode({ findings, tier, scanFile, codebase
   const payload = {
     project,
     codebaseRoot: codebaseRoot || scanFile || 'unknown',
-    tier: tier || 'open',
     date: new Date().toISOString().slice(0, 10),
     healthScore,
     healthLabel: label,
     healthColor: healthColor(healthScore),
     data,
     narrative,
-    company_name:         branding ? branding.companyName    : 'GHOST ARCHITECT\u2122',
-    footer_text:          branding ? branding.footerText      : 'ghostarchitect.dev',
-    confidentiality_text: branding ? branding.confidentiality : 'CONFIDENTIAL',
+    // Always Ghost Architect™ branding.
+    company_name:         'GHOST ARCHITECT\u2122',
+    footer_text:          'ghostarchitect.dev',
+    confidentiality_text: 'CONFIDENTIAL',
   };
 
   const pdfPath = renderPdf(payload);

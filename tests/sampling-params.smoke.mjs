@@ -5,7 +5,7 @@
  * src/utils/sampling-params.js. Newer models (Sonnet 5, Opus 4.7/4.8, and any
  * future opus-5) reject temperature/top_p/top_k with a 400, so getSamplingParams
  * returns {} for them and { temperature } for every other model. narrator.js,
- * watcher-commit.js, blast-multipass.js, and extractor.js all import this single
+ * watcher-batch.js, blast-multipass.js, and extractor.js all import this single
  * source of truth — this test exercises it directly.
  */
 

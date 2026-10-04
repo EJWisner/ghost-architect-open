@@ -18,21 +18,17 @@ import { prioritizeFileMap } from '../prioritizer.js';
 import { verifyConflicts } from './agent/verifier.js';
 import { narrateConflictReport } from './agent/narrator.js';
 import { loadSession, saveSession, deleteSession } from './multipass.js';
-import { mergeRates } from '../profile/index.js';
-import { getTierCap } from '../loader/tierCaps.js';
+import { resolveRates } from '../utils/rates.js';
+import { getContextCap } from '../loader/contextCap.js';
 import { generateFindingId } from '../utils/finding-parser.js';
 import { SessionCostTracker } from './estimator.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
 
-// Per-pass token budget for conflict detection. Scales with tier cap to leave
-// uniform 20% headroom across all tiers. Setting this equal to or near the
-// tier cap caused 'context length' errors on dense passes where file content
-// alone consumed the entire budget. Pre-Cycle-13 this was hardcoded at 50K,
-// which gave Open users (50K tier cap) zero headroom and Pro/Team/Enterprise
-// massive over-restriction (50%/67%/75% headroom). See
-// TODO-core-conflict-pass-token-limit-tier-scaling-stage3.md.
-function getPassTokenLimit(tier) {
-  return Math.floor(getTierCap(tier) * 0.8);
+// Per-pass token budget for conflict detection: the context cap with 20%
+// headroom. Setting this equal to or near the cap caused 'context length'
+// errors on dense passes where file content alone consumed the entire budget.
+function getPassTokenLimit() {
+  return Math.floor(getContextCap() * 0.8);
 }
 
 const MAX_SINGLE_PASS   = 60000;
@@ -79,11 +75,11 @@ async function callClaude(prompt, system, maxTokens = 8096, onChunk = null, onUs
 
 // ── Pass builder ───────────────────────────────────────────────────────────────
 
-export function buildConflictPasses(fileMap, tier = 'open') {
+export function buildConflictPasses(fileMap) {
   const ordered = prioritizeFileMap(fileMap);
   const passes  = [];
   let current   = { files: {}, tokens: 0 };
-  const passTokenLimit = getPassTokenLimit(tier);
+  const passTokenLimit = getPassTokenLimit();
 
   for (const [filePath, content] of Object.entries(ordered)) {
     const t = Math.ceil(content.length / 4);
@@ -98,10 +94,10 @@ export function buildConflictPasses(fileMap, tier = 'open') {
   return passes;
 }
 
-export function getConflictPassInfo(fileMap, tier = 'open') {
+export function getConflictPassInfo(fileMap) {
   const totalTokens = Object.values(fileMap).reduce((sum, c) => sum + Math.ceil(c.length / 4), 0);
   const singlePass  = totalTokens <= MAX_SINGLE_PASS;
-  const passes      = singlePass ? [{ files: fileMap, tokens: totalTokens }] : buildConflictPasses(fileMap, tier);
+  const passes      = singlePass ? [{ files: fileMap, tokens: totalTokens }] : buildConflictPasses(fileMap);
   const estCost     = (passes.length * 0.30).toFixed(2);
   const estMinutes  = Math.max(1, Math.round(passes.length * 0.5));
   return { passes, totalTokens, singlePass, estCost, estMinutes, totalFiles: Object.keys(fileMap).length };
@@ -109,7 +105,7 @@ export function getConflictPassInfo(fileMap, tier = 'open') {
 
 // ── Single-pass conflict scan ──────────────────────────────────────────────────
 
-async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFindings, onChunk, profile, forecastContext, onUsage = null) {
+async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFindings, onChunk, forecastContext, onUsage = null) {
   let context = '';
   for (const [fp, content] of Object.entries(files)) {
     context += `\n\n=== FILE: ${fp} ===\n${content}`;
@@ -120,7 +116,7 @@ async function runConflictPass(files, passNum, totalPasses, totalFiles, priorFin
     : '';
 
   const prompt = buildConflictPrompt({ passNum, totalPasses, totalFiles, context, priorContext, forecastContext });
-  return callClaude(prompt, buildSystemConflict(profile), 8096, passNum === totalPasses ? onChunk : null, onUsage);
+  return callClaude(prompt, buildSystemConflict(), 8096, passNum === totalPasses ? onChunk : null, onUsage);
 }
 
 // ── Extract conflict candidates from raw pass results ─────────────────────────
@@ -371,7 +367,7 @@ function extractConflictSkeleton(result) {
 
 // ── Fallback merge (used when verifier is skipped) ────────────────────────────
 
-async function mergeConflictResults(results, onChunk, profile, onUsage = null) {
+async function mergeConflictResults(results, onChunk, onUsage = null) {
   const combined = results.map((r, i) =>
     `=== CONFLICT FINDINGS — BATCH ${i + 1} ===\n${r}`
   ).join('\n\n');
@@ -387,7 +383,7 @@ async function mergeConflictResults(results, onChunk, profile, onUsage = null) {
     `- Produce the final CONFLICT SUMMARY table with all counts and risk ratings\n\n` +
     `BATCHES:\n${combined}\n\nMerged conflict report:`;
 
-  return callClaude(prompt, buildSystemConflict(profile), 8096, onChunk, onUsage);
+  return callClaude(prompt, buildSystemConflict(), 8096, onChunk, onUsage);
 }
 
 // ── Session key helper ─────────────────────────────────────────────────────────
@@ -413,19 +409,6 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
     onVerifyPrompt  = async () => 'full',
   } = callbacks;
 
-  // Ghost Partner — consultant profile threads through every Claude call
-  // in this scan so findings, narrator prose, and any merge-fallback
-  // output share the consultant's lens. When options.profile is null the
-  // scan behaves bit-for-bit like v0.3 — buildSystemConflict(null) returns
-  // the original system prompt unchanged.
-  const profile = options.profile || null;
-
-  // Tier threads through for Stage 3 gates (currently: verifier-fallback in
-  // quickVerify). Defaults to 'open' (fail-closed) so any caller that
-  // forgets to pass tier does not leak a paid-tier privilege. See
-  // TODO-verifier-agent-stage3-evaluate.md.
-  const tier = options.tier || 'open';
-
   // ── Cost tracker — accumulates real API usage from every pipeline stage ─────
   // Accepts an external tracker (when caller pre-records plan stage costs) or
   // creates a fresh one. Each stage fires onUsage(inputTokens, outputTokens, model).
@@ -436,13 +419,13 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
   const verifyUsage  = (i, o, m) => tracker.record('verify',  i, o, m);
   const narrateUsage = (i, o, m) => tracker.record('narrate', i, o, m);
 
-  const info       = getConflictPassInfo(fileMap, tier);
+  const info       = getConflictPassInfo(fileMap);
   const totalFiles = info.totalFiles;
-  const rates      = mergeRates({
+  const rates      = resolveRates({
     junior: getConfig().get('rateJunior') || 85,
     mid:    getConfig().get('rateMid')    || 125,
     senior: getConfig().get('rateSenior') || 200,
-  }, profile);
+  });
 
   onProgress({ type: 'start', totalFiles, totalPasses: info.passes.length, singlePass: info.singlePass });
 
@@ -490,7 +473,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   if (info.singlePass) {
     onProgress({ type: 'scanning', fileCount: totalFiles, tokens: info.totalTokens });
-    const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null, profile, forecastContext, scanUsage);
+    const result = await runConflictPass(fileMap, 1, 1, totalFiles, [], null, forecastContext, scanUsage);
     passResults.push(result);
   } else {
     const sessionKey = conflictSessionKey(options.projectLabel || 'default');
@@ -502,7 +485,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
       onProgress({ type: 'passStart', passNum, totalPasses: info.passes.length, fileCount, tokens: pass.tokens });
 
-      const result   = await runConflictPass(pass.files, passNum, info.passes.length, totalFiles, skeletons, null, profile, forecastContext, scanUsage);
+      const result   = await runConflictPass(pass.files, passNum, info.passes.length, totalFiles, skeletons, null, forecastContext, scanUsage);
       const skeleton = extractConflictSkeleton(result);
       skeletons.push(skeleton);
       passResults.push(result);
@@ -532,7 +515,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   if (candidates.length === 0) {
     onProgress({ type: 'merging', count: passResults.length });
-    const finalReport = await mergeConflictResults(passResults, onChunk, profile, scanUsage);
+    const finalReport = await mergeConflictResults(passResults, onChunk, scanUsage);
     onProgress({ type: 'done', passCount: info.passes.length });
     return { finalReport, passCount: info.passes.length, totalFiles, verified: false, candidates: [], tracker };
   }
@@ -566,7 +549,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
         surfaced:       0,
       },
     };
-    const finalReport = await narrateConflictReport(skippedResult, { rates, profile, projectLabel: options.projectLabel }, onChunk, narrateUsage);
+    const finalReport = await narrateConflictReport(skippedResult, { rates, projectLabel: options.projectLabel }, onChunk, narrateUsage);
     onProgress({ type: 'done', passCount: info.passes.length });
     return { finalReport, passCount: info.passes.length, totalFiles, verified: false, stats: skippedResult.stats, candidates, tracker };
   }
@@ -581,7 +564,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
     onProgress: ({ current, total }) =>
       onProgress({ type: 'verification_progress', current, total }),
     onUsage: verifyUsage,
-  }, verifyChoice, tier);
+  }, verifyChoice);
 
   onProgress({
     type:  'verification_done',
@@ -594,7 +577,7 @@ export async function runConflictScan(fileMap, callbacks = {}, options = {}) {
 
   const finalReport = await narrateConflictReport(
     verificationResult,
-    { rates, profile, projectLabel: options.projectLabel },
+    { rates, projectLabel: options.projectLabel },
     onChunk,
     narrateUsage
   );

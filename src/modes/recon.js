@@ -12,12 +12,6 @@
  *     actually, and what would Ghost surface?")
  *
  * Cost: one planner call (~$0.05). No scan passes.
- *
- * Profile awareness: when --profile is loaded, the recon report uses
- * the consultant's voice and emphasizes their methodology's priorities.
- * The saved PDF/markdown carry full white-label branding the same way
- * POI/Blast/Conflict reports do — handled downstream by saveReport via
- * the meta.profile field.
  */
 
 import chalk from 'chalk';
@@ -31,52 +25,25 @@ import { runRecon } from '../core/agent/planner.js';
 import { saveReport } from '../reports.js';
 import { offerUnsavedReport } from '../cli/unsaved-report.js';
 import { calcActualCost } from '../estimator.js';
-import { promptProjectLabel } from '../projects.js';
-import { requireTier } from '../license/tier-gates.js';
 import { showFriendlyError } from '../utils/errors.js';
 
 import { SYM, IS_WINDOWS } from '../cli/symbols.js';
 
 export async function runReconMode(codebaseContext, options = {}) {
-  // Tier policy: recon is intentionally tier-blind. TIER_POLICY in
-  // src/license/tier-gates.js blesses 'mode:recon' for all tiers
-  // (open/trial/pro/team/enterprise), because recon runs the planner
-  // only (~$0.05, no analysis passes) and serves as a pre-engagement
-  // scoping artifact. COUNTED_PREFIXES in src/freemium.js excludes
-  // 'ghost-recon', so recon does not accrue against the 4-scan Open
-  // quota even when saveReport forwards the prefix correctly. Recon MODE
-  // access stays tier-blind; the only tier gate here is the D4 project-label
-  // prompt below, which (like POI) is Pro+ only because project tracking is a
-  // paid feature. If recon ever becomes quota-counted or mode-gated, this
-  // comment, TIER_POLICY, and COUNTED_PREFIXES must all change together.
-
-  // Ghost Partner — consultant profile (null when --profile was not passed).
-  const profile = options.profile || null;
-  // Default to 'open' so a caller that forgets to pass tier can never leak the
-  // paid project-tracking label prompt to an Open user.
-  const tier = options.tier || 'open';
 
   const fileMap = codebaseContext.fileMap || {};
 
   console.log('\n' + boxen(
     chalk.cyan.bold('🔍  RECON — SIZING ONLY') + '\n' +
     chalk.gray('Sizing this codebase and producing an engagement plan.') + '\n' +
-    chalk.gray('No analysis passes — single planner call only (~$0.05).') +
-    (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
+    chalk.gray('No analysis passes: single planner call only (~$0.05).'),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
   console.log('');
 
-  // D4 gate: the project label prompt (and the tracking it feeds) is Pro+ only.
-  // On Open the label is never tracked, so we must not prompt for it — mirrors
-  // POI. Label stays null through to renderReconMarkdown (which ignores it) and
-  // saveReport (which handles null: timestamped filename, "Unnamed project").
-  const projectIntelEnabled = requireTier('feature:project-tracking', { tier }).allowed;
-  let label = null;
-  if (projectIntelEnabled) {
-    label = await promptProjectLabel();
-    console.log('');
-  }
+  // No project label: renderReconMarkdown ignores it and saveReport handles
+  // null (timestamped filename, "Unnamed project").
+  const label = null;
 
   let spinner = null;
   try {
@@ -87,7 +54,6 @@ export async function runReconMode(codebaseContext, options = {}) {
     // win 3). Falls back to the fixed estimate when the tracker reports zero.
     let reconCost = 0;
     const plan = await runRecon(fileMap, 'recon', {
-      profile,
       onUsage: (i, o, m) => { reconCost += calcActualCost(i || 0, o || 0, m).totalCost; },
     });
 
@@ -98,7 +64,7 @@ export async function runReconMode(codebaseContext, options = {}) {
     // Render the recon plan as a markdown report. This is the artifact
     // the consultant hands to a prospect — it must read as a polished
     // engagement-ready document, not raw planner output.
-    const markdown = renderReconMarkdown(plan, label, profile, codebaseContext.totalFiles);
+    const markdown = renderReconMarkdown(plan, label, codebaseContext.totalFiles);
 
     // Print a short summary to the terminal so the user sees the headline
     // numbers before deciding whether to save.
@@ -135,9 +101,7 @@ export async function runReconMode(codebaseContext, options = {}) {
       return;
     }
 
-    // Recon reports save with the same machinery as POI/Blast/Conflict so
-    // the white-label branding (cover, header, footer, accent color) flows
-    // through automatically when a profile is present.
+    // Recon reports save with the same machinery as POI/Blast/Conflict.
     const meta = {
       filesAnalyzed:  `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
       totalFiles:     codebaseContext.totalFiles,
@@ -155,7 +119,6 @@ export async function runReconMode(codebaseContext, options = {}) {
       resolved:       0,
       newFindings:    0,
       scans:          [],
-      profile,
       reportKind:     'recon',  // hint for saveReport rendering
     };
 
@@ -190,16 +153,10 @@ export function reconMetaCost(plan, reconCost) {
 
 // ── Markdown rendering ───────────────────────────────────────────────────────
 //
-// Renders the structured plan as a saved-report-friendly markdown document.
-// Profile-aware: when a consultant profile is loaded, the prose paragraphs
-// (engagement_perspective, methodology_note) are written in the consultant's
-// voice. When no profile is loaded, the prose still works but reads as a
-// neutral pre-engagement triage.
+// Renders the structured plan as a saved-report-friendly markdown document,
+// written as a neutral pre-engagement triage.
 // @ghost-verified: exported for unit testing (tests/recon-planner-failed.smoke.mjs)
-export function renderReconMarkdown(plan, projectLabel, profile, repoTotalFiles = null) {
-  const consultantName = profile?.author || profile?.organization || null;
-  const consultantOrg  = profile?.organization || profile?.author  || null;
-
+export function renderReconMarkdown(plan, projectLabel, repoTotalFiles = null) {
   // Note: we deliberately do NOT emit a top-level H1 here. saveReport()
   // always renders a metadata header (e.g., "# OSCProfessionals —
   // Pre-Engagement Recon") before our body content. Adding a body H1
@@ -276,37 +233,17 @@ export function renderReconMarkdown(plan, projectLabel, profile, repoTotalFiles 
     lines.push('');
   }
 
-  // Methodology note — only renders when a profile is loaded. Explains
-  // how the consultant's lens applies to this specific codebase.
-  if (profile && plan.methodologyNote) {
-    lines.push('## Methodology Note');
-    lines.push('');
-    lines.push(plan.methodologyNote.trim());
-    lines.push('');
-  }
-
   // Closing CTA — explicit framing of what this report is and isn't.
   lines.push('## What This Report Is Not');
   lines.push('');
-  if (consultantName) {
-    lines.push(
-      `This is a sizing and scope assessment, not a vulnerability audit or a remediation plan. ` +
-      `A full Pre-Engagement Diligence scan would surface specific findings categorized by severity, ` +
-      `produce a remediation plan with line-item cost estimates, and verify each finding against the ` +
-      `actual source code.`
-    );
-    lines.push('');
-    lines.push(`To commission a full scan, contact **${consultantName}**${consultantOrg && consultantOrg !== consultantName ? ` at ${consultantOrg}` : ''}.`);
-  } else {
-    lines.push(
-      `This is a sizing and scope assessment, not a vulnerability audit or a remediation plan. ` +
-      `A full Pre-Engagement Diligence scan would surface specific findings categorized by severity, ` +
-      `produce a remediation plan with line-item cost estimates, and verify each finding against the ` +
-      `actual source code.`
-    );
-    lines.push('');
-    lines.push(`Run a Points of Interest, Blast Radius, or Conflict Detection scan to commission the full analysis.`);
-  }
+  lines.push(
+    `This is a sizing and scope assessment, not a vulnerability audit or a remediation plan. ` +
+    `A full Pre-Engagement Diligence scan would surface specific findings categorized by severity, ` +
+    `produce a remediation plan with line-item cost estimates, and verify each finding against the ` +
+    `actual source code.`
+  );
+  lines.push('');
+  lines.push(`Run a Points of Interest, Blast Radius, or Conflict Detection scan to commission the full analysis.`);
   lines.push('');
 
   return lines.join('\n');

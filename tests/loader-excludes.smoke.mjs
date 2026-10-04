@@ -81,7 +81,7 @@ const has = (ctx, frag) => names(ctx).some(n => n.endsWith(frag));
 // ── 1. Default excludes ─────────────────────────────────────────────────────
 console.log('\n── Default excludes ──');
 
-setScanOptions({ tier: 'enterprise' });   // big cap so nothing is dropped for size
+setScanOptions({});   // full cap so nothing is dropped for size
 const { result: base, out: baseOut } = await captureStdout(() => loadFromPath(root));
 
 check('real source files are loaded', () => {
@@ -124,7 +124,7 @@ check('the directory path REPORTS how many files the defaults skipped', () => {
 // ── 2. Custom excludes stack on top of the defaults ─────────────────────────
 console.log('\n── Custom excludes stack ──');
 
-setScanOptions({ tier: 'enterprise', excludePatterns: ['**/secrets/**'] });
+setScanOptions({ excludePatterns: ['**/secrets/**'] });
 const { result: custom } = await captureStdout(() => loadFromPath(root));
 
 check('a custom --exclude pattern removes its target', () => {
@@ -140,7 +140,7 @@ check('unrelated source still loads alongside a custom exclude', () => {
   assert.ok(has(custom, 'src/app.js'));
 });
 
-setScanOptions({ tier: 'enterprise', excludePresets: ['test-data'] });
+setScanOptions({ excludePresets: ['test-data'] });
 const { result: preset } = await captureStdout(() => loadFromPath(root));
 
 check('an --exclude-presets preset removes its targets', () => {
@@ -148,7 +148,6 @@ check('an --exclude-presets preset removes its targets', () => {
 });
 
 setScanOptions({
-  tier: 'enterprise',
   excludePresets: ['test-data', 'generated'],
   excludePatterns: ['**/secrets/**'],
 });
@@ -202,7 +201,7 @@ zip.addFile('proj/tests/app.test.js',           Buffer.from('test("x",()=>{});\n
 const zipPath = path.join(root, 'proj.zip');
 zip.writeZip(zipPath);
 
-setScanOptions({ tier: 'enterprise' });
+setScanOptions({});
 const { result: zctx, out: zipOut } = await captureStdout(() => loadFromZipPath(zipPath));
 
 check('ZIP: real source is loaded', () => {
@@ -221,7 +220,7 @@ check('ZIP: default excludes are REPORTED, not silent', () => {
     `ZIP path applied excludes silently. stdout was:\n${zipOut}`);
 });
 
-setScanOptions({ tier: 'enterprise', excludePresets: ['test-data'] });
+setScanOptions({ excludePresets: ['test-data'] });
 const { result: zctx2 } = await captureStdout(() => loadFromZipPath(zipPath));
 
 check('ZIP: custom presets stack on the defaults', () => {
@@ -232,7 +231,7 @@ check('ZIP: custom presets stack on the defaults', () => {
 });
 
 // ── Teardown ────────────────────────────────────────────────────────────────
-setScanOptions({ tier: 'open' });
+setScanOptions({});
 try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
 try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch {}
 

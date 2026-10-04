@@ -17,14 +17,13 @@
  * Returns { name, derivedFrom } where derivedFrom is 'tier-1'..'tier-4', or
  * null when no real source signal could be resolved.
  *
- * Parsing of git origin URLs reuses parseRepo() from team-sync.js (handles
- * https, SSH git@, Enterprise subpaths, trailing .git) — the same parser Ghost
- * Watcher / team-sync use.
+ * Parsing of git origin URLs reuses parseRepo() from src/utils/repo-url.js
+ * (handles https, SSH git@, Enterprise subpaths, trailing .git).
  */
 
 import { execFileSync } from 'child_process';
 import path from 'path';
-import { parseRepo } from '../core/team-sync.js';
+import { parseRepo } from '../utils/repo-url.js';
 import { submitBatch } from '../modes/watcher-batch.js';
 // @ghost-verified: transport-meta.js exists and exports formatClockTime -- see src/lib/transport-meta.js
 import { formatClockTime } from './transport-meta.js';

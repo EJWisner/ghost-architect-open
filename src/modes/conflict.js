@@ -18,9 +18,6 @@ import { getConfig } from '../config.js';
 import { saveReport, REPORTS_DIR } from '../reports.js';
 import { loadFromPath } from '../loader/index.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
-import { promptProjectLabel } from '../projects.js';
-import { requireTier } from '../license/tier-gates.js';
-import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 // Static import: extractFindings is already used by sibling modes (poi.js,
 // blast.js) so there's no module-loading novelty justifying the dynamic-import
 // pattern audit-mode used for its newly-introduced findingsFromAuditResults.
@@ -35,34 +32,12 @@ const _conflictRequire = createRequire(import.meta.url);
 const { version: GHOST_VERSION } = _conflictRequire('../../package.json');
 
 export async function runConflictMode(codebaseContext, options = {}) {
-  // Ghost Partner — consultant profile (null when --profile was not passed).
-  // Threaded through to runConflictScan (consultant lens in system prompt +
-  // narrator) and through saveReport meta (white-label cover + chrome in
-  // the PDF). Mirrors the runPOIMode and runBlastMode pattern.
-  const profile = options.profile || null;
-
-  // Tier resolution. Defaults to 'open' (fail-closed) so any caller that
-  // forgets to pass tier does not leak the paid project-tracking feature.
-  // bin/ghost.js is the single source of truth — it passes TIER (resolved
-  // from active license at line 1311) into this options object. Mirrors
-  // the prompt-triage Phase 2 adoption pattern from commit 2d813bb.
-  const tier = options.tier || 'open';
-
-  // D4 gate: project-tracking is Pro+ only. Wraps the label prompt below
-  // so Open users skip labeling entirely, which keeps the label null
-  // through to saveReport and short-circuits all four labeled-save
-  // side-effect blocks (team-sync, mobile-publish, portal-publish, audit
-  // log) in src/reports.js. Gate ID is shared with prompt-triage so D3
-  // callout suppression spans both modes per session.
-  const projectIntelGate = requireTier('feature:project-tracking', { tier });
-  const projectIntelEnabled = projectIntelGate.allowed;
-
   const fileMap    = codebaseContext.fileMap || {};
   const projectLabel = (codebaseContext.fileIndex?.[0] || 'project')
     .split('/').slice(0, 2).join('-')
     .replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40) || 'conflict-default';
   const model      = getConfig().get('defaultModel') || 'claude-sonnet-4-6';
-  const info       = getConflictPassInfo(fileMap, tier);
+  const info       = getConflictPassInfo(fileMap);
   const multiPass  = !info.singlePass;
 
   console.log('\n' + boxen(
@@ -74,7 +49,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
     (multiPass
       ? '\n' + chalk.yellow(`⚡ Large codebase — ${info.passes.length} passes required`)
       : '') +
-    (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : '') + '\n' +
+    '\n' +
     chalk.gray('Est. cost: ~' + '\u0024' + info.estCost + '  ·  Est. time: ~' + info.estMinutes + ' min'),
     { padding: 1, borderColor: 'magenta', borderStyle: 'round' }
   ));
@@ -124,25 +99,9 @@ export async function runConflictMode(codebaseContext, options = {}) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard scan)\n'));
   }
 
-  // Smart project label prompt — same UX as POI/Blast/Recon/Audit. The label
-  // is what groups Conflict scans with the rest of a project's history on
-  // the portal, in team-sync, and in mobile-publish. Gated on Pro+ per D4:
-  // Open users get unlabeled saves (bare-filename via saveReport's no-label
-  // branch), no project-tracking machinery fires.
-  let label = null;
-  if (projectIntelEnabled) {
-    label = await promptProjectLabel();
-    console.log('');
-  } else if (!hasShownCallout('feature:project-tracking')) {
-    // D3 soft-gate callout: one line, once per session, gentle. Open users
-    // still get the full conflict scan and saved report — this just signals
-    // what they'd gain on Pro (label-driven baselines, comparison, velocity).
-    // Shared gate ID with prompt-triage so a user who runs both modes in one
-    // ghost invocation sees the callout exactly once across them.
-    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
-    console.log('');
-    markCalloutShown('feature:project-tracking');
-  }
+  // One-time scan naming: no project label. Session keying uses the
+  // codebase-derived projectLabel above.
+  const label = null;
 
   const { proceed } = await inquirer.prompt([{
     type: 'confirm', name: 'proceed',
@@ -170,7 +129,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
         // want the "Ghost is writing the conflict report..." spinner to
         // KEEP SPINNING for the entire 30-60 second narration. Stopping
         // it on first chunk creates dead air for the rest of the stream
-        // because we don't write the chunks to stdout (white-label safety).
+        // because we don't write the chunks to stdout.
         // Only the 'done' progress event stops the spinner.
         buffer += text;
       },
@@ -310,7 +269,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       },
     };
 
-    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, profile, tier, tracker });
+    const result = await runConflictScan(fileMap, callbacks, { projectLabel: label || projectLabel, tracker });
 
     if (!result?.finalReport) return;
     buffer = result.finalReport;
@@ -350,10 +309,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       const lowCount       = parsedFindings.filter(f => f.severity === 'LOW').length;
       const totalHours     = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
 
-      // Meta drives PDF chrome and markdown branding. The `profile` field
-      // is what flips PDF rendering into white-label mode — saveReport
-      // calls getBranding(meta.profile) and threads the result into the
-      // PDF generator. When profile is null, default Ghost branding renders.
+      // Meta drives the PDF and markdown renderers.
       const meta = {
         filesAnalyzed: `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`,
         totalFiles: codebaseContext.totalFiles,
@@ -362,7 +318,6 @@ export async function runConflictMode(codebaseContext, options = {}) {
         mode: 'conflict-detection',
         verified: result.verified || false,
         verificationStats: result.stats || null,
-        profile,
         // Sidecar findings — reports.js Strategy 2 conditional (commit
         // dc352b0) consumes meta.findings when present. Without these,
         // the .findings.json sidecar would default to all-MEDIUM
@@ -389,7 +344,7 @@ export async function runConflictMode(codebaseContext, options = {}) {
       // Phase 4 → Phase 5: offer fix forecast follow-up.
       // Delegated to runPostScanFixForecast — single source of truth for
       // the checkbox + cost-gate + H3 re-forecast protection + serial loop.
-      await runPostScanFixForecast(parsedFindings, codebaseContext, { tier, profile });
+      await runPostScanFixForecast(parsedFindings, codebaseContext);
     } else {
       // There was no else branch here at all: declining the save prompt printed
       // nothing and dropped the buffer, silently destroying a report the user
@@ -476,9 +431,7 @@ async function promptFixForecast(findings, forecasted = new Set()) {
 //
 // parsedFindings  — array of normalized findings (must have fix_direction field)
 // codebaseContext — real loaded context ({ fileMap, loadedFiles, ... })
-// opts            — { tier, profile }
-export async function runPostScanFixForecast(parsedFindings, codebaseContext, opts = {}) {
-  const { tier, profile } = opts;
+export async function runPostScanFixForecast(parsedFindings, codebaseContext) {
   const forecasted = new Set();
   let selectedFindings = await promptFixForecast(parsedFindings, forecasted);
 
@@ -522,7 +475,7 @@ export async function runPostScanFixForecast(parsedFindings, codebaseContext, op
   if (selectedFindings.length > 0) {
     const results = [];
     for (const finding of selectedFindings) {
-      const result = await runFixForecast(finding, codebaseContext, { tier, profile, label: null });
+      const result = await runFixForecast(finding, codebaseContext, { label: null });
       forecasted.add(finding.id);
       if (result) results.push(result);
     }
@@ -552,7 +505,6 @@ export async function runPostScanFixForecast(parsedFindings, codebaseContext, op
 
         const combinedMeta = {
           mode:        'fix-forecast',
-          profile,
           fixForecast: true,
         };
 
@@ -576,7 +528,7 @@ export async function runPostScanFixForecast(parsedFindings, codebaseContext, op
 // ── Standalone Fix Forecast: load saved findings and run promptFixForecast ───
 // Exported so bin/ghost.js can call it as a top-level menu mode.
 // Does NOT require a live codebase context — reads from a saved findings JSON.
-export async function runSavedFixForecast({ tier, profile, codebaseContext: providedContext } = {}) {
+export async function runSavedFixForecast({ codebaseContext: providedContext } = {}) {
   // 1. Glob all _findings.json files from the reports directory.
   const reportsDir = REPORTS_DIR || path.join(os.homedir(), 'Ghost Architect Reports');
   let allFiles;
@@ -732,5 +684,5 @@ export async function runSavedFixForecast({ tier, profile, codebaseContext: prov
   }
 
   // 9. Run Fix Forecast — checkbox, cost-gate, H3 re-forecast protection, serial execution.
-  await runPostScanFixForecast(findings, codebaseContext, { tier, profile });
+  await runPostScanFixForecast(findings, codebaseContext);
 }

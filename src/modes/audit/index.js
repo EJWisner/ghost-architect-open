@@ -30,163 +30,35 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
 import inquirer from 'inquirer';
-import { spawn } from 'child_process';
 import { runStackRealityCheck } from './stackReality.js';
 import { runKeyPersonRisk, DEPARTED_THRESHOLD_DAYS, InvalidBasePathError } from './keyPersonRisk.js';
 import { runDependencyMap } from './dependencyMap.js';
 import { runRoadmapStub } from './roadmapStub.js';
 import { buildAuditReport } from './reportBuilder.js';
 import { saveReport } from '../../reports.js';
-// @ghost-verified: these imports resolve to src/projects.js and src/estimator.js (CLI layer wrappers) not src/core/ -- intentional, audit mode uses CLI display functions
-import { promptProjectLabel } from '../../projects.js';
+// @ghost-verified: this import resolves to src/estimator.js (CLI layer wrapper) not src/core/ -- intentional, audit mode uses CLI display functions
 import { showAuditCostEstimate, showActualCost, calcActualCost } from '../../estimator.js';
 import { createRequire } from 'module';
 const _auditRequire = createRequire(import.meta.url);
 const { version: GHOST_AUDIT_VERSION } = _auditRequire('../../../package.json');
 import { beginUsageCapture, endUsageCapture } from '../../core/usage-tracker.js';
 import { getConfig, getModelChoices } from '../../config.js';
-import { PRICING } from '../../constants/pricing.js';
 
 import { SYM, IS_WINDOWS } from '../../cli/symbols.js';
 
-/**
- * Open-tier paywall panel. Audit Mode is Pro+ entirely — no partial run on
- * Open. The reasoning: a stripped-down free version misrepresents the
- * product. The Open user either thinks "that's all it does" (damaging
- * Ghost's reputation) or feels held hostage. Better to be honest about
- * Audit Mode being a premium deliverable and tell them clearly what it
- * produces, what it costs, and how to unlock it.
- *
- * Called from runAuditMode() when options.tier === 'open' (or undefined,
- * which defaults to 'open' for fail-closed safety). Prints the panel and
- * returns immediately. No analyzers run. No spinners. No API charges.
- */
-async function runAuditOpenPaywall() {
-  console.log('\n' + boxen(
-    chalk.cyan.bold('📋  INHERITANCE AUDIT  (Pro feature)') + '\n\n' +
-    chalk.gray('Deal-grade codebase audit for buyers, PE diligence,') + '\n' +
-    chalk.gray('fractional CTOs, and modernization consultants.') + '\n\n' +
-    chalk.white('Inheritance Audit produces a 5-page deal-grade PDF combining') + '\n' +
-    chalk.white('four analyzers:') + '\n\n' +
-    chalk.green(`  ${SYM.check}  `) + chalk.white('Stack Reality Check: what the codebase actually contains,') + '\n' +
-    chalk.gray('     framework versions, end-of-life flags') + '\n' +
-    chalk.green(`  ${SYM.check}  `) + chalk.white('Key-Person Risk: who has been writing this code,') + '\n' +
-    chalk.gray('     key-person dependency, contributor concentration') + '\n' +
-    chalk.green(`  ${SYM.check}  `) + chalk.white('Hidden Dependency Map: license risk, EOL exposure,') + '\n' +
-    chalk.gray('     commercial encumbrances the buyer is inheriting') + '\n' +
-    chalk.green(`  ${SYM.check}  `) + chalk.white('Modernization Roadmap: LLM-synthesized stabilize-vs-rebuild') + '\n' +
-    chalk.gray('     recommendation with a 90-day plan and confidence rating') + '\n\n' +
-    chalk.white('The audit produces deal-committee-ready TXT, MD, and PDF reports') + '\n' +
-    chalk.white('in roughly 30 to 60 seconds at roughly $0.02 to $0.04 per audit') + '\n' +
-    chalk.white('in API charges, on top of your subscription.') + '\n\n' +
-    chalk.cyan.bold('Available on:') + '\n' +
-    chalk.white('  •  Ghost Pro  ($' + PRICING.PRO.monthly + '/mo)   full audit, one engagement at a time') + '\n' +
-    chalk.white('  •  Ghost Team ($' + PRICING.TEAM.monthly + '/mo)  full audit + audit-over-time') + '\n' +
-    chalk.gray( '                          comparison for modernization') + '\n' +
-    chalk.gray( '                          engagements') + '\n' +
-    chalk.white('  •  Ghost Enterprise      custom branding + multi-engagement') + '\n' +
-    chalk.gray( '                          audit history') + '\n\n' +
-    // Trial CTA first, matching every other paywall: the highest-converting
-    // line was missing from this fallback panel (Audit 7, finding Q6/2-tier).
-    chalk.green.bold(`Start a free ${PRICING.TRIAL_DAYS}-day Ghost Pro Max™ trial (no card required):`) + '\n' +
-    chalk.cyan('  ' + PRICING.TRIAL_URL.replace(/^https?:\/\//, '')) + '\n\n' +
-    chalk.cyan('Upgrade at:  ') + chalk.cyan.underline('https://ghostarchitect.dev/pricing'),
-    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
-  ));
-  console.log('');
-
-  // Give the reader a clear next action. "Back to mode menu" is the default
-  // happy path (Enter accepts it). "Open pricing page in browser" turns a
-  // passive disclosure into an active conversion moment for senior buyers
-  // who finished the panel and thought "this looks interesting." No exit
-  // option — exiting Ghost from a paywall is hostile UX; they can exit from
-  // the next menu if they want to leave.
-  const { action } = await inquirer.prompt([{
-    type: 'list',
-    name: 'action',
-    message: chalk.cyan('What would you like to do?'),
-    choices: [
-      { name: '←  Back to mode menu', value: 'back' },
-      { name: '🌐  Open pricing page in browser', value: 'pricing' },
-    ],
-    default: 'back',
-  }]);
-
-  if (action === 'pricing') {
-    const url = 'https://ghostarchitect.dev/pricing';
-    // Cross-platform open: macOS uses 'open', Windows uses 'start' via
-    // shell, Linux uses 'xdg-open'. Detached so the user's terminal isn't
-    // blocked. If launching fails (e.g. xdg-open missing on a headless
-    // Linux box), fall back to printing the URL so they can copy it.
-    const platform = process.platform;
-    try {
-      let cmd, args;
-      if (platform === 'darwin')      { cmd = 'open';     args = [url]; }
-      else if (platform === 'win32')  { cmd = 'cmd';      args = ['/c', 'start', '', url]; }
-      else                            { cmd = 'xdg-open'; args = [url]; }
-      const proc = spawn(cmd, args, { detached: true, stdio: 'ignore' });
-      proc.unref();
-      proc.on('error', () => {
-        console.log(chalk.gray(`  Could not launch browser. Open this URL manually: ${url}\n`));
-      });
-      console.log(chalk.gray(`  Opening ${url} in your default browser...\n`));
-    } catch (err) {
-      console.log(chalk.gray(`  Could not launch browser. Open this URL manually: ${url}\n`));
-    }
-  }
-}
-
 export async function runAuditMode(codebaseContext, options = {}) {
-  const profile = options.profile || null;
-
-  // Tier policy: audit is the original Phase 1 tier-gating pattern source.
-  // The `const tier = options.tier || 'open'` plus early-return-on-Open
-  // shape established here was adopted by prompt-triage (commit 2d813bb),
-  // conflict (commit 5cfe7db), and blast (commit b38c0cb) during Phase 2
-  // mode-file reconciliation. Audit's gating is mode-wide rather than
-  // feature-specific: TIER_POLICY in src/license/tier-gates.js sets
-  // 'mode:audit' to false for Open (hard block, not 'quota'), and the
-  // dispatch gate at bin/ghost.js line ~1522 walls Open users via
-  // renderAuditPaywall before they reach this function. The
-  // runAuditOpenPaywall panel above is the in-mode-file second gate for
-  // any caller that bypasses dispatch (defense in depth). All four
-  // D-decisions (D1 quota, D2 no-license-equals-Open, D3 soft-gate
-  // callout, D4 labeled-save gating) are automatically satisfied by
-  // audit being Pro+ entirely; there is no Open code path through this
-  // mode. The 'ghost-audit' prefix is intentionally absent from
-  // COUNTED_PREFIXES in src/freemium.js because audit doesn't need
-  // quota accrual: it cannot run on Open at all, so there are no Open
-  // scans to count.
-  //
-  // If audit ever becomes partially available on Open (e.g. a stripped-
-  // down preview tier), four coordinates must change together: this
-  // comment, the TIER_POLICY 'mode:audit' entry, the dispatch gate
-  // array at bin/ghost.js line ~1522, and the COUNTED_PREFIXES set in
-  // src/freemium.js (to start counting Open audit runs against quota).
-
-  // Feature gating. Audit Mode is Pro+ only. Default to 'open' (fail-closed)
-  // so any caller that forgets to pass tier does not leak the paid feature.
-  // The bin/ghost.js for each branch is the source of truth for TIER and
-  // passes it through via { tier: TIER }.
-  const tier = options.tier || 'open';
-  if (tier === 'open') {
-    await runAuditOpenPaywall();
-    return;
-  }
 
   console.log('\n' + boxen(
     chalk.cyan.bold('📋  INHERITANCE AUDIT  —  PRE-CLOSE / POST-INHERITANCE') + '\n\n' +
     chalk.gray('Deal-grade codebase audit for buyers, PE diligence,') + '\n' +
-    chalk.gray('fractional CTOs, and modernization consultants.') +
-    (profile ? '\n\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
+    chalk.gray('fractional CTOs, and modernization consultants.'),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
   console.log('');
 
-  // Project label — names the saved report files. Same UX as POI/Blast.
-  // The label is also used as the "project" line in the PDF cover card.
-  const label = await promptProjectLabel();
-  console.log('');
+  // No project name: the report saves under a timestamped name and the
+  // cover uses the unnamed-project default.
+  const label = null;
 
   // Model picker — per-run choice for the Modernization Roadmap LLM call.
   // Defaults to whatever the user has set in `defaultModel` config so
@@ -225,7 +97,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // Analyzer 1: Stack Reality Check
   let spinner = ora({ text: chalk.cyan('Running Stack Reality Check...'), color: 'cyan' }).start();
   try {
-    results.stackReality = await runStackRealityCheck(codebaseContext, { profile });
+    results.stackReality = await runStackRealityCheck(codebaseContext, {});
     const tag = results.stackReality._stub ? chalk.gray(' (stub)') : '';
     spinner.succeed(chalk.green(`  ${SYM.check} Stack Reality Check${tag}`));
   } catch (err) {
@@ -236,7 +108,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // Analyzer 2: Key-Person Risk
   spinner = ora({ text: chalk.cyan('Running Key-Person Risk analysis...'), color: 'cyan' }).start();
   try {
-    results.keyPersonRisk = await runKeyPersonRisk(codebaseContext, { profile });
+    results.keyPersonRisk = await runKeyPersonRisk(codebaseContext, {});
     const tag = results.keyPersonRisk._stub ? chalk.gray(' (stub)') : '';
     spinner.succeed(chalk.green(`  ${SYM.check} Key-Person Risk${tag}`));
   } catch (err) {
@@ -257,7 +129,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // Analyzer 3: Hidden Dependency Map
   spinner = ora({ text: chalk.cyan('Running Hidden Dependency Map...'), color: 'cyan' }).start();
   try {
-    results.dependencyMap = await runDependencyMap(codebaseContext, { profile });
+    results.dependencyMap = await runDependencyMap(codebaseContext, {});
     const tag = results.dependencyMap._stub ? chalk.gray(' (stub)') : '';
     spinner.succeed(chalk.green(`  ${SYM.check} Hidden Dependency Map${tag}`));
   } catch (err) {
@@ -277,7 +149,7 @@ export async function runAuditMode(codebaseContext, options = {}) {
       stackReality: results.stackReality,
       keyPersonRisk: results.keyPersonRisk,
       dependencyMap: results.dependencyMap,
-    }, { profile, model });
+    }, { model });
     const tag = results.roadmap._stub ? chalk.gray(' (stub)') : '';
     spinner.succeed(chalk.green(`  ${SYM.check} Modernization Roadmap${tag}`));
   } catch (err) {
@@ -312,7 +184,6 @@ export async function runAuditMode(codebaseContext, options = {}) {
   // different inputs first.
   const reportContent = buildAuditReport(results, {
     label,
-    profile,
     filesAnalyzed: codebaseContext.loadedFiles || 0,
     totalFiles: codebaseContext.totalFiles || 0,
   });
@@ -350,7 +221,6 @@ export async function runAuditMode(codebaseContext, options = {}) {
       saved = await saveReport(reportContent, 'ghost-audit', label, {
         filesAnalyzed: `${codebaseContext.loadedFiles || 0} of ${codebaseContext.totalFiles || 0}`,
         totalFiles: codebaseContext.totalFiles || 0,
-        profile,
         findings: parsedFindings,
         findingCount: parsedFindings.length,
         critical: criticalCount,

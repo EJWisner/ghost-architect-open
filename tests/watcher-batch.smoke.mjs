@@ -22,8 +22,8 @@ import {
   clearPendingBatch,
   BatchTimeoutError,
   BatchAllFailedError,
+  enrichFindingsWithPrompts,
 } from '../src/modes/watcher-batch.js';
-import { enrichFindingsWithPrompts } from '../src/modes/watcher-commit.js';
 
 let failures = 0;
 

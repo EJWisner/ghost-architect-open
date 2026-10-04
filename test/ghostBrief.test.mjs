@@ -1,7 +1,8 @@
 // test/ghostBrief.test.mjs
 //
-// Unit tests for Ghost Brief: ghostBrief.js, ghostBriefAdapter.js, and
-// the 'mode:ghost-brief' entry in tier-gates.js TIER_POLICY.
+// Unit tests for Ghost Brief™: ghostBrief.js, ghostBriefAdapter.js, and the
+// Ghost Open™ 12 rule that Ghost Brief™ is available to everyone with Ghost
+// Architect™ branding only.
 //
 // Run: node test/ghostBrief.test.mjs
 // Exits 0 on pass, non-zero on fail. Plain stdlib, no test framework, no deps.
@@ -12,9 +13,9 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-import { generateBrief, validateBrief, blastLabel } from '../lib/ghostBrief.js';
+import fs from 'node:fs';
+import { generateBrief, validateBrief, blastLabel, renderBriefHtml } from '../lib/ghostBrief.js';
 import { fromFixForecast } from '../lib/ghostBriefAdapter.js';
-import { TIER_POLICY, requireTier } from '../src/license/tier-gates.js';
 
 let passed = 0, failed = 0;
 
@@ -200,64 +201,29 @@ console.log('\nB) ghostBriefAdapter.js — fromFixForecast()');
   ok('do_not_touch includes app/code/Core/**', result.files.do_not_touch.includes('app/code/Core/**'));
 }
 
-// ── Section C: TIER_POLICY — mode:ghost-brief ────────────────────────────────
+// ── Section C: available to everyone, Ghost Architect™ branding ──────────────
 
-console.log('\nC) TIER_POLICY — mode:ghost-brief');
+console.log('\nC) Ghost Brief™ for everyone, Ghost Architect™ branding');
 
-const ghostBriefPolicy = TIER_POLICY['mode:ghost-brief'];
-
-ok("'mode:ghost-brief' exists in TIER_POLICY", ghostBriefPolicy !== undefined);
-check('open         tier → false', ghostBriefPolicy?.open,              false);
-check('pro          tier → false', ghostBriefPolicy?.pro,               false);
-check('pro-max           → true',  ghostBriefPolicy?.['pro-max'],       true);
-check('team         tier → false', ghostBriefPolicy?.team,              false);
-check('team-max          → true',  ghostBriefPolicy?.['team-max'],      true);
-check('enterprise   tier → false', ghostBriefPolicy?.enterprise,        false);
-check('enterprise-max    → true',  ghostBriefPolicy?.['enterprise-max'], true);
-
-// Verify via requireTier() with tier override
 {
-  const openVerdict          = requireTier('mode:ghost-brief', { tier: 'open'           });
-  const proVerdict           = requireTier('mode:ghost-brief', { tier: 'pro'            });
-  const proMaxVerdict        = requireTier('mode:ghost-brief', { tier: 'pro-max'        });
-  const teamVerdict          = requireTier('mode:ghost-brief', { tier: 'team'           });
-  const teamMaxVerdict       = requireTier('mode:ghost-brief', { tier: 'team-max'       });
-  const enterpriseVerdict    = requireTier('mode:ghost-brief', { tier: 'enterprise'     });
-  const enterpriseMaxVerdict = requireTier('mode:ghost-brief', { tier: 'enterprise-max' });
-
-  check('requireTier: open          → allowed=false', openVerdict.allowed,          false);
-  check('requireTier: pro           → allowed=false', proVerdict.allowed,           false);
-  check('requireTier: pro-max       → allowed=true',  proMaxVerdict.allowed,        true);
-  check('requireTier: team          → allowed=false', teamVerdict.allowed,          false);
-  check('requireTier: team-max      → allowed=true',  teamMaxVerdict.allowed,       true);
-  check('requireTier: enterprise    → allowed=false', enterpriseVerdict.allowed,    false);
-  check('requireTier: enterprise-max→ allowed=true',  enterpriseMaxVerdict.allowed, true);
+  const brief = generateBrief(makeValidBriefInput([makeValidPrompt()]));
+  ok('brief carries no tier field', !('tier' in brief));
+  const html = renderBriefHtml(brief);
+  ok('HTML title is Ghost Brief™', html.includes('<div class="htitle">Ghost Brief™</div>'));
+  ok('HTML footer links ghostarchitect.dev', html.includes('>ghostarchitect.dev</a>'));
+  ok('HTML names the edition Ghost Open™', html.includes('Ghost Open™'));
+  // renderBriefHtml no longer accepts a branding bundle; a stray second
+  // argument (as 11.x callers passed) must not change the output.
+  const withStray = renderBriefHtml(brief, { companyName: 'Acme Consulting', footerText: 'acme.example' });
+  ok('a stray branding argument is ignored', !withStray.includes('Acme Consulting') && !withStray.includes('acme.example'));
 }
 
-// ── requireTier: quota verdicts must fail loud on a missing count ───────────────
-//
-// Regression guard: a quota-gated mode must NEVER default a missing count to 0,
-// which would let an exhausted Open user scan without limit. requireTier must
-// throw when the caller forgets to pass the count.
 {
-  // Empty opts → resolves to 'open' tier → 'quota' verdict, no scansUsed.
-  throws('requireTier: empty opts on quota mode throws', () =>
-    requireTier('mode:poi', {}));
-  throws('requireTier: open quota mode without scansUsed throws', () =>
-    requireTier('mode:poi', { tier: 'open' }));
-  throws('requireTier: open forecast-quota without forecastsUsed throws', () =>
-    requireTier('mode:commit-forecast', { tier: 'open' }));
-  throws('requireTier: open fix-forecast-quota without fixForecastsUsed throws', () =>
-    requireTier('mode:fix-forecast', { tier: 'open' }));
-
-  // A count of 0 is valid and must NOT throw — it means "fresh quota".
-  check('requireTier: scansUsed=0 allowed',
-    requireTier('mode:poi', { tier: 'open', scansUsed: 0 }).allowed, true);
-  check('requireTier: scansUsed at limit blocked',
-    requireTier('mode:poi', { tier: 'open', scansUsed: 4 }).allowed, false);
-  // Non-quota tiers short-circuit before the count check, so no count needed.
-  check('requireTier: pro quota mode allowed without count',
-    requireTier('mode:poi', { tier: 'pro' }).allowed, true);
+  // No Max-plan gate anywhere on the Ghost Brief™ paths in the CLI.
+  const cli = fs.readFileSync(resolve(__dirname, '..', 'bin', 'ghost.js'), 'utf8');
+  ok('no "(Max plan)" menu suffix', !cli.includes('(Max plan)'));
+  ok('no "requires a Max plan" refusal', !/requires a Max plan/i.test(cli));
+  ok('no tier gate in the CLI', !/requireTier|allowedTiers|MAX_TIERS/.test(cli));
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────

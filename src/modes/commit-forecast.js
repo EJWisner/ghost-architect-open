@@ -13,11 +13,6 @@
  *      the working directory as the "proposed folder."
  *   2. Offline/received files: user points Ghost at an explicit folder of
  *      proposed files that mirrors the repo's relative directory structure.
- *
- * TIER GATING:
- *   Open: 1 free Commit Forecast per install (FORECAST_QUOTA). Counter is
- *   separate from the 4-scan POI/Blast/Conflict quota (see freemium.js).
- *   Pro+: unlimited.
  */
 
 import chalk from 'chalk';
@@ -37,9 +32,6 @@ import { showCostEstimate, showActualCost, showConflictCost } from '../estimator
 import { SessionCostTracker } from '../core/estimator.js';
 import { getConfig }           from '../config.js';
 import { saveReport }          from '../reports.js';
-import { requireTier }         from '../license/tier-gates.js';
-import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
-import { promptProjectLabel }  from '../projects.js';
 import { extractFindings }     from '../utils/finding-parser.js';
 import {
   buildForecastOverlay,
@@ -47,38 +39,9 @@ import {
   isGitRepo,
 } from '../core/forecast-overlay.js';
 import { runMultipassBlast, getBlastPassInfo } from '../core/blast-multipass.js';
-import {
-  getForecastCount,
-  incrementForecastCount,
-  renderForecastPaywall,
-} from '../freemium.js';
 import { renderForecastDiff } from '../utils/diff-renderer.js';
 
 import { SYM, IS_WINDOWS } from '../cli/symbols.js';
-
-// ── Tier gate check ───────────────────────────────────────────────────────────
-
-/**
- * Returns true if the user is allowed to run a Commit Forecast.
- * Emits the paywall and returns false if they're blocked.
- * paywallPromo is the worker-driven promo string (may be empty).
- */
-function checkForecastGate(tier, paywallPromo = '') {
-  // Pro+ are always allowed — no counter needed.
-  if (tier !== 'open') return true;
-
-  const used   = getForecastCount();
-  const result = requireTier('mode:commit-forecast', {
-    tier,
-    forecastsUsed: used,
-  });
-
-  if (!result.allowed) {
-    renderForecastPaywall(paywallPromo);
-    return false;
-  }
-  return true;
-}
 
 // ── Working-tree surface helpers ──────────────────────────────────────────────
 
@@ -257,13 +220,12 @@ async function selectAnalysisMode() {
 // present. No prompts. Runs analysis, saves report, exits.
 
 async function runCommitForecastNonInteractive(codebaseContext, opts) {
-  const { profile, tier, baseline, proposed, analysisMode, label, noVerify } = opts;
+  const { baseline, proposed, analysisMode, noVerify } = opts;
 
   console.log('\n' + chalk.cyan.bold('🔮 COMMIT FORECAST') + chalk.gray(' — non-interactive mode\n'));
   console.log(chalk.gray(`  Baseline : ${baseline}`));
   console.log(chalk.gray(`  Proposed : ${proposed}`));
   console.log(chalk.gray(`  Modes    : ${analysisMode}`));
-  if (label) console.log(chalk.gray(`  Label    : ${label}`));
   console.log('');
 
   // Build overlay from baseline + proposed folder.
@@ -290,7 +252,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
 
   const fileMap  = patchedContext.fileMap || {};
   const blastInfo = (analysisMode === 'blast' || analysisMode === 'both')
-    ? getBlastPassInfo(fileMap, tier) : null;
+    ? getBlastPassInfo(fileMap) : null;
 
   let blastBuffer    = '';
   let conflictBuffer = '';
@@ -313,7 +275,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
       console.log(chalk.cyan(`  Running Blast Radius (${blastInfo.passCount} passes)...`));
       try {
         blastBuffer = await runMultipassBlast(patchedContext, allChanged, {
-          tier, profile, forecastMode: true,
+          forecastMode: true,
           onPassComplete: (n, t) => console.log(chalk.green(`  ${SYM.check} Blast pass ${n} of ${t} complete`)),
           onSynthesisStart: () => console.log(chalk.gray('  Synthesizing blast results...')),
           onUsage: blastUsage,
@@ -333,7 +295,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
       const blastSpinner = ora({ text: chalk.gray('  Running Blast Radius...'), color: 'cyan' }).start();
       try {
         const blastResult = await runBlastRadius(patchedContext, allChanged, (c) => { blastBuffer += c; }, {
-          profile, forecastMode: true, onUsage: blastUsage,
+          forecastMode: true, onUsage: blastUsage,
           onSidecarFindings: (found) => {
             if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
           },
@@ -356,11 +318,11 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
 
   // ── Conflict ──────────────────────────────────────────────────────────
   if (analysisMode === 'conflict' || analysisMode === 'both') {
-    const info = getConflictPassInfo(fileMap, tier);
+    const info = getConflictPassInfo(fileMap);
     console.log(chalk.magenta(`  Running Conflict Detection (${info.passes.length} passes)...`));
     const callbacks = {
       async onVerifyPrompt({ count }) {
-        if (noVerify || tier === 'open') return 'skip';
+        if (noVerify) return 'skip';
         console.log(chalk.cyan(`  ${count} candidates found — running quick verification...`));
         return 'quick';
       },
@@ -386,8 +348,6 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     const conflictTracker = new SessionCostTracker();
     try {
       const result = await runConflictScan(fileMap, callbacks, {
-        tier,
-        profile,
         tracker: conflictTracker,
         forecastContext:
           `Changed files: ${allChanged.map(f => path.basename(f)).join(', ')}\n` +
@@ -429,11 +389,7 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     ? [...blastSidecarFindings, ...(hasConflict ? extractFindings(conflictBuffer) : [])]
     : extractFindings(forecastReport);
   // Severity counts + totalHours, exactly as the interactive save block
-  // computes them. The mobile-publish scanRecord reads meta.critical/high/
-  // medium/low/totalHours directly (src/reports.js), so omitting them here
-  // published zeroed severity data to Ghost Mobile™ for every scripted
-  // Team-tier forecast while the findings.json sidecar beside it carried
-  // the real counts (Audit 10, finding 3.5).
+  // computes them.
   const criticalCount = parsedFindings.filter(f => f.severity === 'CRITICAL').length;
   const highCount     = parsedFindings.filter(f => f.severity === 'HIGH').length;
   const mediumCount   = parsedFindings.filter(f => f.severity === 'MEDIUM').length;
@@ -444,7 +400,6 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     totalFiles:    patchedContext.totalFiles,
     mode:          'commit-forecast',
     forecastSurface: 'non-interactive',
-    profile,
     findings:      parsedFindings,
     findingCount:  parsedFindings.length,
     critical:      criticalCount,
@@ -456,30 +411,17 @@ async function runCommitForecastNonInteractive(codebaseContext, opts) {
     ...(forecastRunCost > 0 ? { cost: forecastRunCost.toFixed(4) } : {}),
   };
 
-  // null label is intentional parity with interactive's "Enter to skip" path —
-  // omitting --label produces project: null in the findings JSON, same as the
-  // user pressing Enter at the label prompt. Do not add a fallback default here.
-  const saved = await saveReport(forecastReport, 'ghost-forecast', label, meta);
+  // One-time scan naming: no project label, so the findings JSON records
+  // project: null, same as the interactive path.
+  const saved = await saveReport(forecastReport, 'ghost-forecast', null, meta);
   console.log(chalk.green(`\n${SYM.check} Forecast saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}`));
   if (saved.pdfFile) console.log(chalk.cyan(`  📑 ${saved.pdfFile}`));
   console.log('');
-
-  if (tier === 'open') incrementForecastCount();
 }
 
 export async function runCommitForecastMode(codebaseContext, options = {}) {
-  const profile      = options.profile || null;
-  const tier         = options.tier    || 'open';
-  const paywallPromo = options.paywallPromo || '';
-
-  // Quota gate, re-checked on every entry. bin/ghost.js gates at dispatch, but
-  // the "Run another?" tail below re-enters this function directly. Without a
-  // gate here, an Open user who answers "yes" keeps running Forecasts forever:
-  // the dispatch gate is behind them and getForecastCount() is never consulted
-  // again. Gate is read-only (no counter bump), so double-checking is free.
-  if (!checkForecastGate(tier, paywallPromo)) return;
 
   // ── Non-interactive flag path ───────────────────────────────────────────
   // ALL THREE of cfBaseline, cfProposed, cfModes must be present to trigger
@@ -503,23 +445,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     const analysisMode  = wantsBlast && wantsConflict ? 'both' : wantsBlast ? 'blast' : 'conflict';
 
     return await runCommitForecastNonInteractive(codebaseContext, {
-      profile, tier, paywallPromo,
       baseline:    options.cfBaseline,
       proposed:    options.cfProposed,
       analysisMode,
-      label:       options.cfLabel   || null,
       noVerify:    options.cfNoVerify || false,
     });
   }
-
-  // NOTE: Forecast quota gate is checked at dispatch in bin/ghost.js before
-  // this function is called. No need to re-check here.
-
-  // ── Project tracking gate (D4) ──────────────────────────────────────────
-  // Pro+: label prompt fires, portal publish / team-sync side effects active.
-  // Open: label stays null, four labeled-save side effects short-circuit.
-  const projectIntelGate    = requireTier('feature:project-tracking', { tier });
-  const projectIntelEnabled = projectIntelGate.allowed;
 
   console.log('\n' + boxen(
     chalk.cyan.bold('🔮 COMMIT FORECAST') + '\n' +
@@ -527,8 +458,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       'Ghost analyzes your proposed changes against the production codebase\n' +
       'and forecasts the Blast Radius and Conflict impact before you push.\n' +
       'Ghost does not apply changes. Ghost does not commit. Ghost does not push.'
-    ) +
-    (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
+    ),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
   console.log('');
@@ -596,7 +526,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       ({ patchedContext, changedFiles } = await buildForecastOverlay(
         codebaseContext,
         proposedDir,
-        { tier, profile, verbose: false }
+        { verbose: false }
       ));
       overlaySpinner.stop();
     } catch (err) {
@@ -628,19 +558,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     renderForecastDiff(changedFiles, codebaseContext.fileMap || {}, patchedContext.fileMap || {});
   }
 
-  // ── Project label (Pro+ only, D4) ───────────────────────────────────────
-  // Mirrors blast.js / conflict.js pattern exactly. On Open, label stays
-  // null so all four labeled-save side effects in saveReport short-circuit.
-  let label = null;
-  if (projectIntelEnabled) {
-    label = await promptProjectLabel();
-    console.log('');
-  } else if (!hasShownCallout('feature:project-tracking')) {
-    console.log(chalk.cyan('💡 Project tracking available on Pro. Forecasts run as one-shots on Open.'));
-    console.log('');
-    markCalloutShown('feature:project-tracking');
-  }
-
   // ── Cost estimate ───────────────────────────────────────────────────────
   // Show AFTER mode selection so label matches what was picked, and so we
   // can show the conflict pass count when relevant.
@@ -654,7 +571,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const estBlastTokens = Math.ceil(patchedContext.context.length / 4);
   const fileMap = patchedContext.fileMap || {};
   const blastInfo = (analysisMode === 'blast' || analysisMode === 'both')
-    ? getBlastPassInfo(fileMap, tier)
+    ? getBlastPassInfo(fileMap)
     : null;
   const blastMultipass = blastInfo && !blastInfo.singlePass;
 
@@ -672,7 +589,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     }
   }
   if (analysisMode === 'conflict' || analysisMode === 'both') {
-    const conflictInfo = getConflictPassInfo(fileMap, tier);
+    const conflictInfo = getConflictPassInfo(fileMap);
     console.log(chalk.gray(
       `  Conflict: ~${conflictInfo.passes.length} pass${conflictInfo.passes.length === 1 ? '' : 'es'}` +
       `  ·  Est. cost: ~$${conflictInfo.estCost}  ·  Est. time: ~${conflictInfo.estMinutes} min`
@@ -717,8 +634,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       let blastSpinner = ora({ text: chalk.gray('Starting Blast Radius forecast...'), color: 'cyan' }).start();
       try {
         blastBuffer = await runMultipassBlast(patchedContext, forecastTarget, {
-          tier,
-          profile,
           forecastMode: true,
           onSidecarFindings: (found) => {
             if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
@@ -762,7 +677,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
             onNarratorStart: () => {
               blastSpinner.text = chalk.gray('Ghost is writing the blast radius forecast...');
             },
-            profile,
             forecastMode: true,
             onUsage: blastUsage,
             onSidecarFindings: (found) => {
@@ -792,7 +706,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   let conflictCandidates = []; // hoisted for Fix Forecast access after save
 
   if (analysisMode === 'conflict' || analysisMode === 'both') {
-    const info = getConflictPassInfo(fileMap, tier);
+    const info = getConflictPassInfo(fileMap);
 
     console.log(chalk.magenta.bold('  ⚡ Running Conflict forecast on proposed changes...\n'));
 
@@ -838,20 +752,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
                 break;
               case 'candidates_found':
                 if (conflictSpinner) conflictSpinner.stop();
-                if (tier !== 'open') {
-                  console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found — verifying...\n`));
-                }
+                console.log(chalk.cyan(`\n  🔍 ${data.count} conflict candidates found, verifying...\n`));
                 break;
               case 'verifying':
-                if (tier !== 'open') {
-                  process.stdout.write(chalk.gray(`  ⟳  Verifying: ${data.title.slice(0, 60)}...\r`));
-                }
+                process.stdout.write(chalk.gray(`  ⟳  Verifying: ${data.title.slice(0, 60)}...\r`));
                 break;
               case 'verified': {
-                // On Open tier, suppress per-candidate output entirely —
-                // context cap means all results are UNCLEAR which is
-                // confusing and not useful. Pro+ sees confirmed/possible/eliminated.
-                if (tier === 'open') break;
                 const icon =
                   data.verdict === 'CONFIRMED'     ? chalk.red('  ' + SYM.cross + '  CONFIRMED') :
                   data.verdict === 'POSSIBLE'       ? chalk.yellow('  ?  POSSIBLE ') :
@@ -862,17 +768,12 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
               }
               case 'verification_done':
                 console.log('');
-                if (tier === 'open') {
-                  // On Open tier we auto-skipped verification — no stats to show.
-                  // The onVerifyPrompt handler already printed the explanation.
-                } else {
-                  console.log(
-                    chalk.bold('  Verification complete: ') +
-                    chalk.red(`${data.stats.confirmed} confirmed  `) +
-                    chalk.yellow(`${data.stats.possible} possible  `) +
-                    chalk.green(`${data.stats.falsePositives} eliminated`)
-                  );
-                }
+                console.log(
+                  chalk.bold('  Verification complete: ') +
+                  chalk.red(`${data.stats.confirmed} confirmed  `) +
+                  chalk.yellow(`${data.stats.possible} possible  `) +
+                  chalk.green(`${data.stats.falsePositives} eliminated`)
+                );
                 console.log('');
                 if (conflictSpinner) { conflictSpinner.stop(); conflictSpinner = null; }
                 conflictSpinner = ora({ text: chalk.gray('  Preparing conflict forecast...'), color: 'magenta' }).start();
@@ -889,10 +790,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           },
 
           async onVerifyPrompt({ count, quickCost, fullCost }) {
-            // On Open tier, skip verification silently — context cap means
-            // results would all be UNCLEAR. No message shown.
-            if (tier === 'open') return 'skip';
-
             console.log(chalk.cyan(`\n  🔍 ${count} conflict candidates found\n`));
             const { choice } = await inquirer.prompt([{
               type: 'list', name: 'choice',
@@ -925,8 +822,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         const projectLabel = 'forecast-' + new Date().toISOString().slice(0, 10);
         const result = await runConflictScan(fileMap, callbacks, {
           projectLabel,
-          profile,
-          tier,
           tracker: interactiveConflictTracker,
           // Thread the forecast framing into every conflict pass prompt.
           forecastContext:
@@ -946,10 +841,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
           if (conflictSpinner) { conflictSpinner.stop(); conflictSpinner = null; }
           console.log(chalk.green(`  ${SYM.check} Conflict forecast ready\n`));
 
-          // Only show verification stats on Pro+ where verification actually ran.
-          // On Open tier, verification was skipped — "0 confirmed, 0 possible,
-          // 0 eliminated" is confusing when all results were UNCLEAR anyway.
-          if (result.verified && result.stats && tier !== 'open') {
+          // Only show verification stats when verification actually ran.
+          if (result.verified && result.stats) {
             const s = result.stats;
             console.log(chalk.magenta(
               `  👻 Verified ${s.total} candidates — ` +
@@ -982,8 +875,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   const hasConflict = conflictBuffer.length > 0;
 
   if (!hasBlast && !hasConflict) {
-    // User skipped or cancelled all analysis — nothing ran, nothing to count.
-    // Don't burn the quota on a no-op.
+    // User skipped or cancelled all analysis: nothing ran, nothing to save.
     console.log(chalk.gray('  No forecast output to save.\n'));
     return;
   }
@@ -1028,7 +920,6 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
       // win 14). Record the real working tree root instead.
       proposedDir: surface === 'precommit' ? baseRoot : proposedDir,
       changedFiles,
-      profile,
       findings:      parsedFindings,
       findingCount:  parsedFindings.length,
       critical:      criticalCount,
@@ -1042,10 +933,8 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
         : {}),
     };
 
-    // label is null for Open (no portal side effects) or when user skipped
-    // the label prompt. Non-null label (Pro+) activates portal publish,
-    // team-sync, and mobile-publish via saveReport's Strategy 2 conditional.
-    const saved = await saveReport(forecastReport, 'ghost-forecast', label, meta);
+    // One-time scan naming: no project label.
+    const saved = await saveReport(forecastReport, 'ghost-forecast', null, meta);
     console.log(chalk.green(`\n${SYM.check} Forecast saved to ~/Ghost Architect Reports/`));
     console.log(chalk.gray(`  📄 ${saved.txtFile}`));
     console.log(chalk.gray(`  📋 ${saved.mdFile}`));
@@ -1053,8 +942,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
     console.log('');
   } else {
     // Declining to save must not silently destroy the report. The analysis
-    // already ran (and for Open, the forecast credit is already spent, by
-    // design: the value is the analysis itself); this buffer is the only copy.
+    // already ran; this buffer is the only copy.
     // Same recovery path as POI/Blast/Conflict. See src/cli/unsaved-report.js.
     await offerUnsavedReport(forecastReport, { prefix: 'ghost-commit-forecast' });
   }
@@ -1066,24 +954,7 @@ export async function runCommitForecastMode(codebaseContext, options = {}) {
   // patchedContext is the proposed-overlay codebase context (has the full fileMap).
   if (conflictCandidates.length > 0) {
     const fixFindings = conflictCandidates.map(normalizeCandidateToFinding);
-    await runPostScanFixForecast(fixFindings, patchedContext, { tier, profile });
-  }
-
-  // ── Increment Open quota AFTER successful analysis ──────────────────────
-  // Mirrors the saveReport pattern from POI/Blast/Conflict: counter bumps
-  // after the run succeeds, not before. A crashed forecast doesn't burn the
-  // credit. Here we bump after output is ready (not after save prompt) because
-  // Forecast value is in the analysis itself, not the saved artifact.
-  if (tier === 'open') {
-    incrementForecastCount();
-    console.log(chalk.cyan(
-      `💡 You've used your free Commit Forecast. Upgrade to Pro for unlimited Forecasts.\n` +
-      `   https://ghostarchitect.dev/pricing`
-    ));
-    console.log('');
-  } else if (!hasShownCallout('feature:project-tracking')) {
-    // Pro+ don't need the quota callout. Soft-gate for project tracking if relevant.
-    // (Forecast doesn't use project tracking in v1, so skip the callout here.)
+    await runPostScanFixForecast(fixFindings, patchedContext);
   }
 
   const { again } = await inquirer.prompt([{

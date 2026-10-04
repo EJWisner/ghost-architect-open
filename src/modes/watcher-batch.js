@@ -355,8 +355,8 @@ export async function submitBatch(clientOrKey, requests, opts = {}) {
       const transient = isTransientNetworkError(err);
       if (!transient || attempt === maxAttempts) {
         throw new Error(
-          `Ghost Watcher™ batch submission failed` +
-          `${transient ? ` after ${attempt} attempt${attempt === 1 ? '' : 's'}` : ''} — ${err?.message || String(err)}`
+          `Batch submission failed` +
+          `${transient ? ` after ${attempt} attempt${attempt === 1 ? '' : 's'}` : ''}: ${err?.message || String(err)}`
         );
       }
       const backoff = baseBackoffMs * Math.pow(2, attempt - 1);
@@ -364,7 +364,7 @@ export async function submitBatch(clientOrKey, requests, opts = {}) {
       await sleep(backoff);
     }
   }
-  throw new Error(`Ghost Watcher™ batch submission failed — ${lastErr?.message || 'unknown error'}`);
+  throw new Error(`Batch submission failed: ${lastErr?.message || 'unknown error'}`);
 }
 
 /**
@@ -692,4 +692,25 @@ export async function markSetupWarningSent(octokit, portalRepo) {
   } catch {
     /* never throws */
   }
+}
+
+// Replace each finding's prompt with the matching batch result text, matched by
+// the numeric index in the result custom_id. Only successful, non-empty results
+// replace the templated prompt; anything else keeps its original prompt.
+// Lives beside pollBatch because it consumes pollBatch's normalized results.
+export function enrichFindingsWithPrompts(findings, results) {
+  if (!Array.isArray(findings) || !Array.isArray(results)) return findings;
+  const textByIndex = new Map();
+  for (const r of results) {
+    if (r?.type !== 'succeeded') continue;
+    const text = (r.text || '').trim();
+    if (!text) continue;
+    const idx = parseInt(String(r.custom_id || '').split('-').pop(), 10);
+    if (Number.isInteger(idx)) textByIndex.set(idx, text);
+  }
+  findings.forEach((f, i) => {
+    const text = textByIndex.get(i);
+    if (text) f.prompt = text;
+  });
+  return findings;
 }

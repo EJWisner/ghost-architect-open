@@ -3,9 +3,6 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import { streamChat } from '../analyst/index.js';
 import { saveReport } from '../reports.js';
-import { isBackKeyword } from '../cli/prompt-helpers.js';
-import { requireTier } from '../license/tier-gates.js';
-import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 import { calcActualCost } from '../estimator.js';
 import { getConfig } from '../config.js';
 
@@ -39,10 +36,10 @@ function friendlyError(err) {
   return 'Something went wrong. Please try again.';
 }
 
-async function streamChatWithRetry(codebaseContext, conversationHistory, trimmed, tier) {
+async function streamChatWithRetry(codebaseContext, conversationHistory, trimmed) {
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
     try {
-      return await streamChat(codebaseContext, conversationHistory, trimmed, tier);
+      return await streamChat(codebaseContext, conversationHistory, trimmed);
     } catch (err) {
       const isLast = attempt === RETRY_DELAYS.length;
       if (isRateLimit(err) || isOverload(err)) {
@@ -81,19 +78,6 @@ function printChatHelp() {
 }
 
 export async function runChatMode(codebaseContext, options = {}) {
-  // Tier resolution. Defaults to 'open' (fail-closed) so any caller that
-  // forgets to pass tier does not leak the paid project-tracking feature.
-  // bin/ghost.js is the single source of truth — it passes TIER (resolved
-  // from active license at line 1311) into this options object. Mirrors
-  // the Phase 2 adoption pattern from commits 2d813bb, 5cfe7db, b38c0cb.
-  // Chat itself is free across all tiers (TIER_POLICY 'mode:chat' is true
-  // for all tiers); tier is plumbed through to saveChatLog where the only
-  // tier-conditional surface lives (the project-label prompt on /save).
-  const tier = options.tier || 'open';
-  // Ghost Partner — consultant profile (null when --profile was not passed).
-  // Threaded into saveChatLog -> saveReport meta so the client-ready PDF
-  // carries the same white-label branding poi/blast/conflict/audit produce.
-  const profile = options.profile || null;
   // Chat is the most expensive mode per turn (full codebase context is
   // re-prepended and the whole conversation history is resent every turn), yet
   // it previously showed no cost. Resolve the model for cost math. The caller
@@ -152,14 +136,13 @@ export async function runChatMode(codebaseContext, options = {}) {
         console.log(chalk.gray('\n  Nothing to save yet — ask some questions first.\n'));
         continue;
       }
-      // saveChatLog returns false if user cancels at the label prompt via
-      // 'back' keyword. Only set alreadySaved when the save actually completed.
-      const saved = await saveChatLog(chatLog, tier, profile);
+      // Only set alreadySaved when the save actually completed.
+      const saved = await saveChatLog(chatLog);
       if (saved !== false) alreadySaved = true;
       continue;
     }
 
-    const result = await streamChatWithRetry(codebaseContext, conversationHistory, trimmed, tier);
+    const result = await streamChatWithRetry(codebaseContext, conversationHistory, trimmed);
 
     if (result) {
       const response = result.text;
@@ -200,58 +183,11 @@ export async function runChatMode(codebaseContext, options = {}) {
       message: chalk.cyan(`Save this conversation (${chatLog.length} exchanges) to ~/Ghost Architect Reports/?`),
       default: true
     }]);
-    if (saveOnExit) await saveChatLog(chatLog, tier, profile);
+    if (saveOnExit) await saveChatLog(chatLog);
   }
 }
 
-async function saveChatLog(chatLog, tier, profile = null) {
-  // D4 gate: project-tracking is Pro+ only. Drives both the label prompt
-  // below AND the saveLabel fallback at the saveReport call site (the
-  // 'conversation' synthetic fallback would otherwise re-leak the four
-  // side-effect blocks even after gating the label prompt — identical
-  // shape to blast's saveLabel-fallback fix in commit b38c0cb). Gate ID
-  // is shared with prompt-triage/conflict/blast so D3 callout
-  // suppression spans all four modes (one display per ghost invocation).
-  const projectIntelGate = requireTier('feature:project-tracking', { tier });
-  const projectIntelEnabled = projectIntelGate.allowed;
-
-  // On Pro+: prompt for label, with 'back' keyword preserved as a save-
-  // cancel escape. On Open: skip the prompt entirely (D4 gate firing)
-  // and fire the D3 soft-gate callout once per session. The 'back'
-  // keyword cancellation becomes Pro+ only by natural extension — Open
-  // users see no prompt, so there is nothing to cancel; if they want to
-  // abort a save on Open, they can just not type /save in the first
-  // place. Open users still get the saved conversation (with bare
-  // filename per the saveLabel = null branch below).
-  let label = null;
-  if (projectIntelEnabled) {
-    const promptResult = await inquirer.prompt([{
-      type: 'input',
-      name: 'label',
-      message: chalk.cyan('Chat label') + chalk.gray(" (project name, press Enter to skip, or 'back' to cancel save):"),
-    }]);
-
-    // Universal-escape: 'back' keyword cancels the save. Caller catches this
-    // by checking the return value — returns false on cancel, true on saved.
-    // The current call sites just await this without checking, which is fine:
-    // on cancel we print a notice and return; the chat loop continues either
-    // way and any "already saved" flag stays false so the exit-prompt will
-    // re-offer save.
-    if (isBackKeyword(promptResult.label)) {
-      console.log(chalk.gray('\n  Save cancelled.\n'));
-      return false;
-    }
-    label = promptResult.label;
-  } else if (!hasShownCallout('feature:project-tracking')) {
-    // D3 soft-gate callout: one line, once per session, gentle. Open users
-    // still get the saved conversation — this just signals what they'd
-    // gain on Pro. Shared gate ID coalesces with prompt-triage, conflict,
-    // and blast so the callout displays once per ghost invocation across
-    // all four modes.
-    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
-    markCalloutShown('feature:project-tracking');
-  }
-
+async function saveChatLog(chatLog) {
   const timestamp = new Date().toLocaleString();
   let content = `GHOST ARCHITECT — CHAT TRANSCRIPT\n`;
   content += `Saved: ${timestamp}\n`;
@@ -268,17 +204,7 @@ async function saveChatLog(chatLog, tier, profile = null) {
     content += `${sep}\n\n`;
   });
 
-  // saveLabel resolution: on Pro+, fall back to 'conversation' if the user
-  // skipped the label prompt (preserves existing UX for paid tiers). On
-  // Open, saveLabel stays null so the four `if (label && isXConfigured())`
-  // side-effect blocks in saveReport (team-sync, mobile-publish, portal-
-  // publish, audit log) short-circuit. Same fix shape as blast commit
-  // b38c0cb. The 'conversation' fallback is a UX nicety for paid tiers,
-  // not a freshness mechanism that should override D4.
-  const saveLabel = projectIntelEnabled ? (label || 'conversation') : null;
-  // Ghost Partner profile drives white-label PDF/MD branding; null falls back
-  // to default Ghost branding in the renderers.
-  const saved = await saveReport(content, 'ghost-chat', saveLabel, { profile });
+  const saved = await saveReport(content, 'ghost-chat', null, {});
   console.log(chalk.green(`\n✓ Reports saved to ~/Ghost Architect Reports/`));
   console.log(chalk.gray(`  📄 ${saved.txtFile}  (plain text)`));
   console.log(chalk.gray(`  📋 ${saved.mdFile}  (Markdown — open in VS Code or any Markdown viewer)`));

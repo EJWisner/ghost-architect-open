@@ -22,7 +22,7 @@ import { verifyReport, formatVerifierReport } from './verifier.js';
 import { createLLMVerifier } from './llm-verifier.js';
 import { recordUsage } from './usage-tracker.js';
 import { getSamplingParams } from '../utils/sampling-params.js';
-import { mergeRates } from '../profile/index.js';
+import { resolveRates } from '../utils/rates.js';
 
 const PASS_TOKEN_LIMIT = 45000;
 const MERGE_BATCH_SIZE = 6;
@@ -712,7 +712,7 @@ export function clearCheckpoint(projectLabel) {
 
 // ── Single pass ───────────────────────────────────────────────────────────────
 
-async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons, profile = null) {
+async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons) {
   let context = '';
   for (const [fp, content] of Object.entries(pass.files)) {
     context += `\n\n=== FILE: ${fp} ===\n${content}`;
@@ -721,20 +721,12 @@ async function runPass(pass, passNum, totalPasses, totalFiles, priorSkeletons, p
     ? `\n\nCROSS-PASS CONTEXT (findings from prior passes — use to identify relationships):\n${priorSkeletons.join('\n---\n')}\n\n`
     : '';
 
-  // Ghost Partner — reinforce the consultant lens in the user message too.
-  // System prompt has the CONSULTANT CONTEXT block; this user-turn reminder
-  // gives the model a second, shorter nudge right next to the code, which
-  // empirically pulls stronger adherence to the profile's vocabulary.
-  const profileReminder = profile
-    ? `You are scanning on behalf of ${profile.author || 'the consultant'}. Apply their methodology as described in the CONSULTANT CONTEXT block of your system prompt — weight findings through their lens, name findings in their vocabulary, and organize findings around their priorities. Do not fabricate findings to match their priorities; apply them only where the code actually exhibits the pattern.\n\n`
-    : '';
-
   return callClaude(
-    `${profileReminder}This is pass ${passNum} of ${totalPasses} in a multi-pass analysis of a ${totalFiles}-file codebase.` +
+    `This is pass ${passNum} of ${totalPasses} in a multi-pass analysis of a ${totalFiles}-file codebase.` +
     `${skeletonContext}` +
     `Analyze ONLY the files in this pass. Reference prior pass findings if you see related issues.\n\n` +
     `Files for this pass:\n${context}`,
-    buildSystemPOI(mergeRates(getRates(), profile), profile)
+    buildSystemPOI(resolveRates(getRates()))
   );
 }
 
@@ -763,7 +755,7 @@ export function formatPassResultsForMerge(results) {
   }).join('\n\n');
 }
 
-async function mergePassResults(results, label, profile = null) {
+async function mergePassResults(results, label) {
   const combined = formatPassResultsForMerge(results);
 
   return callClaude(
@@ -775,7 +767,7 @@ async function mergePassResults(results, label, profile = null) {
     `- Output must stay under 4,000 words\n` +
     `- Use Ghost Architect section format\n\n` +
     `BATCHES:\n${combined}\n\nMerged findings:`,
-    buildSystemPOI(mergeRates(getRates(), profile), profile), 6000
+    buildSystemPOI(resolveRates(getRates())), 6000
   );
 }
 
@@ -844,12 +836,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
 
   const combined  = mergedGroups.map((r, i) => `=== MERGED GROUP ${i + 1} ===\n${r}`).join('\n\n');
-  const rates     = mergeRates(getRates(), options.profile);
-
-  // Ghost Partner — reinforce consultant lens in synthesis user message too.
-  const profileReminder = options.profile
-    ? `You are synthesizing on behalf of ${options.profile.author || 'the consultant'}. The final report must reflect their methodology as described in the CONSULTANT CONTEXT block of your system prompt — name findings in their vocabulary and organize the report around their priorities. Do not fabricate findings to match their priorities; apply them only where the findings below actually exhibit the pattern.\n\n`
-    : '';
+  const rates     = resolveRates(getRates());
 
   // Step 1: Raw synthesis (produces structured findings). Routed through
   // callClaude (not a bare anthropic.messages.stream) so a transient 529 /
@@ -861,7 +848,6 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
   // apart from the added resilience. Temperature 0.3 (set inside callClaudeRaw)
   // matches the pass/merge calls for consistency.
   const synthesisPrompt =
-    profileReminder +
     `Final synthesis: ${completedPasses} of ${totalPasses} passes complete.\n\n` +
     `Produce the final unified Points of Interest Report:\n` +
     `1. Merge remaining duplicates, rank by severity and business impact\n` +
@@ -871,7 +857,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     `4. Use full Ghost Architect report format\n\n` +
     `GROUNDING: Only cite file paths, method names, line numbers, and code strings that appear verbatim in the findings below. If a detail is not in the source material, describe the issue in general terms.\n\n` +
     `FINDINGS:\n${combined}\n\nFinal report:`;
-  const rawSynthesis = await callClaude(synthesisPrompt, buildSystemPOI(rates, options.profile), 8096);
+  const rawSynthesis = await callClaude(synthesisPrompt, buildSystemPOI(rates), 8096);
 
   // Step 2: Narrator rewrites as senior architect (streaming to user)
   if (options.onNarratorStart) options.onNarratorStart();
@@ -926,7 +912,6 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     requireRemediationTable: true,
     rawSynthesis: rawSynthesis.slice(0, 8000), // give narrator the raw text directly
     fileMap: options.fileMap,                  // source-ground the narrator against real code
-    profile: options.profile,                  // Ghost Partner — consultant lens for narrator voice
   };
 
   const narratedReport = await narrateReport(
@@ -1090,7 +1075,6 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
       finalOutput = await regenerateExecutiveSummary(
         finalOutput,
         verifierCard,
-        options.profile,
         options.projectLabel,
         sidecarTotalCount
       );
@@ -1118,7 +1102,6 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
     try {
       finalOutput = await regenerateRiskParagraph(
         finalOutput,
-        options.profile,
         options.projectLabel
       );
     } catch (err) {
@@ -1163,7 +1146,7 @@ async function synthesizeFinal(mergedGroups, totalFiles, completedPasses, totalP
  * it untouched. If the LLM call fails, we return the original report
  * untouched. Both cases are non-fatal.
  */
-async function regenerateExecutiveSummary(report, verifierCard, profile, projectLabel, sidecarTotalCount = null) {
+async function regenerateExecutiveSummary(report, verifierCard, projectLabel, sidecarTotalCount = null) {
   // Locate the existing exec summary section. Pattern: `## Executive Summary`
   // (optionally with emoji prefix), followed by content, ending at the next
   // `## ` header.
@@ -1216,9 +1199,7 @@ async function regenerateExecutiveSummary(report, verifierCard, profile, project
   // items when there are 3+ bands. With 2 bands we use "and". With 1 band
   // we just say "all <N> are <band>-severity".
   const projectClause = projectLabel ? ` of the ${projectLabel} codebase` : '';
-  const subjectClause = profile
-    ? `My pre-engagement analysis${projectClause}`
-    : `This pre-engagement analysis${projectClause}`;
+  const subjectClause = `This pre-engagement analysis${projectClause}`;
 
   let breakdownClause;
   if (presentBands.length === 1) {
@@ -1251,11 +1232,7 @@ async function regenerateExecutiveSummary(report, verifierCard, profile, project
     ? `${subjectClause} identified ${sidecarTotalCount} findings; the top ${surviving.length} by severity are detailed below${breakdownClause}.`
     : `${subjectClause} identified ${surviving.length} ${totalNoun}${breakdownClause}.`;
 
-  // Profile-aware persona — match the narrator's white-label conventions.
-  // When a profile is loaded, we do NOT identify as Ghost Architect.
-  const persona = profile
-    ? `You are writing the body of an executive summary for a pre-engagement codebase analysis report on behalf of ${profile.author || 'the consultant'}${profile.organization ? ` (${profile.organization})` : ''}. Write in the consultant's voice. Do NOT mention "Ghost Architect" or "Ghost" in the output.`
-    : 'You are Ghost Architect, writing the body of an executive summary for a codebase analysis report.';
+  const persona = 'You are Ghost Architect, writing the body of an executive summary for a codebase analysis report.';
 
   // The LLM only writes the prose AFTER the opener. The opener + breakdown
   // sentence is constructed deterministically in code above. We give the LLM
@@ -1320,7 +1297,7 @@ async function regenerateExecutiveSummary(report, verifierCard, profile, project
  * Non-fatal failures: missing section header → return original. Empty LLM
  * response → return original. The exec summary regen sets the precedent.
  */
-async function regenerateRiskParagraph(report, profile, projectLabel) {
+async function regenerateRiskParagraph(report, projectLabel) {
   // Locate the existing Risk section. Pattern: `## Risk if Left Unaddressed`
   // (optionally with emoji prefix). Tolerate a few legacy header variants
   // that older Ghost reports used: "Risk Assessment", "Risks".
@@ -1357,11 +1334,7 @@ async function regenerateRiskParagraph(report, profile, projectLabel) {
     (f.files && f.files.length ? ` (files: ${f.files.slice(0, 3).join(', ')})` : '')
   ).join('\n');
 
-  // Profile-aware persona — mirror the exec summary regen's white-label
-  // conventions. When a profile is loaded, do NOT identify as Ghost.
-  const persona = profile
-    ? `You are writing the closing paragraph of a pre-engagement codebase analysis report on behalf of ${profile.author || 'the consultant'}${profile.organization ? ` (${profile.organization})` : ''}. Write in the consultant's voice. Do NOT mention "Ghost Architect" or "Ghost" in the output.`
-    : 'You are Ghost Architect, writing the closing paragraph of a codebase analysis report.';
+  const persona = 'You are Ghost Architect, writing the closing paragraph of a codebase analysis report.';
 
   const projectLine = projectLabel ? `Project: ${projectLabel}\n` : '';
 
@@ -1399,7 +1372,7 @@ async function regenerateRiskParagraph(report, profile, projectLabel) {
 export async function synthesizeFromSession(session, totalFiles, totalPasses, onChunk, options = {}) {
   const groups = [...session.mergedGroups];
   if (session.pendingPassResults.length > 0) {
-    const merged = await mergePassResults(session.pendingPassResults, session.projectLabel, options.profile);
+    const merged = await mergePassResults(session.pendingPassResults, session.projectLabel);
     groups.push(merged);
   }
   const coverage = Math.round((session.completedPassCount / totalPasses) * 100);
@@ -1473,11 +1446,6 @@ function makeUnresumableAbortError(cause, lastPersistedPass, currentPassNum) {
  *     consecutive-failure abort; 'abort' stops now. Optional: when not wired,
  *     the legacy behavior applies (warn, continue, abort after 2 consecutive
  *     failures).
- *
- * options:
- *   profile — Ghost Partner consultant profile object (or null). Injected into
- *             the system prompt at every API call — pass, merge, and final
- *             synthesis — so the consultant's lens is applied consistently.
  */
 export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, options = {}) {
   const {
@@ -1488,8 +1456,6 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     onCompletePrompt = async () => 'report',
     onSaveFailurePrompt = null,
   } = callbacks;
-
-  const profile = options.profile || null;
 
   const allPasses  = buildPasses(fileMap);
   const totalFiles = Object.keys(fileMap).length;
@@ -1533,7 +1499,6 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
       const finalReport = await synthesizeFromSession(session, totalFiles, allPasses.length, onChunk, {
         projectLabel,
         fileMap,
-        profile,
         onVerifierStart:  () => onProgress({ type: 'verifying' }),
         onVerifierReport: (card) => onProgress({ type: 'verifierReport', card }),
         onSidecarFindings: (f) => { sidecarFindings = f; },
@@ -1597,7 +1562,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     onProgress({ type: 'passStart', passNum, totalPasses: startFromPass + cap, fileCount, tokens: pass.tokens });
 
     const priorSkeletons = session.passSkeletons || [];
-    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons, profile);
+    const result         = await runPass(pass, passNum, allPasses.length, totalFiles, priorSkeletons);
 
     const skeleton = extractSkeleton(result);
     session.passSkeletons = [...priorSkeletons, skeleton].slice(-3);
@@ -1611,7 +1576,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
 
     if (session.pendingPassResults.length >= MERGE_BATCH_SIZE) {
       onProgress({ type: 'merging', count: session.pendingPassResults.length });
-      const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
+      const merged = await mergePassResults(session.pendingPassResults, projectLabel);
       session.mergedGroups.push(merged);
       session.pendingPassResults = [];
       onProgress({ type: 'mergeDone' });
@@ -1701,7 +1666,7 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
 
   if (session.pendingPassResults.length > 0) {
     onProgress({ type: 'mergingFinal' });
-    const merged = await mergePassResults(session.pendingPassResults, projectLabel, profile);
+    const merged = await mergePassResults(session.pendingPassResults, projectLabel);
     session.mergedGroups.push(merged);
     session.pendingPassResults = [];
     try {
@@ -1728,7 +1693,6 @@ export async function runMultiPassPOI(fileMap, projectLabel, callbacks = {}, opt
     {
       projectLabel,
       fileMap,  // pass source map to verifier for grounding checks
-      profile,  // Ghost Partner — consultant lens applied at synthesis too
       onNarratorStart:    () => onProgress({ type: 'narrating' }),
       onVerifierStart:    () => onProgress({ type: 'verifying' }),
       onVerifierReport:   (card) => onProgress({ type: 'verifierReport', card }),

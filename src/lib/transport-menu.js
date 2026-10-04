@@ -8,12 +8,11 @@
  * Trigger logic (resolveTransport) decides whether to even show the menu:
  *
  *   Skip → 'streaming'  when --stream was passed.
- *   Skip → 'batch'      when --batch was passed, when running in CI, or when a
- *                       Ghost Watcher context is detected.
+ *   Skip → 'batch'      when --batch was passed or when running in CI.
  *   Otherwise           render the menu and return the user's choice.
  *
  * Defaults bias toward BATCH in non-interactive contexts because those are the
- * environments (CI, Watcher) where a long-lived streaming connection is the
+ * environments (CI) where a long-lived streaming connection is the
  * thing that drops; interactive users get a real choice with the cost framing.
  */
 
@@ -32,12 +31,6 @@ export function isCI() {
   return truthy(process.env.CI) || truthy(process.env.GITHUB_ACTIONS);
 }
 
-// Ghost Watcher runs headless via `--watcher-commit` inside GitHub Actions, so
-// isCI() already catches it. GHOST_WATCHER is an explicit belt-and-suspenders
-// signal for any future non-CI Watcher invocation.
-export function isWatcherContext() {
-  return truthy(process.env.GHOST_WATCHER) || truthy(process.env.GHOST_WATCHER_COMMIT);
-}
 
 /**
  * Approximate input-token count from a loaded codebase context. Mirrors the
@@ -101,7 +94,7 @@ export async function resolveTransport({ flags = {}, mode, modeLabel, codebaseCo
   if (flags.batch)  return 'batch';
 
   // Non-interactive contexts default to batch (durable, no long-lived stream).
-  if (isCI() || isWatcherContext()) return 'batch';
+  if (isCI()) return 'batch';
 
   return showTransportMenu({ mode, modeLabel, codebaseContext, model });
 }

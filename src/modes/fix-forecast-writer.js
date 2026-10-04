@@ -31,12 +31,6 @@ import { runConflictScan }        from '../core/conflict.js';
 import { buildForecastOverlay }   from '../core/forecast-overlay.js';
 import { saveReport }             from '../reports.js';
 import { showConflictCost }       from '../estimator.js';
-import {
-  getFixForecastCount,
-  incrementFixForecastCount,
-  renderFixForecastPaywall,
-} from '../freemium.js';
-import { requireTier } from '../license/tier-gates.js';
 import { SYM } from '../cli/symbols.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -150,24 +144,6 @@ function buildFixArtifact(finding, generateResult, generatedAt) {
   return lines.join('\n');
 }
 
-// ── Tier gate ─────────────────────────────────────────────────────────────────
-// Pro+ always allowed. Open checked against FIX_FORECAST_QUOTA via tier-gates.
-// paywallPromo is worker-driven; pass '' when not available.
-// Returns true (allowed) or false (blocked, paywall already rendered).
-function checkFixForecastGate(tier, paywallPromo = '') {
-  if (tier !== 'open') return true;
-  const used   = getFixForecastCount();
-  const result = requireTier('mode:fix-forecast', {
-    tier,
-    fixForecastsUsed: used,
-  });
-  if (!result.allowed) {
-    renderFixForecastPaywall(paywallPromo);
-    return false;
-  }
-  return true;
-}
-
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
@@ -175,17 +151,10 @@ function checkFixForecastGate(tier, paywallPromo = '') {
  *
  * @param {object} selectedFinding  Full normalized finding with fix_direction.
  * @param {object} codebaseContext  The scanned codebase context (fileMap, basePath).
- * @param {object} opts             { tier, profile, label }
+ * @param {object} opts             { label }
  * @returns {{ fixArtifactPath: string, forecastArtifactPaths: object|null } | null}
  */
 export async function runFixForecast(selectedFinding, codebaseContext, opts = {}) {
-  const { tier = 'open', profile = null } = opts;
-
-  // ── Tier gate — fail fast before any generation work ───────────────────────
-  // Pro+ bypass immediately. Open checked against FIX_FORECAST_QUOTA.
-  // paywallPromo not available at this call site (no worker fetch here);
-  // pass empty string — the static paywall copy is sufficient.
-  if (!checkFixForecastGate(tier, '')) return null;
 
   const { fix_direction, title, id, severity } = selectedFinding;
   // target_files is an array; use first element as primary file for fileMap lookup.
@@ -282,7 +251,7 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       ({ patchedContext, changedFiles } = await buildForecastOverlay(
         codebaseContext,
         tmpDir,
-        { tier, profile }
+        {}
       ));
     } catch (err) {
       forecastSpinner.stop();
@@ -315,8 +284,6 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
 
     try {
       const result = await runConflictScan(fileMapPatched, callbacks, {
-        tier,
-        profile,
         forecastContext:
           `This is a fix-forecast run. The corrected version of ${targetFile} ` +
           `has been overlaid on the baseline. Frame every conflict as ` +
@@ -350,7 +317,6 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       filesAnalyzed: `${patchedContext.loadedFiles} of ${patchedContext.totalFiles}`,
       totalFiles:    patchedContext.totalFiles,
       mode:          'fix-forecast',
-      profile,
       fixForecast:   true,
       findingId:     id,
       findingTitle:  title,
@@ -378,11 +344,6 @@ export async function runFixForecast(selectedFinding, codebaseContext, opts = {}
       // Non-fatal — temp dir cleanup failure is cosmetic.
     }
   }
-
-  // Increment quota counter ONLY on full success (both artifacts written).
-  // Failed-confidence, overlay failure, and scan failure paths all return
-  // early above — they never reach this line and do not burn the quota.
-  if (tier === 'open') incrementFixForecastCount();
 
   return { fixArtifactPath: fixPath, forecastArtifactPaths, conflictBuffer, findingTitle: title, findingSeverity: severity };
 }

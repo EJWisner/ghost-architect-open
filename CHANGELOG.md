@@ -5,6 +5,38 @@ All notable changes to Ghost Architect™ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to semantic versioning.
 
+## v12.0.0 -- October 4, 2026
+
+### Ghost Open™ is free for one person
+
+Ghost Open™ 12.0.0 is free for one person. Every single-user feature works for everyone, with no limits, on your own Anthropic API key. All collaboration and paid-tier machinery is removed from the package rather than switched off.
+
+**Free for one person, no limits**
+- No quotas, tier gates, trial clock, or upgrade copy. Question, Chat, Recon, Points of Interest, Blast Radius™, Conflict Detection™, Prompt Triage™, Inheritance Audit, Ghost Brief™, Executive Brief, Commit Forecast™, and Fix Forecast all run unlimited.
+- One context cap for everyone: 200,000 tokens, the highest cap any former tier had. `--max-context` and a saved `ghost --reconfigure` value can still lower it. Conflict Detection™ and multi-pass Blast Radius™ size their passes from the same cap.
+- Commit Forecast™ verification and the verifier's project-context fallback run for everyone. Billing rates come from your saved settings (`ghost --reconfigure`).
+- `--skip-redaction` works for anyone who passes it. Without it, a redaction failure still stops the scan before anything reaches the API.
+- The `--batch` transport (half-price Message Batches API for Blast Radius™ and Question) and GitHub repositories as a scan input are unchanged.
+
+**Removed**
+- The license system: activation, status, CI token export, clear, admin issue and revoke commands, trial tokens, revocation checks, the first-run license prompt, license banners, the promo fetch, and the PDF trial watermark.
+- Team sync, Enterprise commands, Ghost Portal™ publishing, Ghost Mobile™ publishing (and `--force-clear-markers`), project labels and history tracking, the Project Dashboard, and Ghost Watcher™ (including `--watcher-commit`, `--watcher-cancelled`, the Watch menu rows, and the watcher email and ping calls).
+- White-label branding. Reports, PDFs, the Inheritance Audit, Ghost Brief™, and the Executive Brief always carry Ghost Architect™ branding.
+- Methodology profiles (formerly Ghost Partner™ profiles): `--profile`, `--no-profile`, `--create-profile`, `--list-profiles`, `--set-default-profile`, `--clear-default-profile`, `--clean-cache`, the profile wizard and the Profiles menus. Profiles move up to Ghost Architect™ Local 8. A `~/.ghost/profiles` folder or default-profile setting left by an older install is ignored; scans run exactly as they do with no profile.
+- Project names: project labels, the `--label` flag for non-interactive Commit Forecast™, and the Inheritance Audit's project-name prompt. Scans save as timestamped one-time reports, and the audit cover uses its unnamed-project default. Project names move up to Ghost Architect™ Local 8.
+- Anonymous usage telemetry stays, with the same opt-out (`GHOST_NO_PING=1`); it identifies the client only as `ghost-architect-open`.
+
+**Upgrade path**
+- After every saved report, Ghost prints one dim line, and the Markdown and PDF report footers end with the same line: "Ghost Open™ is free for one person. For deeper scans, teams and your own AI model on your own hardware: Ghost Architect™ Local 8 (early access beta): ghostarchitect.dev/beta.html".
+- LICENSE: the Business Source License now carries an Additional Use Grant for free production use by a single individual. Organization use through shared, multi-user, or hosted deployment needs a commercial license (Ghost Architect™ Local or Ghost Architect™ Cloud).
+
+**Security**
+- Dependencies moved past every open advisory: adm-zip 0.6.1 (decompression bombs, symlink file overwrite, SUID bits, duplicate entry names and more), figlet 1.12.0 (GHSA-62ch-8vmq-8xm7), and through the lockfile brace-expansion 2.1.7 and form-data 4.0.6. `npm audit` reports 0 vulnerabilities for the published dependencies.
+
+**Tests**
+- New `tests/ghost-open-12-free-for-one.smoke.mjs` pins the removal census, unlimited runs past the old limits, Ghost Architect™-only branding, legacy profile leftovers that change nothing, an Inheritance Audit that asks for no project name, the upgrade line, the packed file list, `--help`, and a clean import of every module.
+- Tests that only covered removed features are deleted; the context-cap, Commit Forecast™, Ghost Brief™, and pending-batch tests are rewritten for the new behavior.
+
 ## v11.0.3 -- July 10, 2026
 
 ### Audit 11 Remediation: Renewal Recovery Copy, Forecast Sidecar Parity, Revocation Read Routing, Session Listing Wired

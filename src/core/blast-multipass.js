@@ -3,14 +3,14 @@
 // Multi-pass Blast Radius orchestrator for Commit Forecast.
 //
 // When a codebase exceeds the single-pass context window, this module chunks
-// the fileMap into tier-appropriate passes (same logic as conflict.js),
+// the fileMap into cap-sized passes (same logic as conflict.js),
 // runs Blast on each chunk, then feeds all per-chunk outputs to a synthesis
 // pass that produces one unified rollback plan.
 //
-// This gives Pro/Team/Enterprise customers full Blast Radius coverage on any
-// codebase size — the same multi-pass architecture Conflict already uses.
+// This gives full Blast Radius coverage on any codebase size, using the same
+// multi-pass architecture Conflict already uses.
 
-import { getTierCap }       from '../loader/tierCaps.js';
+import { getContextCap }    from '../loader/contextCap.js';
 import { prioritizeFileMap } from '../prioritizer.js';
 import { runBlastRadius }   from '../analyst/index.js';
 import { getConfig, resolveApiKey } from '../config.js';
@@ -21,16 +21,16 @@ import { stripCapDisclosures } from './agent/narrator.js';
 
 // Blast uses max_tokens: 8096 for output. Leave 20% headroom on top of that
 // for system prompt and framing. Mirrors getPassTokenLimit() in conflict.js.
-function getBlastPassTokenLimit(tier) {
-  return Math.floor(getTierCap(tier) * 0.8);
+function getBlastPassTokenLimit() {
+  return Math.floor(getContextCap() * 0.8);
 }
 
 // Build the per-pass file chunks. Same algorithm as buildConflictPasses.
-function buildBlastPasses(fileMap, tier) {
+function buildBlastPasses(fileMap) {
   const ordered = prioritizeFileMap(fileMap);
   const passes  = [];
   let current   = { files: {}, tokens: 0 };
-  const limit   = getBlastPassTokenLimit(tier);
+  const limit   = getBlastPassTokenLimit();
 
   for (const [filePath, content] of Object.entries(ordered)) {
     const t = Math.ceil(content.length / 4);
@@ -60,13 +60,13 @@ function chunkToContext(files) {
 }
 
 // Estimate pass count and cost for UI display.
-export function getBlastPassInfo(fileMap, tier = 'open') {
+export function getBlastPassInfo(fileMap) {
   const totalTokens = Object.values(fileMap).reduce((sum, c) => sum + Math.ceil(c.length / 4), 0);
-  const limit       = getBlastPassTokenLimit(tier);
+  const limit       = getBlastPassTokenLimit();
   const singlePass  = totalTokens <= limit;
   const passes      = singlePass
     ? [{ files: fileMap, tokens: totalTokens }]
-    : buildBlastPasses(fileMap, tier);
+    : buildBlastPasses(fileMap);
   // Blast costs more per pass than conflict (~$0.50 per pass estimate).
   const estCost     = (passes.length * 0.50).toFixed(2);
   const estMinutes  = Math.max(1, Math.round(passes.length * 1.5));
@@ -78,17 +78,17 @@ export function getBlastPassInfo(fileMap, tier = 'open') {
 // Runs multi-pass Blast and synthesizes results into one report.
 //
 // options mirrors runBlastRadius options:
-//   profile, forecastMode, forecastTarget
+//   forecastMode, forecastTarget
 //   onPassStart(passNum, totalPasses)
 //   onPassComplete(passNum, totalPasses)
 //   onSynthesisStart()
 //
 export async function runMultipassBlast(patchedContext, forecastTarget, options = {}) {
   // @ghost-verified: onUsage=null default is safe -- every call site guards with if (onUsage) before invoking
-  const { tier = 'open', profile, forecastMode, onPassStart, onPassComplete, onSynthesisStart, onUsage = null, onSidecarFindings = null } = options;
+  const { forecastMode, onPassStart, onPassComplete, onSynthesisStart, onUsage = null, onSidecarFindings = null } = options;
 
   const fileMap = patchedContext.fileMap || {};
-  const passes  = buildBlastPasses(fileMap, tier);
+  const passes  = buildBlastPasses(fileMap);
   const total   = passes.length;
 
   const perPassResults = [];
@@ -105,7 +105,6 @@ export async function runMultipassBlast(patchedContext, forecastTarget, options 
       forecastTarget,
       (chunk) => { passOutput += chunk; },
       {
-        profile,
         forecastMode,
         onNarratorStart: () => {},
         onUsage,

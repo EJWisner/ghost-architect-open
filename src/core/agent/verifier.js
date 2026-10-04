@@ -13,7 +13,6 @@ import { getConfig, resolveApiKey } from '../../config.js';
 import { AgentMemory }              from './memory.js';
 import { buildTools }               from './tools.js';
 import { runMiniLoop }              from './loop.js';
-import { requireTier }              from '../../license/tier-gates.js';
 import { getSamplingParams }        from '../../utils/sampling-params.js';
 
 function getClient() { return new Anthropic({ apiKey: resolveApiKey() }); }
@@ -308,7 +307,7 @@ Use your verification budget efficiently — you have a limited number of steps 
  * @param {object}  callbacks   — { onVerifying, onVerified, onProgress }
  * @returns {object}            — { confirmed, possible, falsePositives, insufficient, all }
  */
-export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode = 'full', tier = 'open') {
+export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode = 'full') {
   const { onProgress, onUsage } = callbacks;
   const results = [];
 
@@ -319,7 +318,7 @@ export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode 
     if (onProgress) onProgress({ current: i + 1, total: candidates.length });
 
     const verified = mode === 'quick'
-      ? await quickVerify(candidates[i], fileMap, tier, onUsage)
+      ? await quickVerify(candidates[i], fileMap, onUsage)
       : await verifyOne(candidates[i], fileMap, { ...callbacks });
 
     // Normalize quickVerify verdict to match verifyOne output
@@ -360,7 +359,7 @@ export async function verifyConflicts(candidates, fileMap, callbacks = {}, mode 
 // ── Quick single-call verification (cheaper alternative) ─────────────────────
 // For when you want to verify without a full agent loop — one Claude call
 
-export async function quickVerify(candidate, fileMap, tier = 'open', onUsage = null) {
+export async function quickVerify(candidate, fileMap, onUsage = null) {
   const anthropic = getClient();
 
   // First try to look up only the files the candidate cited. This is the
@@ -378,31 +377,21 @@ export async function quickVerify(candidate, fileMap, tier = 'open', onUsage = n
   // pass output — which is the 0/0/0 verification failure mode we hit in
   // v0.4 testing.
   //
-  // Stage 3 tier gate: the fallback consumes ~5K extra tokens per ambiguous
-  // verification. That's a real cost. Gate behind requireTier so Open users
-  // get the cheaper INSUFFICIENT verdict (matching pre-fallback behavior),
-  // and trial/Pro/Team/Enterprise get the fallback they're paying for. The
-  // gate is silent (no callout from this layer — verifier is deep in a
-  // per-candidate loop; surfacing an upsell from here would require
-  // plumbing callbacks down). A mode-layer callout (when INSUFFICIENT-count
-  // crosses threshold on Open scans) is the right architectural layer for
-  // surfacing this in a future cycle. See TODO-verifier-agent-stage3-evaluate.md.
+  // The fallback costs ~5K extra tokens per ambiguous verification, which
+  // is worth it: an INSUFFICIENT verdict tells the user nothing.
   if (!fileContents) {
-    const fallbackGate = requireTier('feature:verifier-fallback', { tier });
-    if (fallbackGate.allowed) {
-      const BUDGET_CHARS = 20000; // ~5K tokens of context. Quick mode stays cheap.
-      const entries = Object.entries(fileMap);
-      let acc = '';
-      let used = 0;
-      for (const [path, content] of entries) {
-        const slice = content.slice(0, 600);
-        const block = '=== ' + path + ' ===\n' + slice + '\n\n';
-        if (used + block.length > BUDGET_CHARS) break;
-        acc += block;
-        used += block.length;
-      }
-      fileContents = acc.trim();
+    const BUDGET_CHARS = 20000; // ~5K tokens of context. Quick mode stays cheap.
+    const entries = Object.entries(fileMap);
+    let acc = '';
+    let used = 0;
+    for (const [path, content] of entries) {
+      const slice = content.slice(0, 600);
+      const block = '=== ' + path + ' ===\n' + slice + '\n\n';
+      if (used + block.length > BUDGET_CHARS) break;
+      acc += block;
+      used += block.length;
     }
+    fileContents = acc.trim();
   }
 
   if (!fileContents) {

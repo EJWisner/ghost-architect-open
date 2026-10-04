@@ -18,9 +18,6 @@ import { buildStreamingTransport, buildBatchTransport } from '../lib/transport-m
 import { addPendingBatch } from '../lib/batch-store.js';
 import { deriveRepoName, submitBatchInteractive, formatBatchLabelDate } from '../lib/batch-submit.js';
 import { runRecon, formatPlanForDisplay } from '../core/agent/planner.js';
-import { promptProjectLabel } from '../projects.js';
-import { requireTier } from '../license/tier-gates.js';
-import { hasShownCallout, markCalloutShown } from '../cli/session-state.js';
 // Static import: extractFindings is already used by sibling modes (poi.js)
 // so there's no module-loading novelty justifying the dynamic-import pattern
 // audit-mode used for its newly-introduced findingsFromAuditResults. Idiomatic
@@ -172,30 +169,9 @@ async function pickBlastTargets(files) {
 }
 
 export async function runBlastMode(codebaseContext, options = {}) {
-  // Ghost Partner — consultant profile (null when --profile was not passed).
-  // Threaded through to the analyst (consultant lens in prompt + narrator)
-  // and through saveReport meta (white-label cover + chrome in the PDF).
-  const profile = options.profile || null;
-
-  // Tier resolution. Defaults to 'open' (fail-closed) so any caller that
-  // forgets to pass tier does not leak the paid project-tracking feature.
-  // bin/ghost.js is the single source of truth — it passes TIER (resolved
-  // from active license at line 1311) into this options object. Mirrors
-  // the conflict Phase 2 adoption pattern from commit 5cfe7db.
-  const tier = options.tier || 'open';
-
-  // D4 gate: project-tracking is Pro+ only. Drives both the label prompt
-  // below AND the saveLabel-fallback fix at the saveReport call site (the
-  // synthetic fallback that would otherwise re-leak the four side-effect
-  // blocks even after gating the label prompt). Gate ID is shared with
-  // prompt-triage and conflict so D3 callout suppression spans all three.
-  const projectIntelGate = requireTier('feature:project-tracking', { tier });
-  const projectIntelEnabled = projectIntelGate.allowed;
-
   console.log('\n' + boxen(
     chalk.cyan.bold('💥 BLAST RADIUS ANALYSIS') + '\n' +
-    chalk.gray('Pick one or more files to analyze, or type a class/method name.\nMulti-file selection produces ONE combined impact map.') +
-    (profile ? '\n' + chalk.magenta(`👥 Ghost Partner profile: ${profile.name || profile.author || 'loaded'}`) : ''),
+    chalk.gray('Pick one or more files to analyze, or type a class/method name.\nMulti-file selection produces ONE combined impact map.'),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
 
@@ -267,30 +243,6 @@ export async function runBlastMode(codebaseContext, options = {}) {
     console.log(chalk.gray('  (Recon unavailable — proceeding with standard analysis)\n'));
   }
 
-  // Smart project label prompt — same UX as POI. The project label is what
-  // groups scans together on the portal and in team-sync. Without this,
-  // Blast was saving under a target-derived synthetic label like
-  // "change-set-4-files" which broke project grouping entirely. The
-  // change-set descriptor is now folded into meta instead.
-  // Gated on Pro+ per D4: Open users skip labeling, label stays null
-  // through to the saveLabel derivation below, which then resolves to
-  // null (not the synthetic fallback) so saveReport's four side-effect
-  // blocks short-circuit cleanly.
-  let label = null;
-  if (projectIntelEnabled) {
-    label = await promptProjectLabel();
-    console.log('');
-  } else if (!hasShownCallout('feature:project-tracking')) {
-    // D3 soft-gate callout: one line, once per session, gentle. Open users
-    // still get the full blast scan and saved report — this just signals
-    // what they'd gain on Pro. Shared gate ID with prompt-triage and
-    // conflict so the callout coalesces to one display per ghost invocation
-    // across all three modes.
-    console.log(chalk.cyan('💡 Project tracking available on Pro. Scans run as one-shots on Open.'));
-    console.log('');
-    markCalloutShown('feature:project-tracking');
-  }
-
   const { proceed } = await inquirer.prompt([{
     type: 'confirm',
     name: 'proceed',
@@ -301,7 +253,7 @@ export async function runBlastMode(codebaseContext, options = {}) {
 
   // ── Transport selection (streaming vs batch) ──────────────────────────────
   // Context is loaded and the scan is confirmed; choose how the Anthropic call
-  // runs. --stream/--batch flags, CI, and Ghost Watcher contexts skip the menu
+  // runs. --stream/--batch flags and CI contexts skip the menu
   // (see resolveTransport). Batch submits the request and exits cleanly; the
   // user retrieves later via `ghost batch-retrieve <id>`. Streaming falls
   // through to the existing live path below.
@@ -314,7 +266,7 @@ export async function runBlastMode(codebaseContext, options = {}) {
   });
 
   if (transport === 'batch') {
-    await submitBlastBatch({ codebaseContext, target, targetCount, profile, projectIntelEnabled, label });
+    await submitBlastBatch({ codebaseContext, target, targetCount });
     return;
   }
 
@@ -361,7 +313,6 @@ export async function runBlastMode(codebaseContext, options = {}) {
         onNarratorStart: () => {
           spinner.text = chalk.gray('Ghost is writing the blast radius report...');
         },
-        profile,  // Ghost Partner — threads consultant lens into prompt + narrator
         onUsage: blastUsage,
         onSidecarFindings: (found) => {
           if (Array.isArray(found) && found.length > 0) blastSidecarFindings = found;
@@ -383,27 +334,12 @@ export async function runBlastMode(codebaseContext, options = {}) {
     }]);
 
     if (doSave) {
-      // The saveLabel is the project label — this is what groups scans
-      // across modes for the same project on the portal, in team-sync,
-      // and in mobile-publish. When the user gave a label, use it. When
-      // they skipped (label = null = one-time scan) on a paid tier, fall
-      // back to the target-derived synthetic label so the file is still
-      // uniquely named on disk. On Open (projectIntelEnabled false),
-      // saveLabel stays null so the four `if (label && isXConfigured())`
-      // side-effect blocks in saveReport (team-sync, mobile-publish,
-      // portal-publish, audit log) short-circuit. The synthetic fallback
-      // is a UX nicety for paid tiers, not a freshness mechanism that
-      // should override D4. Without this gating, Open users with a multi-
-      // file selection would have fallbackLabel = "change-set-N-files"
-      // (truthy), defeating the label-prompt gate above.
-      const fallbackLabel = targetCount > 1
-        ? `change-set-${targetCount}-files`
-        : (Array.isArray(target) ? target[0] : target);
-      const saveLabel = projectIntelEnabled ? (label || fallbackLabel) : null;
+      // One-time scan naming: saveReport timestamps the file; no project label.
+      const saveLabel = null;
 
       // changeSet captures what was actually analyzed — the file list or
       // free-text target — so the report header can show it even though
-      // the file name now uses the project label. The narrator already
+      // the file name does not carry it. The narrator already
       // bakes this into the report body; meta carries it forward for
       // downstream renderers (PDF cover page, manifest entry, etc.).
       const changeSet = Array.isArray(target) ? target : [target];
@@ -427,16 +363,12 @@ export async function runBlastMode(codebaseContext, options = {}) {
       const lowCount       = parsedFindings.filter(f => f.severity === 'LOW').length;
       const totalHours     = parsedFindings.reduce((sum, f) => sum + (f.effortHours || 0), 0);
 
-      // Meta drives PDF chrome and markdown branding. The `profile` field is
-      // what flips PDF rendering into white-label mode — saveReport calls
-      // getBranding(meta.profile) and threads the result into the PDF
-      // generator. When profile is null, default Ghost branding renders.
+      // Meta drives the PDF and markdown renderers.
       const meta = {
         filesAnalyzed: codebaseContext.totalFiles
           ? `${codebaseContext.loadedFiles} of ${codebaseContext.totalFiles}`
           : `${codebaseContext.loadedFiles || 0}`,
         totalFiles: codebaseContext.totalFiles,
-        profile,
         changeSet,
         targetCount,
         // Sidecar findings — reports.js consumes meta.findings if present
@@ -500,7 +432,7 @@ export async function runBlastMode(codebaseContext, options = {}) {
 // streamed output without re-loading the codebase), print the retrieval
 // instructions, and return — no polling, no waiting.
 
-async function submitBlastBatch({ codebaseContext, target, targetCount, profile, projectIntelEnabled, label }) {
+async function submitBlastBatch({ codebaseContext, target, targetCount }) {
   const apiKey = resolveApiKey();
   if (!apiKey) {
     console.log(chalk.red(`\n${SYM.cross} No Anthropic API key configured — cannot submit a batch.`));
@@ -510,7 +442,7 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
 
   // Same request the streaming path builds — byte-for-byte identical params so
   // the batch result is indistinguishable from a live run.
-  const req = buildBlastRequest(codebaseContext, target, { profile });
+  const req = buildBlastRequest(codebaseContext, target, {});
 
   const submittedAt = new Date().toISOString();
   const customId = `blast-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
@@ -536,15 +468,12 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
     return;
   }
 
-  // Derive save metadata now (at submit time) so retrieve can save under the
-  // same project label the streaming path would have used. Mirrors the
-  // saveLabel/changeSet logic in the streaming save block.
+  // Derive save metadata now (at submit time) so retrieve saves the same way
+  // the streaming path does. Mirrors the changeSet logic in the streaming
+  // save block; the save label is null there too.
   const derivedRepo = deriveRepoName(codebaseContext);
   const repo = derivedRepo ? derivedRepo.name : 'unknown-project';
-  const fallbackLabel = targetCount > 1
-    ? `change-set-${targetCount}-files`
-    : (Array.isArray(target) ? target[0] : target);
-  const saveLabel = projectIntelEnabled ? (label || fallbackLabel) : null;
+  const saveLabel = null;
   const changeSet = Array.isArray(target) ? target : [target];
 
   try {
@@ -560,7 +489,6 @@ async function submitBlastBatch({ codebaseContext, target, targetCount, profile,
         targets:      req.targets,
         projectLabel: req.projectLabel,
         rates:        req.rates,
-        profile:      profile || null,
         loadedFiles:  codebaseContext.loadedFiles || 0,
         totalFiles:   codebaseContext.totalFiles  || 0,
         // Model the batch was submitted with, so retrieve can price the
@@ -623,7 +551,6 @@ export async function retrieveBlastBatchResult(rawOutput, entry, opts = {}) {
     targets:      ctx.targets,
     projectLabel: ctx.projectLabel,
     rates:        ctx.rates,
-    profile:      ctx.profile || null,
     loadedFiles:  ctx.loadedFiles || 0,
     onChunk:      (chunk) => { buffer += chunk; },
     onUsage:      (inputTokens, outputTokens, usedModel) => {
@@ -652,7 +579,6 @@ export async function retrieveBlastBatchResult(rawOutput, entry, opts = {}) {
       ? `${ctx.loadedFiles} of ${ctx.totalFiles}`
       : `${ctx.loadedFiles || 0}`,
     totalFiles:   ctx.totalFiles,
-    profile:      ctx.profile || null,
     changeSet:    ctx.changeSet,
     targetCount:  ctx.targetCount,
     findings:     parsedFindings,

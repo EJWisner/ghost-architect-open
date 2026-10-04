@@ -6,15 +6,14 @@
  * uniform { files: [{ path, content }, ...] } result regardless of
  * where the prompts came from.
  *
- * v1 implements only the localFolder case. v1.1 will add githubRepo
- * and teamSyncRepo for Team/Enterprise. The mode file and the
- * prompt-pack are agnostic to the source kind.
+ * v1 implements only the localFolder case. A githubRepo source may
+ * follow. The mode file and the prompt-pack are agnostic to the
+ * source kind.
  *
  * Source shapes:
  *
  *   { kind: 'localFolder', path: '/abs/or/rel/folder' }
  *   { kind: 'githubRepo',   url, pat, subpath }   // v1.1 NOT IMPLEMENTED
- *   { kind: 'teamSyncRepo' }                       // v1.1 NOT IMPLEMENTED
  *
  * Return shape:
  *
@@ -276,9 +275,8 @@ export async function loadPromptSource(source) {
       };
     }
 
-    case 'githubRepo':
-    case 'teamSyncRepo': {
-      // v1.1 work. The dispatcher knows about these kinds so error
+    case 'githubRepo': {
+      // Planned work. The dispatcher knows about these kinds so error
       // messages are precise rather than confusing "unknown kind"
       // errors when a user asks for them in v1.
       throw new Error(

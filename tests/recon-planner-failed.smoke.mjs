@@ -46,12 +46,12 @@ check('Test 1: plannerFailed=true propagates through runRecon', plan.plannerFail
 check('Test 2: failed planner stamps 0.0000 in meta cost', reconMetaCost(plan, 0) === '0.0000');
 
 // Test 3: the saved markdown discloses the structural fallback.
-const failedMd = renderReconMarkdown(plan, null, null);
+const failedMd = renderReconMarkdown(plan, null);
 check('Test 3: structural fallback disclosure renders in markdown',
   failedMd.includes('structural sizing heuristics'));
 
 // Test 4: a successful plan renders no fallback disclosure.
-const okMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null);
+const okMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null);
 check('Test 4: no fallback disclosure on a successful plan',
   !okMd.includes('structural sizing heuristics'));
 
@@ -78,13 +78,13 @@ check('Test 8: observed spend wins even when plannerFailed is set',
 // is the LOADED count; when the caller passes the larger repository total,
 // the Total files line must show the repo total and disclose the loaded
 // subset instead of contradicting the meta header's "X of Y".
-const cappedMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null, 396);
+const cappedMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, 396);
 check('Test 9a: capped repo shows repository total with loaded-subset disclosure',
   cappedMd.includes('**Total files:** 396 (4 loaded for sizing within the context budget)'));
-const uncappedMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null, 4);
+const uncappedMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, 4);
 check('Test 9b: uncapped repo shows the plain total with no disclosure',
   uncappedMd.includes('**Total files:** 4\n') && !uncappedMd.includes('loaded for sizing'));
-const legacyMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null, null);
+const legacyMd = renderReconMarkdown({ ...plan, plannerFailed: false }, null);
 check('Test 9c: omitted repo total falls back to the loaded count',
   legacyMd.includes('**Total files:** 4'));
 

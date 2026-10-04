@@ -2,6 +2,7 @@ Business Source License 1.1
 
 Licensor: Ernst J. Wisner / Ghost Platform LLC
 Licensed Work: Ghost Architect™
+Additional Use Grant: You may make production use of the Licensed Work free of charge as a single individual, on your own machines, for your own work or your employer's or clients' work. Production use by an organization through shared, multi-user or hosted deployment requires a commercial license (Ghost Architect™ Local or Ghost Architect™ Cloud).
 Change Date: Four years from each version's release date
 Change License: GNU General Public License v3.0
 
@@ -28,5 +29,3 @@ MariaDB hereby grants you permission to use this License's text to license your 
 ---
 
 Ghost Architect™ Copyright 2026 Ernst J. Wisner / Ghost Platform LLC. All rights reserved.
-
-Additional Use Grant: You may use the Licensed Work for personal, non-commercial, and small team use (up to 5 users) in production without purchasing a commercial license.
